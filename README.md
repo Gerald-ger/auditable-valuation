@@ -11,13 +11,23 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──►  yfinance
       │                            │
       │  Tab 1: Tracker            └──►  Ollama (localhost:11434) — local AI, optional
       │  Tab 2: Financial Models
+      │  Tab 3: Scorecard
 ```
 
-- **Tab 1 — Tracker**: candlestick chart (any period, US + HK tickers like `AAPL`, `0700.HK`).
-  Gold dots mark dates with news; hovering the chart pops up the stories near that date.
-  "AI outlook" generates a past/present/future analysis; the chat box talks to your local
-  AI, which is grounded in the financial-models reference document plus live data for the
-  loaded ticker.
+- **Tab 1 — Tracker**: price chart for US + HK tickers (`AAPL`, `0700.HK`, …) with:
+  - periods from intraday **1d** (15-min bars) and **5d** (hourly bars) up to **max**;
+  - chart types: **Candles / Line / OHLC**;
+  - toggleable technical indicators, computed locally in
+    [frontend/src/indicators.js](frontend/src/indicators.js): **MA10/20/50** overlays,
+    **volume** histogram, **RSI(14)** pane with 30/70 bands, **MACD(12,26,9)** pane;
+  - news integration: gold dots mark dates with news; hovering pops up the stories near
+    that date, and a "News behind the chart" list below shows every story. The feed
+    blends **company** news with **macro/policy** headlines (Fed, inflation, elections)
+    from the ticker's home-market index (S&P 500 for US, Hang Seng for HK), tagged and
+    deduplicated;
+  - "AI outlook" generates a past/present/future analysis; the chat box talks to your
+    local AI, grounded in the financial-models reference document plus live data for
+    the loaded ticker.
 - **Tab 2 — Financial Models**: pulls the company's financial reports automatically and runs
   a 5-year FCFF DCF (editable growth / terminal growth / WACC, with a sensitivity grid,
   anchored to analyst consensus growth when available), ratio analysis, DuPont ROE
@@ -92,12 +102,29 @@ every model input is already documented in
 
 ---
 
+## Project structure
+
+```
+backend/    FastAPI + yfinance data adapter, DCF/ratio models, peer comps,
+            deterministic scoring engine + sector weight library, Ollama client
+frontend/   React (Vite) UI: Tracker, Financial Models, and Scorecard tabs
+docs/       financial-models-reference.md (the AI's methodology playbook)
+            scoring-system-design.md (scoring architecture & rationale)
+start.bat   one-click cold start (backend + frontend + browser)
+```
+
 ## Notes & limitations
 
-- News hover coverage is limited to the ~10 most recent stories per ticker until OpenBB
-  (or another news provider) is installed.
-- The default DCF assumptions are deliberately conservative heuristics (CAPM cost of
-  equity, revenue-growth-capped FCF growth). Always sanity-check with the sensitivity
-  grid and the editable assumptions.
+- News is limited to the ~10 most recent stories per feed (company + market index),
+  so hover-news is sparse on older dates. Deeper historical and world-politics news
+  arrives with OpenBB (`obb.news.company`, `obb.news.world`).
+- Volume is share volume from yfinance; value turnover (price × volume, the HK
+  convention) becomes available per-provider with OpenBB.
+- The default DCF growth is anchored to analyst forward consensus when available
+  (falling back to trailing revenue growth); WACC uses CAPM with heuristic inputs.
+  Always sanity-check with the sensitivity grid and the editable assumptions.
+- The Scorecard is a deterministic snapshot of fundamentals, valuation and momentum
+  against heuristic healthy ranges. It is not a prediction; validation covers
+  consistency and plausibility, not forward returns (see docs/scoring-system-design.md §5).
 - Everything runs locally; nothing is sent to any cloud service.
 - **Decision support only — not certified financial advice.**
