@@ -1,7 +1,8 @@
 """Market data adapter layer.
 
 The rest of the app only talks to `provider`. To switch to OpenBB later,
-implement OpenBBProvider with the same four methods and swap the last line.
+implement OpenBBProvider with the same five methods — get_quote, get_history,
+get_news, get_peer_snapshot, get_fundamentals — and swap the last line.
 """
 from __future__ import annotations
 
@@ -162,6 +163,10 @@ class YFinanceProvider:
                 "operatingCashflow", "totalRevenue", "ebitda", "trailingEps",
                 "forwardEps", "bookValue", "targetMeanPrice", "recommendationKey",
                 "numberOfAnalystOpinions", "targetLowPrice", "targetHighPrice",
+                # momentum pillar inputs (scoring.py pillar M) — omitting any of
+                # these drops the pillar below its 40% availability threshold
+                "twoHundredDayAverage", "fiftyTwoWeekLow", "fiftyTwoWeekHigh",
+                "52WeekChange", "SandP52WeekChange",
             ]},
             "estimates": estimates,
             "income_statement": frame_to_dict(t.income_stmt),

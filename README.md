@@ -94,8 +94,9 @@ activate automatically (green dot in the chat panel). To use a different model, 
 | Free providers | yfinance (no key), FMP / Tiingo / Polygon free tiers (need free API keys, stored via `obb.user.credentials`) |
 | When it's worth it | Deeper fundamentals history, analyst estimates, economy/macro data, and **historical news** (yfinance only returns ~10 recent stories, so hover-news is sparse on older dates — OpenBB providers fix this) |
 
-To switch the website to OpenBB: implement `OpenBBProvider` with the same four methods as
-`YFinanceProvider` in [backend/data_provider.py](backend/data_provider.py) and swap the
+To switch the website to OpenBB: implement `OpenBBProvider` with the same five methods as
+`YFinanceProvider` in [backend/data_provider.py](backend/data_provider.py) — `get_quote`,
+`get_history`, `get_news`, `get_peer_snapshot`, `get_fundamentals` — and swap the
 last line (`provider = ...`). Nothing else in the app changes. The endpoint mapping for
 every model input is already documented in
 [docs/financial-models-reference.md](docs/financial-models-reference.md) (Section 6).
