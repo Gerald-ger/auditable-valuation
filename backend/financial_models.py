@@ -3,12 +3,15 @@
 Implements the priority models from docs/financial-models-reference.md:
 ratio analysis + DuPont, a 5-year FCFF DCF with sensitivity grid, and
 market-multiples snapshot. All functions take the fundamentals dict
-produced by data_provider.get_fundamentals so they stay provider-agnostic.
+produced by data_provider.get_fundamentals so they stay provider-agnostic;
+the one live market input is the risk-free rate used by WACC.
 """
 from __future__ import annotations
 
+from data_provider import risk_free_rate
+
 # Assumption defaults (user-overridable via the API)
-RISK_FREE_RATE = 0.043      # ~US 10Y yield
+RISK_FREE_RATE = 0.043      # fallback only — WACC uses the live US 10Y when reachable
 EQUITY_RISK_PREMIUM = 0.05
 TERMINAL_GROWTH = 0.025
 DEFAULT_TAX_RATE = 0.21
@@ -36,6 +39,23 @@ def _series(statement: dict, *row_names) -> list[tuple[str, float]]:
                 out.append((period, rows[name]))
                 break
     return out
+
+
+def _statement_fcf(cash_flow: dict) -> float | None:
+    """Annual FCF from the newest period reporting both legs (CapEx is negative).
+
+    Both legs must come from the same period — mixing this year's operating
+    cash flow with last year's CapEx would silently distort the valuation.
+    """
+    for period in sorted(cash_flow.keys(), reverse=True):
+        rows = cash_flow[period]
+        ocf = rows.get("Operating Cash Flow")
+        if ocf is None:
+            ocf = rows.get("Cash Flow From Continuing Operating Activities")
+        capex = rows.get("Capital Expenditure")
+        if ocf is not None and capex is not None:
+            return ocf + capex
+    return None
 
 
 def ratio_analysis(f: dict) -> dict:
@@ -101,10 +121,12 @@ def ratio_analysis(f: dict) -> dict:
 
 def _wacc(info: dict, tax_rate: float) -> dict:
     beta = info.get("beta") or 1.0
-    cost_of_equity = RISK_FREE_RATE + beta * EQUITY_RISK_PREMIUM
+    # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy
+    rf = risk_free_rate(RISK_FREE_RATE)
+    cost_of_equity = rf + beta * EQUITY_RISK_PREMIUM
     market_cap = info.get("marketCap") or 0
     total_debt = info.get("totalDebt") or 0
-    cost_of_debt = RISK_FREE_RATE + 0.015  # spread heuristic; refine with real credit data later
+    cost_of_debt = rf + 0.015  # spread heuristic; refine with real credit data later
     total = market_cap + total_debt
     if total == 0:
         wacc = cost_of_equity
@@ -112,6 +134,7 @@ def _wacc(info: dict, tax_rate: float) -> dict:
         wacc = (market_cap / total) * cost_of_equity + \
                (total_debt / total) * cost_of_debt * (1 - tax_rate)
     return {
+        "risk_free_rate": round(rf, 4),
         "beta": beta,
         "cost_of_equity": round(cost_of_equity, 4),
         "cost_of_debt_after_tax": round(cost_of_debt * (1 - tax_rate), 4),
@@ -125,13 +148,12 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
                   wacc_override: float | None = None,
                   tax_rate: float = DEFAULT_TAX_RATE) -> dict:
     info = f["info"]
-    fcf = info.get("freeCashflow")
+    # Statement first: yfinance's info["freeCashflow"] is annual for some issuers
+    # and a single quarter for others (MSFT reports ~0.24x the statement figure),
+    # which silently rescales the entire valuation.
+    fcf, fcf_source = _statement_fcf(f["cash_flow"]), "cash_flow_statement"
     if fcf is None:
-        cf = f["cash_flow"]
-        ocf = _latest(cf, "Operating Cash Flow", "Cash Flow From Continuing Operating Activities")
-        capex = _latest(cf, "Capital Expenditure")
-        if ocf is not None and capex is not None:
-            fcf = ocf + capex  # capex is negative in yfinance
+        fcf, fcf_source = info.get("freeCashflow"), "info_freecashflow"
     if not fcf or fcf <= 0:
         return {"error": "No positive free cash flow available — DCF not applicable "
                          "(see reference doc: use relative valuation instead)."}
@@ -181,6 +203,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     return {
         "assumptions": {
             "base_fcf": fcf,
+            "fcf_source": fcf_source,
             "growth_rate_year1": round(growth_rate, 4),
             "growth_source": growth_source,
             "terminal_growth": terminal_growth,

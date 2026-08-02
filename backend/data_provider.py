@@ -19,6 +19,35 @@ def _clean(value):
     return value
 
 
+_RF_CACHE: tuple[str, float] | None = None  # (date, rate) — treasury rates move once a day
+
+
+def risk_free_rate(fallback: float) -> float:
+    """US 10-year treasury yield for CAPM (reference doc 1.1.2), via OpenBB.
+
+    Fetched at most once per calendar day. Returns `fallback` — without caching
+    it — whenever OpenBB is missing or the Fed feed fails, so the DCF keeps
+    working offline and starts using live rates again as soon as it can.
+    """
+    global _RF_CACHE
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _RF_CACHE and _RF_CACHE[0] == today:
+        return _RF_CACHE[1]
+    try:
+        # deferred: importing openbb costs ~4s, so only a request that actually
+        # runs a DCF pays it, and only once per process
+        from openbb import obb
+        rows = obb.fixedincome.government.treasury_rates(provider="federal_reserve").results
+        rate = next(r.year_10 for r in reversed(rows) if r.year_10 is not None)
+        # sanity band: a provider switching to percent units would wreck every WACC
+        if 0 < rate < 0.25:
+            _RF_CACHE = (today, rate)
+            return rate
+    except Exception:
+        pass
+    return fallback
+
+
 class YFinanceProvider:
     def get_quote(self, ticker: str) -> dict:
         info = yf.Ticker(ticker).info or {}
