@@ -1,7 +1,10 @@
 """Peer comparison (trading comps) and valuation-range (football field) assembly.
 
-Peer suggestions are a curated map until OpenBB peer discovery is installed;
-users can always edit the peer list in the UI.
+Peer suggestions are curated-first: FMP peer discovery is measurably worse than
+the hand-curated list where one exists (UPS -> HWM, GD, MMM, WM — generic
+industrials rather than freight), but it covers HK and turns "no peers at all"
+into "usually usable" for the ~everything else. Users can always edit the peer
+list in the UI, so a bad suggestion is visible and correctable.
 """
 from __future__ import annotations
 
@@ -42,8 +45,55 @@ MULTIPLE_KEYS = ["pe_trailing", "pe_forward", "price_to_book",
                  "ev_to_ebitda", "ev_to_revenue", "peg_ratio"]
 
 
+MAX_AUTO_PEERS = 4
+
+_FMP_PEER_CACHE: dict[str, list[str]] = {}
+
+
+def _fmp_peers(ticker: str) -> list[str]:
+    """FMP peer discovery — free tier, no extra key beyond the configured one.
+
+    Successes are cached for the process lifetime; failures are **not**, so a
+    transient outage does not permanently blank a ticker's peers (same rule as
+    data_provider.risk_free_rate).
+    """
+    if ticker in _FMP_PEER_CACHE:
+        return _FMP_PEER_CACHE[ticker]
+    try:
+        # deferred: importing openbb costs ~5 s, so only a request that actually
+        # needs discovery pays it, and only once per process
+        from openbb import obb
+        rows = obb.equity.compare.peers(symbol=ticker, provider="fmp").results
+        peers = [r.symbol for r in rows if getattr(r, "symbol", None)][:MAX_AUTO_PEERS]
+    except Exception:
+        return []  # EmptyDataError for unknown tickers, plus network/quota failures
+    if peers:
+        _FMP_PEER_CACHE[ticker] = peers
+    return peers
+
+
 def suggest_peers(ticker: str) -> list[str]:
-    return PEER_SUGGESTIONS.get(ticker.upper(), [])
+    """Curated list when we have one, FMP discovery otherwise."""
+    t = ticker.upper()
+    return PEER_SUGGESTIONS.get(t) or _fmp_peers(t)
+
+
+def peer_betas(ticker: str) -> list[float]:
+    """Betas of the suggested peers, for financial_models.resolve_beta.
+
+    Reads through the TTL-cached peer snapshot, so on a warm cache this costs
+    nothing. Callers should only reach for this when the company's own reported
+    beta is not credible — see main.py.
+    """
+    out = []
+    for p in suggest_peers(ticker):
+        try:
+            beta = provider.get_peer_snapshot(p).get("beta")
+        except Exception:
+            continue
+        if beta is not None:
+            out.append(beta)
+    return out
 
 
 def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:

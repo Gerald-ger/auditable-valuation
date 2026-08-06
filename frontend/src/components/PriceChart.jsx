@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -15,7 +15,6 @@ const toDateStr = (t) => {
   return `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}`;
 };
 
-const NEWS_WINDOW_DAYS = 3;
 const CHART_TYPES = [
   ['candles', 'Candles'],
   ['line', 'Line'],
@@ -26,6 +25,31 @@ const MA_CONFIG = [
   [20, '#f0b90b'],
   [50, '#c084fc'],
 ];
+// lightweight-charts PriceScaleMode: 0 normal, 1 logarithmic, 2 percentage
+const SCALE_MODES = [
+  ['Lin', 0, 'Linear price scale'],
+  ['Log', 1, 'Logarithmic — equal % moves get equal vertical distance'],
+  ['%', 2, 'Percentage change from the first visible bar'],
+];
+
+/**
+ * Marker categories, most-significant first. When several events land on one
+ * bar the dot takes the colour of the highest-priority one, so an earnings
+ * release is never hidden behind an insider filing.
+ */
+const EVENT_TYPES = [
+  ['earnings', 'Earnings', '#2ebd85'],
+  ['material', '8-K event', '#c084fc'],
+  ['company', 'Company news', '#3b82f6'],
+  ['macro', 'Macro news', '#f0b90b'],
+  ['insider', 'Insider', '#8b98a5'],
+];
+const EVENT_COLOR = Object.fromEntries(EVENT_TYPES.map(([k, , c]) => [k, c]));
+const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(([k, l]) => [k, l]));
+// Insider filings are the bulk of the SEC feed (217 of 278 for AAPL) and say
+// little about price, so they start hidden rather than burying the chart.
+const DEFAULT_TYPES = { earnings: true, material: true, company: true, macro: true, insider: false };
+
 const OVERLAY_OPTS = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
 
 const fmtVol = (v) => {
@@ -36,18 +60,99 @@ const fmtVol = (v) => {
   return String(Math.round(v));
 };
 
-export default function PriceChart({ bars, news }) {
-  const containerRef = useRef(null);
-  const [popup, setPopup] = useState(null); // {x, date, items}
-  const [hoverBar, setHoverBar] = useState(null);
-  const [chartType, setChartType] = useState('candles');
-  const [show, setShow] = useState({ ma: true, volume: true, rsi: true, macd: false });
+/**
+ * Attach every event to a bar, chronologically.
+ *
+ * Events are matched to the next trading day on or after their date, not to an
+ * exact date match — a Saturday filing used to produce no dot at all because no
+ * bar carried that date. Events dated after the last bar (today's news against
+ * yesterday's close) clamp onto the final bar rather than vanishing.
+ */
+function groupEventsByBar(bars, events) {
+  if (!bars.length) return [];
+  const dates = [];
+  const timeOfDate = new Map();
+  for (const b of bars) {
+    const d = toDateStr(b.time);
+    if (!timeOfDate.has(d)) {
+      timeOfDate.set(d, b.time);
+      dates.push(d);
+    }
+  }
+  const first = dates[0];
+  const last = dates[dates.length - 1];
 
+  const byDate = new Map();
+  for (const e of events) {
+    if (!e.date || e.date < first) continue; // predates the chart window
+    let idx = dates.length - 1;
+    if (e.date <= last) {
+      let lo = 0;
+      let hi = dates.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (dates[mid] >= e.date) {
+          idx = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+    }
+    const key = dates[idx];
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key).push(e);
+  }
+
+  // emit in `dates` order — lightweight-charts requires ascending marker times
+  const groups = [];
+  for (const d of dates) {
+    const items = byDate.get(d);
+    if (items) groups.push({ date: d, time: timeOfDate.get(d), items });
+  }
+  return groups;
+}
+
+const dominantType = (items) =>
+  EVENT_TYPES.find(([key]) => items.some((i) => i.category === key))?.[0] ?? 'company';
+
+export default function PriceChart({ bars, events, filingsSupported = true }) {
+  const containerRef = useRef(null);
+  const chartRef = useRef(null);
+  const seriesRef = useRef(null);
+  const markersRef = useRef(null);
+  const groupsRef = useRef(new Map());
+
+  const [chartEpoch, setChartEpoch] = useState(0);
+  const [hoverBar, setHoverBar] = useState(null);
+  const [hoverEvents, setHoverEvents] = useState(null); // {x, date, items} — preview only
+  const [pinned, setPinned] = useState(null); // {x, date, items} — clickable
+  const [chartType, setChartType] = useState('candles');
+  const [scaleMode, setScaleMode] = useState(0);
+  const [show, setShow] = useState({ ma: true, volume: true, rsi: true, macd: false });
+  const [types, setTypes] = useState(DEFAULT_TYPES);
+
+  const allGroups = useMemo(() => groupEventsByBar(bars, events ?? []), [bars, events]);
+  const visibleGroups = useMemo(
+    () =>
+      allGroups
+        .map((g) => ({ ...g, items: g.items.filter((i) => types[i.category]) }))
+        .filter((g) => g.items.length),
+    [allGroups, types],
+  );
+  const available = useMemo(() => {
+    const counts = {};
+    for (const g of allGroups) for (const i of g.items) counts[i.category] = (counts[i.category] ?? 0) + 1;
+    return counts;
+  }, [allGroups]);
+
+  // ── chart construction ────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || !bars.length) return;
 
     const intraday = typeof bars[0]?.time === 'number';
-    const height = 430 + (show.rsi ? 100 : 0) + (show.macd ? 100 : 0);
+    const height =
+      370 + (show.volume ? 115 : 0) + (show.rsi ? 100 : 0) + (show.macd ? 100 : 0);
     const chart = createChart(containerRef.current, {
       height,
       layout: {
@@ -59,16 +164,19 @@ export default function PriceChart({ bars, news }) {
         vertLines: { color: 'rgba(120,140,160,0.08)' },
         horzLines: { color: 'rgba(120,140,160,0.08)' },
       },
-      crosshair: { mode: 0 },
+      // magnet snaps the crosshair to OHLC values instead of floating between them
+      crosshair: { mode: 1 },
       timeScale: {
         borderColor: 'rgba(120,140,160,0.2)',
         timeVisible: intraday,
         secondsVisible: false,
+        rightOffset: 6, // breathing room so the newest marker is not clipped
       },
-      rightPriceScale: { borderColor: 'rgba(120,140,160,0.2)' },
+      rightPriceScale: { borderColor: 'rgba(120,140,160,0.2)', mode: scaleMode },
     });
+    chartRef.current = chart;
+    markersRef.current = null;
 
-    // main price series (selected type)
     let series;
     if (chartType === 'line') {
       series = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2 });
@@ -90,8 +198,8 @@ export default function PriceChart({ bars, news }) {
       });
       series.setData(bars);
     }
+    seriesRef.current = series;
 
-    // moving-average overlays
     if (show.ma) {
       for (const [period, color] of MA_CONFIG) {
         const data = smaSeries(bars, period);
@@ -100,36 +208,44 @@ export default function PriceChart({ bars, news }) {
       }
     }
 
-    // volume/turnover histogram overlaid at the bottom of the main pane
+    let paneIdx = 1;
+    // Volume gets its own pane and its own visible axis. Overlaid on the price
+    // pane it shared the frame with the price scale, so 53M volume bars sat
+    // beside axis labels reading ~310 and were read against the wrong scale.
     if (show.volume) {
-      const vol = chart.addSeries(HistogramSeries, {
-        priceScaleId: 'vol',
-        priceFormat: { type: 'volume' },
-        ...OVERLAY_OPTS,
-      });
-      chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      const vol = chart.addSeries(
+        HistogramSeries,
+        { priceFormat: { type: 'volume' }, priceLineVisible: false, title: 'Volume' },
+        paneIdx,
+      );
+      vol.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.02 } });
       vol.setData(
         bars.map((b) => ({
           time: b.time,
           value: b.volume ?? 0,
-          color: b.close >= b.open ? 'rgba(46,189,133,0.3)' : 'rgba(246,70,93,0.3)',
-        }))
+          color: b.close >= b.open ? 'rgba(46,189,133,0.55)' : 'rgba(246,70,93,0.55)',
+        })),
       );
+      try {
+        // tall enough for the axis to render intermediate ticks — at ~85px
+        // only the last-value badge fits, which is what made volume unreadable
+        chart.panes()[paneIdx].setHeight(110);
+      } catch { /* pane API optional */ }
+      paneIdx += 1;
     }
-
-    // indicator panes below the price pane
-    let paneIdx = 1;
     if (show.rsi) {
       const rsi = chart.addSeries(
         LineSeries,
         { color: '#f0b90b', lineWidth: 1.5, priceLineVisible: false, title: 'RSI 14' },
-        paneIdx
+        paneIdx,
       );
       rsi.setData(rsiSeries(bars));
       for (const [price, color] of [[70, 'rgba(246,70,93,0.45)'], [30, 'rgba(46,189,133,0.45)']]) {
         rsi.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
       }
-      try { chart.panes()[paneIdx].setHeight(95); } catch { /* pane API optional */ }
+      try {
+        chart.panes()[paneIdx].setHeight(95);
+      } catch { /* pane API optional */ }
       paneIdx += 1;
     }
     if (show.macd) {
@@ -142,66 +258,100 @@ export default function PriceChart({ bars, news }) {
         chart
           .addSeries(LineSeries, { color: '#f0b90b', lineWidth: 1, ...OVERLAY_OPTS }, paneIdx)
           .setData(signal);
-        try { chart.panes()[paneIdx].setHeight(95); } catch { /* pane API optional */ }
+        try {
+          chart.panes()[paneIdx].setHeight(95);
+        } catch { /* pane API optional */ }
         paneIdx += 1;
       }
     }
 
     chart.timeScale().fitContent();
 
-    // small gold dots above bars on dates that have news (one per date)
-    const newsDates = new Set(news.map((n) => n.date));
-    const seenDates = new Set();
-    const markers = [];
-    for (const b of bars) {
-      const d = toDateStr(b.time);
-      if (newsDates.has(d) && !seenDates.has(d)) {
-        seenDates.add(d);
-        markers.push({
-          time: b.time,
-          position: 'aboveBar',
-          color: '#f0b90b',
-          shape: 'circle',
-          size: 0.4,
-        });
-      }
-    }
-    createSeriesMarkers(series, markers);
-
     const volByTime = new Map(bars.map((b) => [String(b.time), b.volume]));
     const onMove = (param) => {
       if (!param.time || !param.point) {
-        setPopup(null);
         setHoverBar(null);
+        setHoverEvents(null);
         return;
       }
       const date = toDateStr(param.time);
       const barData = param.seriesData.get(series);
-      setHoverBar(
-        barData ? { date, volume: volByTime.get(String(param.time)), ...barData } : null
-      );
-
-      const hovered = new Date(date).getTime();
-      const items = news.filter((n) => {
-        if (!n.date) return false;
-        const diff = Math.abs(new Date(n.date).getTime() - hovered);
-        return diff <= NEWS_WINDOW_DAYS * 86400_000;
-      });
-      setPopup(items.length ? { x: param.point.x, date, items: items.slice(0, 3) } : null);
+      setHoverBar(barData ? { date, volume: volByTime.get(String(param.time)), ...barData } : null);
+      // Exact bar lookup — every event is snapped onto a bar, so the dot and the
+      // preview can no longer disagree about which dates have events.
+      const group = groupsRef.current.get(String(param.time));
+      setHoverEvents(group ? { x: param.point.x, date: group.date, items: group.items } : null);
     };
     chart.subscribeCrosshairMove(onMove);
 
-    const resize = () =>
-      chart.applyOptions({ width: containerRef.current.clientWidth });
+    // Click to pin. The hover preview is pointer-events:none so it cannot be
+    // clicked; the pinned panel is the interactive one. This is what stopped
+    // the flashing: previously the popup sat under the cursor, stole the
+    // mousemove, the chart reported "cursor left", the popup unmounted, the
+    // chart got the cursor back — repeating forever.
+    chart.subscribeClick((param) => {
+      if (!param.time || !param.point) return;
+      const group = groupsRef.current.get(String(param.time));
+      setPinned(group ? { x: param.point.x, date: group.date, items: group.items } : null);
+    });
+
+    const resize = () => chart.applyOptions({ width: containerRef.current.clientWidth });
     resize();
     window.addEventListener('resize', resize);
+    const onDblClick = () => chart.timeScale().fitContent();
+    const el = containerRef.current;
+    el.addEventListener('dblclick', onDblClick);
+
+    setChartEpoch((e) => e + 1);
     return () => {
       window.removeEventListener('resize', resize);
+      el.removeEventListener('dblclick', onDblClick);
       chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      markersRef.current = null;
     };
-  }, [bars, news, chartType, show]);
+  }, [bars, chartType, show, scaleMode]);
+
+  // ── markers, updated without rebuilding the chart ─────────────────
+  // Kept in its own effect so toggling a filter does not recreate the chart and
+  // throw away the zoom/pan the user set up.
+  useEffect(() => {
+    groupsRef.current = new Map(visibleGroups.map((g) => [String(g.time), g]));
+    if (!seriesRef.current) return;
+    const markers = visibleGroups.map((g) => ({
+      time: g.time,
+      position: 'aboveBar',
+      color: EVENT_COLOR[dominantType(g.items)],
+      shape: 'circle',
+      size: g.items.length > 2 ? 1.3 : 0.9,
+      text: g.items.length > 1 ? String(g.items.length) : undefined,
+    }));
+    if (markersRef.current) markersRef.current.setMarkers(markers);
+    else markersRef.current = createSeriesMarkers(seriesRef.current, markers);
+  }, [visibleGroups, chartEpoch]);
+
+  // a pinned panel for a bar that got filtered away would dangle
+  useEffect(() => {
+    if (pinned && !groupsRef.current.has(String(pinned.time ?? ''))) {
+      const still = visibleGroups.find((g) => g.date === pinned.date);
+      setPinned(still ? { ...pinned, items: still.items } : null);
+    }
+  }, [visibleGroups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (key) => setShow((s) => ({ ...s, [key]: !s[key] }));
+  const toggleType = (key) => setTypes((t) => ({ ...t, [key]: !t[key] }));
+
+  const zoom = (factor) => {
+    const ts = chartRef.current?.timeScale();
+    const range = ts?.getVisibleLogicalRange();
+    if (!range) return;
+    const mid = (range.from + range.to) / 2;
+    const half = ((range.to - range.from) / 2) * factor;
+    ts.setVisibleLogicalRange({ from: mid - half, to: mid + half });
+  };
+
+  const totalShown = visibleGroups.reduce((n, g) => n + g.items.length, 0);
 
   return (
     <div>
@@ -224,14 +374,29 @@ export default function PriceChart({ bars, news }) {
             ['rsi', 'RSI'],
             ['macd', 'MACD'],
           ].map(([key, label]) => (
+            <button key={key} className={`seg ${show[key] ? 'active' : ''}`} onClick={() => toggle(key)}>
+              {label}
+            </button>
+          ))}
+        </span>
+        <span className="seg-group">
+          {SCALE_MODES.map(([label, mode, title]) => (
             <button
-              key={key}
-              className={`seg ${show[key] ? 'active' : ''}`}
-              onClick={() => toggle(key)}
+              key={label}
+              title={title}
+              className={`seg ${scaleMode === mode ? 'active' : ''}`}
+              onClick={() => setScaleMode(mode)}
             >
               {label}
             </button>
           ))}
+        </span>
+        <span className="seg-group">
+          <button className="seg" title="Zoom in" onClick={() => zoom(0.7)}>＋</button>
+          <button className="seg" title="Zoom out" onClick={() => zoom(1.4)}>－</button>
+          <button className="seg" title="Fit all data (or double-click the chart)" onClick={() => chartRef.current?.timeScale().fitContent()}>
+            Reset
+          </button>
         </span>
         {show.ma && (
           <span className="ma-legend">
@@ -244,6 +409,31 @@ export default function PriceChart({ bars, news }) {
           </span>
         )}
       </div>
+
+      <div className="chart-toolbar event-filter">
+        <span className="filter-label">Markers</span>
+        {EVENT_TYPES.map(([key, label, color]) => {
+          const count = available[key] ?? 0;
+          return (
+            <button
+              key={key}
+              className={`chip ${types[key] && count ? 'on' : ''}`}
+              disabled={!count}
+              onClick={() => toggleType(key)}
+              title={count ? `${count} ${label} events in range` : `No ${label} events for this ticker`}
+            >
+              <span className="chip-dot" style={{ background: color }} />
+              {label}
+              <span className="chip-count">{count}</span>
+            </button>
+          );
+        })}
+        <span className="chart-note filter-note">
+          {totalShown} marker{totalShown === 1 ? '' : 's'} shown · click a dot to open its stories
+          {!filingsSupported && ' · SEC filings are US-only, so this ticker has news markers only'}
+        </span>
+      </div>
+
       <div className="chart-wrap">
         {hoverBar && (
           <div className="chart-legend">
@@ -260,23 +450,52 @@ export default function PriceChart({ bars, news }) {
           </div>
         )}
         <div ref={containerRef} />
-        {popup && (
+
+        {hoverEvents && !pinned && (
+          <div
+            className="news-preview"
+            style={{ left: Math.min(hoverEvents.x, (containerRef.current?.clientWidth ?? 400) - 320) }}
+          >
+            <div className="news-popup-date">
+              {hoverEvents.items.length} event{hoverEvents.items.length === 1 ? '' : 's'} ·{' '}
+              {hoverEvents.date} — click to open
+            </div>
+            {hoverEvents.items.slice(0, 3).map((n, i) => (
+              <div key={i} className="news-preview-row">
+                <span className="chip-dot" style={{ background: EVENT_COLOR[n.category] }} />
+                {n.title}
+              </div>
+            ))}
+            {hoverEvents.items.length > 3 && (
+              <div className="news-preview-row muted-note">+{hoverEvents.items.length - 3} more…</div>
+            )}
+          </div>
+        )}
+
+        {pinned && (
           <div
             className="news-popup"
-            style={{ left: Math.min(popup.x, (containerRef.current?.clientWidth ?? 400) - 340) }}
+            style={{ left: Math.min(pinned.x, (containerRef.current?.clientWidth ?? 400) - 340) }}
           >
-            <div className="news-popup-date">News near {popup.date}</div>
-            {popup.items.map((n, i) => (
-              <a key={i} href={n.url} target="_blank" rel="noreferrer" className="news-item">
-                <span className="news-meta">
-                  <span className={`news-tag ${n.category}`}>
-                    {n.category === 'macro' ? 'MACRO' : 'COMPANY'}
+            <div className="news-popup-date">
+              {pinned.date} · {pinned.items.length} event{pinned.items.length === 1 ? '' : 's'}
+              <button className="popup-close" onClick={() => setPinned(null)} title="Close">
+                ✕
+              </button>
+            </div>
+            <div className="news-popup-scroll">
+              {pinned.items.map((n, i) => (
+                <a key={i} href={n.url} target="_blank" rel="noreferrer" className="news-item">
+                  <span className="news-meta">
+                    <span className="news-tag" style={{ color: EVENT_COLOR[n.category] }}>
+                      {EVENT_LABEL[n.category]?.toUpperCase()}
+                    </span>
+                    {n.date} · {n.publisher || 'news'}
                   </span>
-                  {n.date} · {n.publisher || 'news'}
-                </span>
-                {n.title}
-              </a>
-            ))}
+                  {n.title}
+                </a>
+              ))}
+            </div>
           </div>
         )}
       </div>

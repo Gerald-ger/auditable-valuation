@@ -1,20 +1,44 @@
-"""Local AI (Ollama) client.
+"""Local AI (Ollama) client — async, streaming, reproducible.
 
-Talks to Ollama's HTTP API on localhost. Degrades gracefully: every call
-first checks availability so the website can show an 'AI offline' state
-until Ollama is installed (see README for install guidance).
+Three deliberate properties:
+
+1. **Async.** Every call goes over aiohttp inside `async def` endpoints. The old
+   client posted synchronously with a 300 s timeout from a `def` endpoint, so a
+   single reply parked a uvicorn threadpool worker for minutes and three
+   concurrent AI features made the whole site feel dead.
+
+2. **Reproducible.** `temperature: 0` plus a fixed `seed`. Ollama defaults to
+   temperature 0.8, which meant the same question produced a different answer
+   every time — unacceptable next to a deterministic scoring engine.
+
+3. **Adversarial.** `stream_debate` runs bull → bear → verdict as three separate
+   passes, each seeing the previous ones, instead of asking one model to hold
+   all three views at once. Disagreement is surfaced, not averaged away.
+
+The LLM still never computes or changes a number; it only argues over figures
+supplied in the context.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import AsyncIterator
 
-import requests
+import aiohttp
 
 OLLAMA_URL = "http://localhost:11434"
 MODEL = "qwen2.5:7b-instruct"  # good finance/reasoning quality at CPU-friendly size
 REFERENCE_DOC = Path(__file__).resolve().parent.parent / "docs" / "financial-models-reference.md"
 REFERENCE_CHAR_BUDGET = 16000  # keep system prompt within a 7-8B model's context
+
+# Determinism: the scoring engine is exactly reproducible, so the commentary on
+# it should be too. seed is arbitrary but must stay fixed to keep it that way.
+OPTIONS = {"temperature": 0, "seed": 7, "top_p": 1.0}
+
+STATUS_TIMEOUT_S = 2
+# A 7B model on CPU emits its first token slowly; cap the gap *between* tokens
+# rather than the total, so long answers are not truncated mid-sentence.
+READ_TIMEOUT_S = 300
 
 _SYSTEM_PROMPT = (
     "You are a professional financial analyst assistant specialized in investment-"
@@ -26,6 +50,10 @@ _SYSTEM_PROMPT = (
 )
 
 
+class AIUnavailable(RuntimeError):
+    """Ollama is not running, or the request to it failed."""
+
+
 def _reference_excerpt() -> str:
     try:
         text = REFERENCE_DOC.read_text(encoding="utf-8")
@@ -34,42 +62,74 @@ def _reference_excerpt() -> str:
         return ""
 
 
-def status() -> dict:
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
-        models = [m["name"] for m in r.json().get("models", [])]
-        return {"online": True, "models": models, "configured_model": MODEL,
-                "model_ready": any(m.startswith(MODEL.split(":")[0]) for m in models)}
-    except requests.RequestException:
-        return {"online": False, "models": [], "configured_model": MODEL, "model_ready": False}
-
-
-def chat(messages: list[dict], context: str = "") -> dict:
-    """messages: [{role: user|assistant, content: str}, ...]"""
-    st = status()
-    if not st["online"]:
-        return {"error": "ollama_offline",
-                "message": "Local AI is not running. Install/start Ollama first (see README)."}
+def _system_prompt(context: str) -> str:
     system = _SYSTEM_PROMPT + "## Methodology reference (excerpt)\n" + _reference_excerpt()
     if context:
         system += "\n\n## Live data for this conversation\n" + context
+    return system
+
+
+async def status() -> dict:
+    timeout = aiohttp.ClientTimeout(total=STATUS_TIMEOUT_S)
     try:
-        r = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": MODEL, "stream": False,
-                  "messages": [{"role": "system", "content": system}] + messages},
-            timeout=300,
-        )
-        r.raise_for_status()
-        return {"reply": r.json()["message"]["content"]}
-    except requests.RequestException as e:
-        return {"error": "ollama_error", "message": str(e)}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{OLLAMA_URL}/api/tags") as resp:
+                resp.raise_for_status()
+                body = await resp.json()
+    except (aiohttp.ClientError, TimeoutError):
+        return {"online": False, "models": [], "configured_model": MODEL, "model_ready": False}
+    models = [m["name"] for m in body.get("models", [])]
+    return {"online": True, "models": models, "configured_model": MODEL,
+            "model_ready": any(m.startswith(MODEL.split(":")[0]) for m in models)}
 
 
-def predict(ticker: str, quote: dict, history_tail: list[dict],
-            news: list[dict], analysis: dict) -> dict:
-    """One-shot outlook summary for the tracker tab."""
-    context = json.dumps({
+async def stream_chat(messages: list[dict], context: str = "") -> AsyncIterator[str]:
+    """Yield reply text deltas as the model produces them.
+
+    Raises AIUnavailable if Ollama cannot be reached or errors mid-stream.
+    """
+    payload = {
+        "model": MODEL,
+        "stream": True,
+        "options": OPTIONS,
+        "messages": [{"role": "system", "content": _system_prompt(context)}] + messages,
+    }
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=5, sock_read=READ_TIMEOUT_S)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(f"{OLLAMA_URL}/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for raw in resp.content:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    if chunk.get("error"):
+                        raise AIUnavailable(chunk["error"])
+                    delta = (chunk.get("message") or {}).get("content")
+                    if delta:
+                        yield delta
+                    if chunk.get("done"):
+                        return
+    except (aiohttp.ClientError, TimeoutError) as e:
+        raise AIUnavailable(
+            f"Local AI unreachable ({e}). Install/start Ollama first (see README)."
+        ) from e
+
+
+def outlook_prompt(ticker: str) -> str:
+    return (
+        f"Analyze {ticker}. Using the live data provided in the system context: "
+        "1) summarize how the stock got to its current price (past), "
+        "2) assess whether it looks under/over/fairly valued right now (present), "
+        "3) give a bull/base/bear outlook for the next 6-12 months with the key "
+        "drivers and risks (future). Be concise — under 400 words."
+    )
+
+
+def outlook_context(quote: dict, history_tail: list[dict],
+                    news: list[dict], analysis: dict) -> str:
+    return json.dumps({
         "quote": quote,
         "recent_prices_last_30_bars": history_tail,
         "recent_news_headlines": [
@@ -81,11 +141,45 @@ def predict(ticker: str, quote: dict, history_tail: list[dict],
             "analyst_target_mean": analysis.get("company", {}).get("targetMeanPrice"),
         },
     }, default=str)
-    prompt = (
-        f"Analyze {ticker}. Using the live data provided in the system context: "
-        "1) summarize how the stock got to its current price (past), "
-        "2) assess whether it looks under/over/fairly valued right now (present), "
-        "3) give a bull/base/bear outlook for the next 6-12 months with the key "
-        "drivers and risks (future). Be concise — under 400 words."
-    )
-    return chat([{"role": "user", "content": prompt}], context=context)
+
+
+NARRATIVE_PROMPT = (
+    "You are given a completed company score card. Write 4-6 sentences "
+    "explaining the strongest pillar, the weakest pillar, and what any "
+    "flags mean. Do not compute or change any numbers. Do not state any "
+    "figure not present in the input."
+)
+
+# Three passes, not one. Each stage sees the previous stages' text, so the bear
+# is attacking a specific argument rather than reciting generic risks.
+DEBATE_STAGES: list[tuple[str, str]] = [
+    ("bull", "You are the BULL-side analyst for {ticker}. Argue the strongest "
+             "honest case FOR owning this stock, using only figures present in "
+             "the system context. Cite the specific metrics that support you. "
+             "Under 250 words. Do not hedge — the bear will answer you."),
+    ("bear", "You are the BEAR-side analyst for {ticker}. The bull case is in the "
+             "debate transcript below. Attack its weakest assumptions specifically "
+             "— name which metric or claim you think is fragile and why. Add the "
+             "risks the bull ignored. Use only figures present in the system "
+             "context. Under 250 words."),
+    ("verdict", "You are the portfolio manager for {ticker}. Both sides have argued "
+                "below. Do NOT split the difference. State: (1) which side carried "
+                "the stronger evidence and why, (2) the single assumption the whole "
+                "thesis rests on, (3) what specific, observable development would "
+                "change your mind. Under 200 words. End with the reminder that this "
+                "is decision support, not certified financial advice."),
+]
+
+
+async def stream_debate(ticker: str, context: str) -> AsyncIterator[tuple[str, str]]:
+    """Yield (stage, text_delta) across the bull → bear → verdict passes."""
+    transcript: list[str] = []
+    for stage, instruction in DEBATE_STAGES:
+        prompt = instruction.format(ticker=ticker)
+        if transcript:
+            prompt += "\n\n## Debate transcript so far\n" + "\n\n".join(transcript)
+        buffer: list[str] = []
+        async for delta in stream_chat([{"role": "user", "content": prompt}], context=context):
+            buffer.append(delta)
+            yield stage, delta
+        transcript.append(f"### {stage.upper()}\n{''.join(buffer).strip()}")

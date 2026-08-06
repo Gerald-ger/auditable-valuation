@@ -7,6 +7,406 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-06 (d) — Readability: ratio quality bars, revenue trend, scorecard verdict
+
+Verified in a real browser over CDP.
+
+### Fixed
+
+- **The revenue trend chart could not show what it was for.** Bars were drawn as
+  `revenue / max`, and because a mature company's revenue barely moves, every bar
+  came out nearly the same length: AAPL's four years spanned **92.1%–100%** of the
+  width — a 7.9pp visual difference for a real 8.6% change. XOM was worse: its
+  revenue *fell* (−16.0%, +1.4%, −4.5%) and the bars did not show it at all.
+  Truncating the bar axis would have made the difference visible by overstating
+  it — a bar's length is its value — so the form changed instead, per the
+  dataviz method (trend over time → line; above/below a baseline → diverging bar):
+  - **level** is now a line with a near-range baseline, which is legitimate for a
+    line and makes the shape readable;
+  - **year-on-year change** gets its own zero-centred diverging bars, where the
+    real spread lives.
+  Every year's absolute revenue is still printed beside its bar, so no value is
+  reachable only by hovering.
+
+- **Revenue axis labels pointed at the wrong heights.** First pass placed the
+  min/max labels at the top and bottom of the plot box while the line was inset
+  by its padding. They are now pinned to the actual plotted y positions.
+
+- **The football field's price marker was drawn inside every row**, so it read as
+  a per-row tick rather than one reference. It is now a single rule spanning the
+  plot with a value tag, plus a labelled min/mid/max axis and a per-method
+  verdict (`price above` / `price below` / `in range`). The verdict wording is
+  spelled out because "above" alone did not say *what* was above what.
+
+### Added
+
+- **Quality bars on every ratio.** The Financial Models tab showed raw numbers
+  with no indication of whether they were good — the reader had to know from
+  memory that a 1.0 current ratio is mediocre. Each ratio now carries the 0–100
+  score the scorecard already computes from its calibrated anchor curves, as a
+  small colour-banded bar. **No new thresholds were invented** — it reuses the
+  engine covered by the golden tests, so the two tabs cannot disagree about the
+  same number. Metrics a company's sector profile drops (EV/EBITDA for a bank)
+  render a dashed "not scored for this type" bar rather than an empty gap.
+  Measured on AAPL: EV/EBITDA 27.2 → **7**, operating margin 32.6% → **100**,
+  current ratio 1.0 → **50**. `ModelsTab.jsx`
+
+- **A computed verdict line on the Scorecard**, above the pillars: e.g. "Mixed
+  overall at 64/100. Quality is the strongest pillar (82), valuation the weakest
+  (22)." Deliberately composed from the pillar scores rather than written by the
+  LLM — it must work with Ollama offline, never state a figure the engine did not
+  produce, and say the same thing every time. It also names any pillar excluded
+  from the composite and flags sub-HIGH confidence.
+
+- `scoreColor` moved into `format.js` and shared, replacing the copy that lived
+  in `ScorecardTab` — the Models tab needed the same banding and two definitions
+  would have drifted.
+
+### Changed
+
+- The DCF panel title said "5-year FCFF", which stopped being true when the model
+  became two-stage. It now reads "two-stage FCFF" and states the actual shape
+  from the payload (`5 explicit years + 5-year fade`).
+- Opening the Financial Models tab now also fetches `/api/score` (cached, so
+  near-free) and therefore records a score-history row. Harmless — history is
+  upserted once per ticker per UTC day, so it is the same row the Scorecard tab
+  would have written.
+
+### Not done (deliberately)
+
+Two options offered and not chosen: expanding pillar metric detail by default,
+and grouping the Scorecard into sections. Both left as-is.
+
+---
+
+## 2026-08-06 (c) — Chart: SEC event markers, volume axis, click-to-open, interactions
+
+Verified in a real browser (headless Chrome driven over CDP), not by inspection.
+
+### Fixed
+
+- **Volume was drawn against the price axis.** The histogram sat on a hidden
+  `priceScaleId: 'vol'` overlaid on the price pane, so the only visible axis
+  beside 34M–132M volume bars was the *price* scale reading ~310. The data was
+  never wrong — verified `auto_adjust=True` does not alter Volume and the API
+  serves the true figures (AAPL 2026-07-06 = 53,590,000). Volume now has its own
+  pane and its own scale, so it cannot be misread.
+  *Known cosmetic limit:* in a pane this short lightweight-charts renders only
+  the last-value badge (`49.18M`) and no intermediate ticks. Tried a custom
+  price formatter to force them; it changed the badge format but produced no
+  ticks either, so it was reverted rather than left as unexplained complexity.
+  The value is readable from the badge and the hover legend.
+
+- **News dots flashed and could not be clicked.** The popup was rendered under
+  the cursor with `pointer-events: auto`. Hovering it took the mousemove away
+  from the chart, the chart reported "cursor left", the popup unmounted, the
+  chart got the cursor back, and it re-mounted — forever. Split into a
+  `pointer-events: none` hover **preview** that cannot steal the cursor, and a
+  **click-to-pin** panel that is the interactive one, with a close button.
+  *Verified over CDP:* preview stayed visible on **20/20** jitter samples on the
+  marker (the flash test), a click produced a pinned panel with a live link
+  (`sec.gov/Archives/edgar/data/320193/...-index.htm`), and the panel survived
+  the cursor moving away.
+
+- **Markers only appeared on exact date matches.** A marker was drawn only where
+  a bar's date equalled a news date, while the popup used a ±3-day window — so
+  the dots and the popup disagreed, and any event on a non-trading day produced
+  no dot at all. Events are now snapped to the next trading bar on or after
+  their date (clamped to the last bar for events dated after it, e.g. today's
+  news against yesterday's close), and both the dot and the lookup use that
+  same bar.
+
+### Added
+
+- **SEC filings as chart events**, because the real cause of "only 2 dots" was
+  the data, not the chart: yfinance returns 20 news items for AAPL spanning
+  **3 distinct dates**, of which 2 fell inside the chart range. The chart was
+  already drawing every dot it had. New `provider.get_filings()` (SEC via
+  OpenBB — free, no key) adds **278 events across 140 distinct dates back to
+  2021** for AAPL. Measured on a 5-year chart: **142 dot-bars, or 62 with
+  insider filings off by default**, against 2 before.
+  Filing types are mapped to categories (`10-K/10-Q → earnings`,
+  `8-K → material`, `3/4/5 → insider`) and everything else — 144, SC 13G/A,
+  PX14A6G — is dropped as chart noise.
+  **US-only:** EDGAR has no CIK for HK listings, so `.HK` tickers return `[]`
+  without paying a round-trip to fail, and the UI says so rather than leaving
+  it unexplained.
+
+- **`GET /api/stock/{ticker}/events`** — news + filings merged, with per-category
+  counts and a `filings_supported` flag. Deliberately separate from `/news`:
+  the AI context keeps consuming headlines only, because 217 Form 4 filings
+  would crowd a 7B model's prompt out of the stories that explain a price move.
+
+- **Marker type filter** — one chip per category with its live count; clicking
+  toggles it. Insider filings (217 of 278 for AAPL) start **off**. Markers live
+  in their own effect, so toggling a filter no longer rebuilds the chart and
+  throws away your zoom.
+
+- **Standard chart interactions**: magnet crosshair (snaps to OHLC), Lin/Log/%
+  price-scale modes, zoom in/out buttons, Reset, and double-click-to-fit.
+  Scroll-to-zoom and drag-to-pan already worked but were undocumented — the
+  caption now says so.
+
+### Verified, no change needed
+
+Volume figures themselves: `auto_adjust=True` leaves Volume untouched, and the
+served values match the source exactly.
+
+---
+
+## 2026-08-06 (b) — Valuation accuracy: beta, two-stage DCF, credit spread, jurisdiction tax
+
+All measured on the committed fixtures with the risk-free rate pinned to 4.3% so
+the before/after is not contaminated by treasury drift.
+
+### Fixed
+
+- **An unvetted beta was the single largest error in the whole valuation.**
+  `_wacc()` trusted `info["beta"]` with only an `or 1.0` guard for `None`.
+  yfinance reports **0.173 for XOM** — implausible for an oil major — which
+  produced WACC 5.11% and made the stock look 33.9% undervalued. Sensitivity
+  measured across the plausible range:
+
+  | beta | WACC | fair value | upside |
+  |---|---|---|---|
+  | 0.17 (reported) | 5.11% | 203.02 | **+33.9%** |
+  | 0.60 | 7.13% | 111.23 | −26.6% |
+  | 0.90 | 8.53% | 83.69 | −44.8% |
+  | 1.10 | 9.47% | 71.41 | −52.9% |
+
+  A **79-point swing in upside from one field.** New `resolve_beta()` keeps a
+  reported beta only inside `[0.3, 2.5]`, otherwise substitutes the median of the
+  peers' betas, otherwise 1.0. The chosen beta, its source and the raw reported
+  value are all returned so the substitution is auditable.
+  *Live impact:* XOM upside **+32.8% → −55.7%**, scorecard 75 → **69**
+  (`dcf_upside_pct` metric 84 → 0). `backend/financial_models.py`
+
+- **Peer-median beta does not rescue the case that motivated it — and now says
+  so.** Measured across sectors, peer betas are usually fine (AAPL 4/4 usable,
+  JPM 4/4, KO 4/4, 0700.HK 3/4) but **yfinance's energy betas are broken
+  sector-wide**: XOM's peers return CVX 0.488, COP 0.123, SHEL **−0.218**,
+  BP **−0.212**. Only one clears the credibility band, and 0.488 is still
+  implausible. A median of one observation is not a median, so `MIN_PEER_BETAS = 2`
+  makes those cases fall through to the neutral 1.0 default rather than
+  laundering a single bad number as "peer evidence".
+
+- **Every company paid an identical cost of debt.** `cost_of_debt = rf + 0.015`
+  was flat, so a net-cash issuer and a highly levered REIT were charged the same.
+  Measured: all seven fixtures returned `cost_of_debt_after_tax = 0.046`,
+  identical to four decimal places. Replaced with a synthetic-rating ladder keyed
+  on interest coverage (EBIT / interest). *Live impact:* MSFT (55.4× coverage)
+  and XOM (69.4×) pay 0.6%, O (2.04×) pays 3.0% — after-tax Kd 4.13% vs 6.03%.
+
+- **Hong Kong issuers were taxed at the US 21%.** `tax_rate_for()` now resolves
+  the statutory rate from the listing currency (HKD 16.5%, USD 21%); yfinance does
+  not forward a country field through the `get_fundamentals` whitelist, so currency
+  is the proxy. The same rate now feeds NOPAT in the `roic` metric, which had also
+  been hardcoded at 21%. *Impact is small and was measured before being
+  prioritised:* 0700.HK fair value 490.16 → 488.30 in isolation (0.4%), because tax
+  only scales the debt leg and debt is 9% of that capital structure. 0700.HK
+  `roic` metric 95 → 96.
+
+- **FCF and net income could still drift apart.** `_statement_fcf()` and the
+  net-income lookup scanned for their periods independently — they happened to
+  agree on all seven fixtures, but nothing enforced it, which is how the FCF bug
+  fixed earlier today arose in the first place. `_statement_fcf()` now returns
+  `(period, value)` and `fcf_conversion` pins net income to that exact period via
+  the new `_value_at()`, dropping the metric (with a
+  `fcf_conversion_period_mismatch` flag) rather than computing a mixed-basis
+  ratio. When FCF falls back to `info["freeCashflow"]` there is no verified period,
+  so conversion is not computed at all.
+
+### Changed
+
+- **Two-stage DCF: 5 explicit years + 5 fade years, replacing a single 5-year
+  fade.** The old shape compressed a durable compounder's entire growth phase into
+  five years. *Measured (fair value, upside):* MSFT 179.89 → **319.49**
+  (−63.1% → −34.5%), AAPL 112.68 → **143.99** (−63.8% → −53.7%), 0700.HK
+  490.16 → **628.44** (+1.8% → +30.5%), O 19.29 → **23.18**.
+
+  It also fixed the terminal-dominance problem as a by-product, which was not the
+  stated goal: **terminal value fell from 72–88% of enterprise value to 51–66%**
+  (XOM 88% → 51%, AAPL 72% → 55%, MSFT 73% → 60%), because ten explicit years
+  capture value the perpetuity used to absorb.
+
+- **DCF trust diagnostics** are now returned and shown in the Financial Models
+  tab: `terminal_value_share` (with a >75% warning line, the conventional
+  threshold above which the perpetuity rather than the forecast is driving the
+  answer) and `implied_exit_ev_ebitda` — what multiple the terminal value assumes
+  the market pays in year 10, next to today's multiple. This is the check that
+  explains the mega-cap results: AAPL's DCF implies exiting at **8.5×** EBITDA
+  against **27.2×** today, MSFT **5.0×** against **18.9×**. The model's negative
+  verdict is an assumption of severe multiple compression, now visible instead of
+  buried. The panel also surfaces the beta and its source, the credit spread and
+  coverage, the tax rate, and the exact FCF period used.
+
+- **Peer discovery falls back to FMP.** `suggest_peers()` keeps the curated map
+  first — FMP is measurably worse where a curated list exists (UPS → HWM, GD, MMM)
+  — and uses `obb.equity.compare.peers(provider="fmp")` only for the rest.
+  Verified working on the free tier and it covers HK. *Impact:* ASML went from no
+  peers to `MU, AMD, CSCO, AMAT` and its football field from 2 bars to 3.
+  Successes are cached for the process lifetime; failures are not, matching the
+  `risk_free_rate` convention. `backend/comps.py`
+
+- `dcf_valuation()` stays a **pure function**. Peer betas are resolved by the
+  caller and injected, and `main._peer_betas()` only fetches when the reported
+  beta is already implausible — so the common path makes no extra network calls,
+  the offline test suite stays offline, and the AI endpoints resolve it inside
+  `asyncio.to_thread` rather than on the event loop.
+
+### Score re-basing
+
+Regenerating the golden snapshots moved three of seven fixtures. Every other
+score is byte-identical.
+
+| Ticker | Composite | Cause |
+|---|---|---|
+| XOM | 75 → **69** | beta 0.173 → 1.0; `dcf_upside_pct` 84 → 0 |
+| 0700.HK | 73 → **75** | two-stage DCF + HK tax; `dcf_upside_pct` 52 → 82, `roic` 95 → 96 |
+| MSFT | 72 → **72** | `dcf_upside_pct` 0 → 7 (valuation 31 → 33) |
+| AAPL, JPM, O, RIVN | unchanged | AAPL's upside improved −63.8% → −53.7% but is still past the −40% anchor floor, so the metric stays 0 |
+
+### Verified, no change needed
+
+Checked against the fixtures before assuming a problem existed:
+`Interest Expense` is reported **positive** by yfinance, so interest coverage was
+never sign-flipped; the four DuPont inputs already resolve to one period on all
+seven fixtures; `sharesOutstanding` agrees with `marketCap / price` to within
+0.01% (RIVN 0.27%), so per-share fair value was never distorted; and
+`revenue_cagr_3y` genuinely spans 3 years on every fixture.
+
+### Still open
+
+- The beta credibility band catches extremes, not a plausible-but-wrong 0.45.
+- `EQUITY_RISK_PREMIUM` is still a flat 5% for every market and period, and HK
+  issuers still discount at the US 10Y.
+- XOM's growth input is 0% (analyst consensus), which does more work in its
+  −55.7% result than the beta fix does. Growth sourcing was not in scope here.
+
+---
+
+## 2026-08-06 (a) — Score history, screener, portfolio; scoring FCF fix; async AI
+
+### Fixed
+
+- **The scorecard was still using the FCF source the DCF fix rejected.**
+  The 2026-08-02 entry below fixed `dcf_valuation()` to read free cash flow from the
+  cash-flow statement, but `scoring.py` was never updated and kept reading
+  `info["freeCashflow"]` for **both** `fcf_yield` (valuation pillar) and
+  `fcf_conversion` (quality pillar). Re-measured 2026-08-06, the field is still a
+  single quarter for some issuers and annual for others: MSFT **0.244×**, GOOGL
+  **0.309×**, 0700.HK 0.684×, XOM 0.875×, AAPL 1.091× of the annual statement.
+  Worse, `fcf_conversion` divided that possibly-quarterly figure by net income taken
+  from the *annual* income statement — a mixed-basis ratio, not a conversion rate.
+  `extract_metrics()` now uses `_statement_fcf()` first and falls back to
+  `info["freeCashflow"]` only when the statement lacks both legs, raising a new
+  `fcf_from_info_unverified_period` flag when it does.
+  *Impact* (fixtures, risk-free rate pinned): MSFT `fcf_conversion` metric score
+  **7 → 30** and `fcf_yield` **21 → 38**, composite 70 → **72**; 0700.HK composite
+  68 → **72** (valuation 46 → 59, quality 80 → 85); XOM 72 → **74**; AAPL 65 → **64**.
+  Verified period alignment: `_statement_fcf` and the net-income lookup resolve to
+  the same period on all six fixtures. MSFT's resulting 0.501 conversion is real —
+  FY26 net income $133.7 B against $67.0 B FCF. `backend/scoring.py`,
+  `docs/scoring-system-design.md`
+
+- **Scorecard drew a full-width bar for pillars excluded from the composite.**
+  `ScorecardTab` branched only on `data.score === null`, but a pillar can carry a
+  real score *and* `insufficient: true`, in which case the composite drops it. A
+  pillar could read 97 while contributing nothing. It now renders the score struck
+  through with the availability percentage and an explicit "excluded from the
+  composite" note. `frontend/src/components/ScorecardTab.jsx`
+
+- **AI replies were not reproducible.** Ollama defaults to `temperature 0.8`, so the
+  same question produced a different answer each time — next to a deterministic
+  scoring engine. Now `temperature: 0`, fixed `seed`, `top_p: 1`.
+  `backend/ai_client.py`
+
+### Added
+
+- **Score history (SQLite).** Every `/api/score/{ticker}` and every screener row
+  upserts one row per ticker per UTC day into `backend/data/app.db`, storing the
+  composite, all five pillars, tier, confidence, coverage — and **the price at
+  scoring time**. That price column is the point: the anchor tables in `scoring.py`
+  are hand-set heuristics that `docs/scoring-system-design.md` §5 admits are
+  validated for consistency, not forward returns. Nothing was previously recorded,
+  so the question could not even be asked. New `GET /api/score/{ticker}/history`
+  and a composite-vs-price chart on the Scorecard tab. `backend/store.py`
+
+- **Screener tab** — paste a list, score and rank it with the same deterministic
+  engine. `POST /api/score/batch` (max 50 tickers, 4-way concurrent fetch,
+  duplicates merged). Per `docs/scoring-system-design.md` §4.3, cards below 60%
+  coverage are returned but marked `rankable: false` and excluded from the ordering
+  rather than silently taking a place they cannot support. Measured: 6 tickers in
+  5.1 s on a cold cache.
+
+- **Portfolio tab** — watchlist and holdings with cost basis, live pricing,
+  unrealized P&L, weights, top-1/top-3 concentration and a Herfindahl index. A row
+  with 0 shares is a watchlist entry. The latest stored score is joined onto each
+  row. `GET/POST/DELETE /api/portfolio*`
+
+- **Bull vs bear debate** — `POST /api/ai/debate/{ticker}` runs three separate
+  passes (bull → bear → verdict), each seeing the previous, instead of asking one
+  model to hold all three views at once. The verdict is instructed not to split the
+  difference and to name what would change its mind.
+
+- **pytest suite, 57 tests, fully offline.** Replaces the hand-run
+  `backend/test_scoring.py` assert script. Seven real `get_fundamentals` payloads are
+  committed to `backend/tests/fixtures/` (280 KB), chosen to cover technology,
+  bank, REIT, energy, pre-profit and HK paths plus MSFT as the FCF regression case.
+  Golden snapshots of every card are checked in; regenerate deliberately with
+  `UPDATE_GOLDEN=1` and review the diff. Verified the snapshots actually fail when
+  the FCF fix is reverted (5 of 7 fixtures break; JPM and O correctly do not use FCF
+  metrics). Live provider-contract tests are marked `network` and deselected by
+  default. `backend/tests/`, `pytest.ini`
+
+- **CI** — `.github/workflows/ci.yml`: ruff + pytest on Python 3.14, and
+  oxlint + vite build for the frontend. `backend/requirements-test.txt` keeps the CI
+  install to pytest/yfinance/pandas rather than the full 107-package runtime set.
+
+### Changed
+
+- **All AI endpoints stream.** `ai_client` moved from synchronous `requests` to
+  `aiohttp`, and chat, outlook, narrative and debate are now `async def` returning
+  newline-delimited JSON. Previously a 60–180 s CPU reply parked a uvicorn threadpool
+  worker with a 300 s timeout and the UI showed nothing until it finished. Every
+  blocking yfinance call inside an async endpoint goes through `asyncio.to_thread`,
+  so moving to `async def` did not relocate the stall onto the event loop.
+  Verified: `/api/health` takes 2.22 s alone and 2.23 s while a stream is running
+  (the 2 s is the Ollama connect timeout itself), and three concurrent streams
+  complete in 3.9 s versus 3.5 s for one. **No new dependency** — `aiohttp` 3.14.3
+  was already present via OpenBB, and installing pytest shifted no versions.
+  `AIUnavailable` becomes a terminal stream event rather than an HTTP error, because
+  by the time the model fails the response headers are long gone.
+
+- **TTL cache (15 min) on `get_fundamentals` and `get_peer_snapshot`.** One scorecard
+  page load previously fetched the same ticker twice (`/api/score` plus
+  `/api/stock/../comps`) on top of four peer snapshots. `get_quote` is deliberately
+  left uncached — a live tracker must stay live. Measured: 2.57 s cold, 0.0000 s
+  warm. `TODOLIST.md` deferred this until "the first FMP-backed endpoint entering the
+  request path"; batch screening is the equivalent trigger, since it multiplies the
+  repeat fetches by N. `backend/data_provider.py`
+
+- `full_analysis()` is now wrapped by `_guard` on `/api/stock/{ticker}/analysis`, so a
+  model-layer exception returns 502 with a message instead of a bare 500.
+
+### Known gaps — deliberately not addressed here
+
+- **The bull/bear debate and all streaming output are unverified end-to-end.** Ollama
+  is not installed on this machine (`localhost:11434` unreachable), so only the
+  offline path was exercised: all four AI endpoints emit a well-formed
+  `ai_unavailable` event and the UI renders it. Token-level streaming, debate
+  staging and reply quality have never been observed running.
+- `_statement_fcf()` and the net-income lookup scan for their periods
+  independently. They align on all seven fixtures and the golden tests will catch
+  drift, but alignment is not enforced by construction.
+- The methodology reference is still hard-truncated at 16,000 characters
+  (`ai_client._reference_excerpt`), so the back half of a 1,087-line document never
+  reaches the model. Retrieval instead of truncation is still open.
+- Portfolio totals sum mixed currencies at face value with no FX conversion; the UI
+  warns when holdings span more than one currency.
+
+---
+
 ## 2026-08-02 — OpenBB installed; DCF correctness fixes
 
 ### Fixed

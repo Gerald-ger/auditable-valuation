@@ -39,11 +39,11 @@ Five core pillars, plus one optional AI-assisted pillar. All core metrics are co
 | Metric | Source (yfinance) | Direction | Notes |
 |---|---|---|---|
 | Earnings yield (fwd) = 1 / forwardPE | `info.forwardPE` (fallback `trailingPE`) | higher = better | Negative EPS → metric scores 0, not missing (expensive by definition) |
-| FCF yield = freeCashflow / marketCap | `info.freeCashflow`, `info.marketCap` | higher = better | Reference §4.1: >6–8% notable |
+| FCF yield = FCF / marketCap | `cash_flow` statement (`OCF + CapEx`, same period), `info.marketCap`; `info.freeCashflow` **fallback only** | higher = better | Reference §4.1: >6–8% notable. `info.freeCashflow` is a single quarter for some issuers and annual for others (measured 2026-08-06: MSFT 0.244×, GOOGL 0.309× of the annual statement), which silently rescales the metric — same trap `dcf_valuation()` avoids. Falling back raises the `fcf_from_info_unverified_period` flag |
 | EV/EBITDA | `info.enterpriseToEbitda` | lower = better | Skip for banks/insurance (§2.1.2 of reference: meaningless) |
 | P/B | `info.priceToBook` | lower = better | Weighted up for financials; pair with ROE (justified P/B, ref §1.3) |
 | EV/Sales | `info.enterpriseToRevenue` | lower = better | Only used for PRE_PROFIT type (ref §2.1.2) |
-| DCF upside % | existing `dcf_valuation()` output `upside_pct` | higher = better | Only when DCF is applicable per §7.1 (skip banks/REITs/pre-profit) |
+| DCF upside % | existing `dcf_valuation()` output `upside_pct` | higher = better | Only when DCF is applicable per §7.1 (skip banks/REITs/pre-profit). **Known limitation:** the anchor floors at −40%, and a two-stage FCFF DCF puts several quality mega-caps past it (AAPL −53.7% as of 2026-08-06), so they all score 0 and the metric stops discriminating among them. That is the model's honest verdict — a 2.2% FCF yield discounted at ~9.6% is expensive on FCFF — not a data fault, so it is scored rather than suppressed. Read it alongside the DCF's implied exit multiple: AAPL's terminal value assumes exiting at 8.5× EV/EBITDA against 27.2× today, i.e. severe multiple compression |
 | Dividend yield | `info.dividendYield` | higher = better | Only for MATURE_PAYER / utilities / REITs; gated by payout sustainability |
 
 ⬆ OpenBB: NTM consensus multiples, peer-median comparison (peer-relative percentile mode, §2.2 below), P/AFFO for REITs.
@@ -56,7 +56,7 @@ Five core pillars, plus one optional AI-assisted pillar. All core metrics are co
 | ROIC proxy = NOPAT / (debt + equity − cash) | statements + info | higher = better | The single best quality metric per ref §4.1; compare vs WACC from `_wacc()` |
 | Operating margin | `info.operatingMargins` | higher = better | Sector-specific anchors (see 2.3) |
 | Gross margin | `info.grossMargins` | higher = better | Sector-specific anchors |
-| FCF conversion = FCF / Net Income | info + statements | higher = better | <0.8 for 2+ yrs is a QoE flag (ref §4.3 #2); score low |
+| FCF conversion = FCF / Net Income | both legs from the `cash_flow` / `income_statement` **statements** | higher = better | <0.8 for 2+ yrs is a QoE flag (ref §4.3 #2); score low. Both legs must be annual: pairing `info.freeCashflow` (a quarter for some issuers) with annual net income is a mixed-basis ratio, not a conversion rate |
 
 #### Pillar H — Financial Health (can it survive stress?)
 

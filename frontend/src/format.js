@@ -16,3 +16,11 @@ export function pct(v, digits = 1) {
   if (v === null || v === undefined) return '—';
   return (v * 100).toFixed(digits) + '%';
 }
+
+/** Shared 0-100 score banding, so the Models and Scorecard tabs never disagree. */
+export function scoreColor(s) {
+  if (s === null || s === undefined) return 'var(--muted)';
+  if (s >= 65) return 'var(--up)';
+  if (s >= 50) return 'var(--gold)';
+  return 'var(--down)';
+}

@@ -1,0 +1,7 @@
+# Minimum needed to run backend/tests offline.
+# Not the app's runtime set — that is requirements.post-openbb.txt. yfinance is
+# here only because data_provider imports it at module scope, and
+# financial_models imports data_provider; the tests themselves never call it.
+pytest
+yfinance
+pandas

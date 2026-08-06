@@ -1,0 +1,411 @@
+{
+ "0700_HK": {
+  "classification": "communication_svcs",
+  "composite_score": 75,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 82,
+     "pe_gap": 91,
+     "revenue_cagr_3y": 76,
+     "revenue_growth": 67
+    },
+    "score": 79
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "current_ratio": 89,
+     "debt_equity": 94,
+     "interest_coverage": 100,
+     "net_debt_ebitda": 100
+    },
+    "score": 96
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 96,
+     "price_vs_200dma": 30,
+     "range_52w_pos": 32,
+     "rel_52w_change": 11
+    },
+    "score": 42
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "fcf_conversion": 66,
+     "gross_margin": 81,
+     "operating_margin": 100,
+     "roe": 86,
+     "roic": 96
+    },
+    "score": 86
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dcf_upside_pct": 82,
+     "earnings_yield_fwd": 84,
+     "ev_ebitda": 43,
+     "fcf_yield": 64
+    },
+    "score": 68
+   }
+  },
+  "tier": "A"
+ },
+ "AAPL": {
+  "classification": "technology",
+  "composite_score": 64,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [
+   "dupont_leverage_cap_applied"
+  ],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 87,
+     "pe_gap": 62,
+     "revenue_cagr_3y": 39,
+     "revenue_growth": 82
+    },
+    "score": 67
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "current_ratio": 50,
+     "debt_equity": 64,
+     "interest_coverage": 100,
+     "net_debt_ebitda": 99
+    },
+    "score": 78
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 53,
+     "price_vs_200dma": 82,
+     "range_52w_pos": 81,
+     "rel_52w_change": 86
+    },
+    "score": 76
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "fcf_conversion": 70,
+     "gross_margin": 71,
+     "operating_margin": 100,
+     "roe": 70,
+     "roic": 100
+    },
+    "score": 82
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dcf_upside_pct": 0,
+     "earnings_yield_fwd": 41,
+     "ev_ebitda": 7,
+     "fcf_yield": 42
+    },
+    "score": 22
+   }
+  },
+  "tier": "B"
+ },
+ "JPM": {
+  "classification": "financials_bank",
+  "composite_score": 70,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [
+   "dupont_leverage_cap_applied"
+  ],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 98,
+     "pe_gap": 57,
+     "revenue_growth": 96
+    },
+    "score": 84
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "equity_assets": 67
+    },
+    "score": 67
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 52,
+     "price_vs_200dma": 87,
+     "range_52w_pos": 97,
+     "rel_52w_change": 57
+    },
+    "score": 73
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "roa": 79,
+     "roe": 70
+    },
+    "score": 75
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dividend_yield": 51,
+     "earnings_yield_fwd": 76,
+     "p_b": 52
+    },
+    "score": 60
+   }
+  },
+  "tier": "A"
+ },
+ "MSFT": {
+  "classification": "technology",
+  "composite_score": 72,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 89,
+     "pe_gap": 89,
+     "revenue_cagr_3y": 87,
+     "revenue_growth": 84
+    },
+    "score": 87
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "current_ratio": 77,
+     "debt_equity": 95,
+     "interest_coverage": 100,
+     "net_debt_ebitda": 97
+    },
+    "score": 92
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 72,
+     "price_vs_200dma": 83,
+     "range_52w_pos": 73,
+     "rel_52w_change": 18
+    },
+    "score": 62
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "fcf_conversion": 30,
+     "gross_margin": 91,
+     "operating_margin": 100,
+     "roe": 100,
+     "roic": 98
+    },
+    "score": 84
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dcf_upside_pct": 7,
+     "earnings_yield_fwd": 58,
+     "ev_ebitda": 30,
+     "fcf_yield": 38
+    },
+    "score": 33
+   }
+  },
+  "tier": "A"
+ },
+ "O": {
+  "classification": "real_estate_reit",
+  "composite_score": 64,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [
+   "fcf_from_info_unverified_period"
+  ],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 76,
+     "revenue_cagr_3y": 95,
+     "revenue_growth": 75
+    },
+    "score": 82
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "debt_equity": 79,
+     "interest_coverage": 26,
+     "net_debt_ebitda": 32
+    },
+    "score": 46
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 62,
+     "price_vs_200dma": 60,
+     "range_52w_pos": 62,
+     "rel_52w_change": 41
+    },
+    "score": 56
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "operating_margin": 100,
+     "roe": 21
+    },
+    "score": 60
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dividend_yield": 94,
+     "ffo_yield": 71,
+     "p_b": 75
+    },
+    "score": 80
+   }
+  },
+  "tier": "B"
+ },
+ "RIVN": {
+  "classification": "pre_profit_growth",
+  "composite_score": 74,
+  "confidence": "MEDIUM",
+  "coverage_pct": 100,
+  "flags": [],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "revenue_cagr_3y": 100,
+     "revenue_growth": 95
+    },
+    "score": 98
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "cash_runway_q": 100,
+     "debt_equity": 63
+    },
+    "score": 82
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 83,
+     "price_vs_200dma": 47,
+     "range_52w_pos": 41,
+     "rel_52w_change": 75
+    },
+    "score": 62
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "gross_margin": 10,
+     "operating_margin": 10
+    },
+    "score": 10
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "ev_sales": 78
+    },
+    "score": 78
+   }
+  },
+  "tier": "A"
+ },
+ "XOM": {
+  "classification": "energy",
+  "composite_score": 69,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 100,
+     "pe_gap": 100,
+     "revenue_cagr_3y": 10,
+     "revenue_growth": 99
+    },
+    "score": 77
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "current_ratio": 67,
+     "debt_equity": 98,
+     "interest_coverage": 100,
+     "net_debt_ebitda": 95
+    },
+    "score": 90
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "analyst_upside": 65,
+     "price_vs_200dma": 77,
+     "range_52w_pos": 70,
+     "rel_52w_change": 89
+    },
+    "score": 75
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "fcf_conversion": 62,
+     "gross_margin": 43,
+     "operating_margin": 70,
+     "roe": 60,
+     "roic": 71
+    },
+    "score": 61
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dcf_upside_pct": 0,
+     "earnings_yield_fwd": 76,
+     "ev_ebitda": 72,
+     "fcf_yield": 58
+    },
+    "score": 51
+   }
+  },
+  "tier": "A"
+ }
+}

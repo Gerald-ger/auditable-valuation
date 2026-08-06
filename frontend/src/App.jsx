@@ -3,6 +3,20 @@ import { get } from './api';
 import TrackerTab from './components/TrackerTab';
 import ModelsTab from './components/ModelsTab';
 import ScorecardTab from './components/ScorecardTab';
+import ScreenerTab from './components/ScreenerTab';
+import PortfolioTab from './components/PortfolioTab';
+
+const TABS = [
+  ['tracker', '📈 Tracker'],
+  ['models', '🧮 Financial Models'],
+  ['scorecard', '🎯 Scorecard'],
+  ['screener', '📊 Screener'],
+  ['portfolio', '💼 Portfolio'],
+];
+
+// Screener and Portfolio work across many tickers, so the single-ticker box in
+// the header does not apply to them.
+const TICKER_TABS = new Set(['tracker', 'models', 'scorecard']);
 
 export default function App() {
   const [tab, setTab] = useState('tracker');
@@ -25,37 +39,48 @@ export default function App() {
     if (t) setTicker(t);
   }
 
+  /** Jump from a Screener/Portfolio row straight into that company's scorecard. */
+  function openScorecard(t) {
+    setInput(t);
+    setTicker(t);
+    setTab('scorecard');
+  }
+
   return (
     <div className="app">
       <header>
         <h1>Stock Analysis Platform</h1>
-        <div className="ticker-box">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && load()}
-            placeholder="Ticker — e.g. AAPL, MSFT, 0700.HK"
-          />
-          <button className="primary" onClick={load}>
-            Load
-          </button>
-        </div>
+        {TICKER_TABS.has(tab) && (
+          <div className="ticker-box">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && load()}
+              placeholder="Ticker — e.g. AAPL, MSFT, 0700.HK"
+            />
+            <button className="primary" onClick={load}>
+              Load
+            </button>
+          </div>
+        )}
         <nav>
-          <button className={tab === 'tracker' ? 'active' : ''} onClick={() => setTab('tracker')}>
-            📈 Tracker
-          </button>
-          <button className={tab === 'models' ? 'active' : ''} onClick={() => setTab('models')}>
-            🧮 Financial Models
-          </button>
-          <button className={tab === 'scorecard' ? 'active' : ''} onClick={() => setTab('scorecard')}>
-            🎯 Scorecard
-          </button>
+          {TABS.map(([key, label]) => (
+            <button
+              key={key}
+              className={tab === key ? 'active' : ''}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
       </header>
       <main>
         {tab === 'tracker' && <TrackerTab ticker={ticker} aiOnline={aiOnline} />}
         {tab === 'models' && <ModelsTab ticker={ticker} />}
         {tab === 'scorecard' && <ScorecardTab ticker={ticker} aiOnline={aiOnline} />}
+        {tab === 'screener' && <ScreenerTab onPick={openScorecard} />}
+        {tab === 'portfolio' && <PortfolioTab onPick={openScorecard} />}
       </main>
       <footer>
         Data: yfinance (OpenBB adapter ready) · AI: local Ollama · Decision support only —

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { post } from '../api';
+import { stream } from '../api';
 
 export default function ChatBox({ ticker, aiOnline }) {
   const [messages, setMessages] = useState([]);
@@ -18,17 +18,21 @@ export default function ChatBox({ ticker, aiOnline }) {
     setMessages(next);
     setInput('');
     setBusy(true);
+    // Append an empty assistant turn and grow it as deltas arrive, so a 60-180s
+    // CPU reply reads as typing instead of a frozen window.
+    setMessages([...next, { role: 'assistant', content: '' }]);
+    const replace = (content) => setMessages([...next, { role: 'assistant', content }]);
     try {
-      const res = await post('/ai/chat', { messages: next, ticker: ticker || null });
-      setMessages([
-        ...next,
-        {
-          role: 'assistant',
-          content: res.reply ?? `⚠ ${res.message ?? 'Local AI unavailable.'}`,
-        },
-      ]);
+      let acc = '';
+      await stream('/ai/chat', { messages: next, ticker: ticker || null }, (e) => {
+        if (e.error) replace(`⚠ ${e.message}`);
+        else {
+          acc += e.delta;
+          replace(acc);
+        }
+      });
     } catch (e) {
-      setMessages([...next, { role: 'assistant', content: `⚠ ${e.message}` }]);
+      replace(`⚠ ${e.message}`);
     } finally {
       setBusy(false);
     }
@@ -55,10 +59,10 @@ export default function ChatBox({ ticker, aiOnline }) {
         )}
         {messages.map((m, i) => (
           <div key={i} className={`chat-msg ${m.role}`}>
-            {m.content}
+            {m.content || (busy && i === messages.length - 1 ? 'Thinking…' : '')}
+            {busy && i === messages.length - 1 && m.content && <span className="debate-cursor" />}
           </div>
         ))}
-        {busy && <div className="chat-msg assistant">Thinking…</div>}
         <div ref={endRef} />
       </div>
       <div className="chat-input-row">

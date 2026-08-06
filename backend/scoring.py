@@ -93,7 +93,17 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     equity = fm._latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
     assets = fm._latest(bal, "Total Assets")
     dep_amort = fm._latest(cf, "Depreciation And Amortization", "Depreciation Amortization Depletion")
-    fcf = info.get("freeCashflow")
+    # Same source discipline as dcf_valuation: info["freeCashflow"] is a single
+    # quarter for some issuers (measured 2026-08-06: MSFT 0.244x, GOOGL 0.309x of
+    # the annual statement) and annual for others. That silently rescaled fcf_yield
+    # and made fcf_conversion mix a quarter of FCF over a full year of net income.
+    statement_fcf = fm._statement_fcf(cf)
+    fcf_period = statement_fcf[0] if statement_fcf else None
+    fcf = statement_fcf[1] if statement_fcf else None
+    if fcf is None:
+        fcf = info.get("freeCashflow")
+        if fcf is not None:
+            flags.append("fcf_from_info_unverified_period")
     total_debt, total_cash = info.get("totalDebt"), info.get("totalCash")
 
     def div(a, b):
@@ -114,11 +124,22 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     invested = None
     if equity is not None:
         invested = equity + (total_debt or 0) - (total_cash or 0)
-    nopat = ebit * (1 - fm.DEFAULT_TAX_RATE) if ebit is not None else None
+    # statutory rate for the listing's jurisdiction, not a flat US 21%
+    nopat = ebit * (1 - fm.tax_rate_for(info)) if ebit is not None else None
     m["roic"] = _clamp(div(nopat, invested) if invested and invested > 0 else None, -1, 1)
     m["operating_margin"] = _clamp(info.get("operatingMargins"), -2, 2)
     m["gross_margin"] = _clamp(info.get("grossMargins"), -2, 2)
-    m["fcf_conversion"] = _clamp(div(fcf, net_income) if net_income and net_income > 0 else None, -5, 5)
+    # FCF / net income is only a conversion rate when both legs cover the same
+    # annual period. The net income used here is therefore pinned to the period
+    # _statement_fcf resolved, not the newest one available; when FCF fell back
+    # to info["freeCashflow"] there is no verified period and the metric is
+    # dropped rather than computed on a mixed basis.
+    conversion_ni = fm._value_at(inc, fcf_period, "Net Income",
+                                 "Net Income Common Stockholders") if fcf_period else None
+    if fcf_period and conversion_ni is None:
+        flags.append("fcf_conversion_period_mismatch")
+    m["fcf_conversion"] = _clamp(
+        div(fcf, conversion_ni) if conversion_ni and conversion_ni > 0 else None, -5, 5)
 
     net_debt = (total_debt or 0) - (total_cash or 0)
     ebitda = info.get("ebitda")

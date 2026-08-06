@@ -1,18 +1,70 @@
 import { useEffect, useState } from 'react';
-import { get, post } from '../api';
-import { num, big, pct } from '../format';
+import { get, post, stream } from '../api';
+import { num, big, pct, scoreColor } from '../format';
+import ScoreHistory from './ScoreHistory';
+import Debate from './Debate';
 
 const TIER_COLORS = { S: '#2ebd85', A: '#3b82f6', B: '#f0b90b', C: '#f97316', D: '#f6465d' };
 
-const scoreColor = (s) => (s >= 65 ? '#2ebd85' : s >= 50 ? '#f0b90b' : '#f6465d');
+/**
+ * A plain-language read of the card, composed from the pillars themselves.
+ *
+ * Deliberately computed rather than AI-written: it has to work with Ollama
+ * offline, it must never state a figure the engine did not produce, and it must
+ * say the same thing every time the same card is rendered.
+ */
+function verdict(card) {
+  const scored = Object.entries(card.pillars)
+    .filter(([, p]) => p.score !== null && !p.insufficient)
+    .sort((a, b) => b[1].score - a[1].score);
+  if (!scored.length) return null;
+
+  const [bestName, best] = scored[0];
+  const [worstName, worst] = scored[scored.length - 1];
+  const parts = [`${card.tier_label} overall at ${card.composite_score}/100.`];
+  if (scored.length > 1 && best.score - worst.score >= 10) {
+    parts.push(
+      `${bestName[0].toUpperCase()}${bestName.slice(1)} is the strongest pillar (${best.score}), ` +
+        `${worstName} the weakest (${worst.score}).`,
+    );
+  } else {
+    parts.push(`The five pillars are closely balanced (${worst.score}–${best.score}).`);
+  }
+  if (card.confidence !== 'HIGH') {
+    parts.push(`Confidence is ${card.confidence} — only ${card.coverage_pct}% of metrics available.`);
+  }
+  const excluded = Object.entries(card.pillars).filter(([, p]) => p.insufficient);
+  if (excluded.length) {
+    parts.push(
+      `${excluded.map(([n]) => n).join(' and ')} ` +
+        `${excluded.length === 1 ? 'was' : 'were'} excluded from the composite.`,
+    );
+  }
+  return parts.join(' ');
+}
 
 function PillarBar({ name, data }) {
   const [open, setOpen] = useState(false);
-  if (data.score === null)
+  // A pillar can carry a real score and still be dropped from the composite when
+  // under 40% of its metrics are available (scoring.py marks it `insufficient`).
+  // Branching on `score === null` alone drew a full-width bar for those, so a
+  // pillar could read 97 while contributing nothing — a composite the user
+  // could not reconcile with what was on screen.
+  if (data.score === null || data.insufficient)
     return (
       <div className="pillar-row">
-        <span className="pillar-name">{name}</span>
-        <span className="pillar-missing">insufficient data (weight redistributed)</span>
+        <div className="pillar-head">
+          <span className="pillar-name">
+            {name} <span className="pillar-weight">×{(data.weight * 100).toFixed(0)}%</span>
+          </span>
+          {data.score !== null && <span className="pillar-score excluded">{data.score}</span>}
+        </div>
+        <span className="pillar-missing">
+          {data.score === null
+            ? 'no metrics available — weight redistributed'
+            : `only ${(data.available_fraction * 100).toFixed(0)}% of metrics available — `
+              + 'excluded from the composite, weight redistributed'}
+        </span>
       </div>
     );
   return (
@@ -48,6 +100,15 @@ function PillarBar({ name, data }) {
   );
 }
 
+/**
+ * Valuation ranges against the current price.
+ *
+ * Rebuilt for readability: the price line was previously redrawn inside every
+ * row, so it read as a per-row tick rather than one reference; it is now a
+ * single rule spanning the plot, with a labelled scale underneath and an
+ * explicit verdict per method, since "is the price inside this range?" is the
+ * only question the chart exists to answer.
+ */
 function FootballField({ ranges, currentPrice }) {
   if (!ranges.length) return <div className="chart-note">No valuation ranges available.</div>;
   const lows = ranges.map((r) => r.low).concat(currentPrice ?? []);
@@ -55,27 +116,69 @@ function FootballField({ ranges, currentPrice }) {
   const min = Math.min(...lows) * 0.92;
   const max = Math.max(...highs) * 1.05;
   const x = (v) => ((v - min) / (max - min)) * 100;
+
+  // spelled out: "above" alone left it ambiguous whether the price or the range
+  // was the thing sitting above
+  const verdictFor = (r) => {
+    if (!currentPrice) return null;
+    if (currentPrice < r.low) return ['price below', 'up'];
+    if (currentPrice > r.high) return ['price above', 'down'];
+    return ['in range', ''];
+  };
+
   return (
     <div className="ff-chart">
-      {ranges.map((r) => (
-        <div key={r.method} className="ff-row">
-          <span className="ff-label">{r.method}</span>
-          <div className="ff-track">
-            <div
-              className="ff-bar"
-              style={{ left: `${x(r.low)}%`, width: `${Math.max(x(r.high) - x(r.low), 1)}%` }}
-            />
-            {r.mid && <div className="ff-mid" style={{ left: `${x(r.mid)}%` }} />}
-            {currentPrice && <div className="ff-price" style={{ left: `${x(currentPrice)}%` }} />}
+      <div className="ff-plot">
+        {currentPrice && (
+          // the rule must line up with the track, which is inset by the label and
+          // range columns — so position it against those explicit widths
+          <div
+            className="ff-price-rule"
+            style={{
+              left:
+                'calc(var(--ff-label) + var(--ff-gap) + ' +
+                `(100% - var(--ff-label) - var(--ff-range) - var(--ff-gap) * 2) * ${x(currentPrice) / 100})`,
+            }}
+          >
+            <span className="ff-price-tag">{num(currentPrice)}</span>
           </div>
-          <span className="ff-range">
-            {num(r.low)} – {num(r.high)}
-          </span>
+        )}
+        {ranges.map((r) => {
+          const v = verdictFor(r);
+          return (
+            <div key={r.method} className="ff-row">
+              <span className="ff-label">{r.method}</span>
+              <div className="ff-track">
+                <div
+                  className="ff-bar"
+                  style={{ left: `${x(r.low)}%`, width: `${Math.max(x(r.high) - x(r.low), 1.5)}%` }}
+                />
+                {r.mid && (
+                  <div className="ff-mid" style={{ left: `${x(r.mid)}%` }} title={`Mid ${num(r.mid)}`} />
+                )}
+              </div>
+              <span className="ff-range">
+                {num(r.low)} – {num(r.high)}
+                {v && <span className={`ff-verdict ${v[1]}`}>{v[0]}</span>}
+              </span>
+            </div>
+          );
+        })}
+        <div className="ff-row ff-axis">
+          <span className="ff-label" />
+          <div className="ff-track">
+            <span className="ff-tick" style={{ left: '0%' }}>{num(min)}</span>
+            <span className="ff-tick mid" style={{ left: '50%' }}>{num((min + max) / 2)}</span>
+            <span className="ff-tick end" style={{ left: '100%' }}>{num(max)}</span>
+          </div>
+          <span className="ff-range" />
         </div>
-      ))}
+      </div>
       {currentPrice && (
         <div className="chart-note">
-          ─ bars: fair-value range per method · ▎white line: current price {num(currentPrice)}
+          Bars are the fair-value range each method produces; the tick inside a bar is its
+          midpoint. The vertical rule is today&rsquo;s price ({num(currentPrice)}) — a bar sitting
+          entirely to its right means that method sees the stock as cheap.
         </div>
       )}
     </div>
@@ -90,6 +193,8 @@ export default function ScorecardTab({ ticker, aiOnline }) {
   const [loading, setLoading] = useState(false);
   const [narrative, setNarrative] = useState(null);
   const [narrativeBusy, setNarrativeBusy] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [watched, setWatched] = useState(false);
 
   async function loadComps(peers) {
     const q = peers ? `?peer_list=${encodeURIComponent(peers)}` : '';
@@ -103,6 +208,8 @@ export default function ScorecardTab({ ticker, aiOnline }) {
     setCard(null);
     setComps(null);
     setNarrative(null);
+    setHistory([]);
+    setWatched(false);
     (async () => {
       try {
         const [scoreCard, peerSuggest] = await Promise.all([
@@ -111,6 +218,10 @@ export default function ScorecardTab({ ticker, aiOnline }) {
         ]);
         setCard(scoreCard);
         setPeerInput(peerSuggest.suggested.join(', '));
+        // after scoring, so today's snapshot is already in the series
+        get(`/score/${ticker}/history`)
+          .then((h) => setHistory(h.history))
+          .catch(() => setHistory([]));
         await loadComps(peerSuggest.suggested.join(','));
       } catch (e) {
         setError(e.message);
@@ -122,13 +233,25 @@ export default function ScorecardTab({ ticker, aiOnline }) {
 
   async function explain() {
     setNarrativeBusy(true);
+    setNarrative('');
     try {
-      const res = await post(`/score/${ticker}/narrative`);
-      setNarrative(res.reply ?? `⚠ ${res.message ?? 'Local AI unavailable.'}`);
+      await stream(`/score/${ticker}/narrative`, {}, (e) => {
+        if (e.error) setNarrative(`⚠ ${e.message}`);
+        else setNarrative((prev) => (prev ?? '') + e.delta);
+      });
     } catch (e) {
       setNarrative(`⚠ ${e.message}`);
     } finally {
       setNarrativeBusy(false);
+    }
+  }
+
+  async function addToWatchlist() {
+    try {
+      await post('/portfolio/position', { ticker, shares: 0 });
+      setWatched(true);
+    } catch (e) {
+      setError(e.message);
     }
   }
 
@@ -157,12 +280,24 @@ export default function ScorecardTab({ ticker, aiOnline }) {
             {card.flags.length > 0 && ` · flags: ${card.flags.join(', ')}`}
           </div>
         </div>
-        <button className="primary explain-btn" onClick={explain} disabled={narrativeBusy || !aiOnline}>
-          {narrativeBusy ? 'Explaining…' : aiOnline ? 'Explain with AI' : 'AI offline'}
-        </button>
+        <div className="banner-actions">
+          <button onClick={addToWatchlist} disabled={watched}>
+            {watched ? '✓ On watchlist' : '+ Watchlist'}
+          </button>
+          <button className="primary" onClick={explain} disabled={narrativeBusy || !aiOnline}>
+            {narrativeBusy ? 'Explaining…' : aiOnline ? 'Explain with AI' : 'AI offline'}
+          </button>
+        </div>
       </div>
 
-      {narrative && <div className="panel outlook-text">{narrative}</div>}
+      {verdict(card) && <div className="panel verdict">{verdict(card)}</div>}
+
+      {narrative !== null && (
+        <div className="panel outlook-text">
+          {narrative}
+          {narrativeBusy && <span className="debate-cursor" />}
+        </div>
+      )}
 
       <div className="score-grid">
         <div className="panel">
@@ -240,6 +375,13 @@ export default function ScorecardTab({ ticker, aiOnline }) {
           </div>
         )}
       </div>
+
+      <div className="panel">
+        <div className="panel-title">Score history (composite vs price when scored)</div>
+        <ScoreHistory history={history} />
+      </div>
+
+      <Debate ticker={ticker} aiOnline={aiOnline} />
 
       <div className="caveat">{card.caveat}</div>
     </div>

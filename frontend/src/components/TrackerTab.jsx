@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { get, post } from '../api';
+import { get, stream } from '../api';
 import { num, big } from '../format';
 import PriceChart from './PriceChart';
 import ChatBox from './ChatBox';
@@ -9,7 +9,10 @@ const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
 export default function TrackerTab({ ticker, aiOnline }) {
   const [quote, setQuote] = useState(null);
   const [bars, setBars] = useState([]);
-  const [news, setNews] = useState([]);
+  // every datable item (news + SEC filings) for the chart markers; the list
+  // below stays headlines-only, which is what "News behind the chart" means
+  const [events, setEvents] = useState([]);
+  const [filingsSupported, setFilingsSupported] = useState(true);
   const [period, setPeriod] = useState('1y');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -24,12 +27,13 @@ export default function TrackerTab({ ticker, aiOnline }) {
     Promise.all([
       get(`/stock/${ticker}/quote`),
       get(`/stock/${ticker}/history?period=${period}`),
-      get(`/stock/${ticker}/news`),
+      get(`/stock/${ticker}/events`),
     ])
-      .then(([q, h, n]) => {
+      .then(([q, h, e]) => {
         setQuote(q);
         setBars(h);
-        setNews(n);
+        setEvents(e.events);
+        setFilingsSupported(e.filings_supported);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -37,10 +41,12 @@ export default function TrackerTab({ ticker, aiOnline }) {
 
   async function generateOutlook() {
     setOutlookBusy(true);
-    setOutlook(null);
+    setOutlook('');
     try {
-      const res = await post(`/ai/predict/${ticker}`);
-      setOutlook(res.reply ?? `⚠ ${res.message ?? 'Local AI unavailable.'}`);
+      await stream(`/ai/predict/${ticker}`, {}, (e) => {
+        if (e.error) setOutlook(`⚠ ${e.message}`);
+        else setOutlook((prev) => (prev ?? '') + e.delta);
+      });
     } catch (e) {
       setOutlook(`⚠ ${e.message}`);
     } finally {
@@ -53,6 +59,8 @@ export default function TrackerTab({ ticker, aiOnline }) {
 
   const change = quote && quote.previous_close ? quote.price - quote.previous_close : null;
   const changePct = change !== null ? (change / quote.previous_close) * 100 : null;
+  // filings are chart markers, not headlines — this panel keeps its meaning
+  const headlines = events.filter((n) => n.category === 'company' || n.category === 'macro');
 
   return (
     <div className="tracker-grid">
@@ -98,20 +106,21 @@ export default function TrackerTab({ ticker, aiOnline }) {
           {loading ? (
             <div className="empty-state loading">Loading…</div>
           ) : (
-            <PriceChart bars={bars} news={news} />
+            <PriceChart bars={bars} events={events} filingsSupported={filingsSupported} />
           )}
           <div className="chart-note">
-            ● gold dots mark dates with news — hover the chart to see the stories behind a move
+            Scroll to zoom · drag to pan · double-click to fit · hover a dot to preview, click to
+            open its stories
           </div>
         </div>
 
         <div className="panel">
           <div className="panel-title">News behind the chart</div>
-          {news.length === 0 ? (
+          {headlines.length === 0 ? (
             <div className="chart-note">No news available for this ticker.</div>
           ) : (
             <div className="news-list">
-              {news.map((n, i) => (
+              {headlines.map((n, i) => (
                 <a key={i} href={n.url} target="_blank" rel="noreferrer" className="news-row">
                   <span className="news-row-date">{n.date}</span>
                   <span className={`news-tag ${n.category}`}>
@@ -137,7 +146,12 @@ export default function TrackerTab({ ticker, aiOnline }) {
               Requires the local AI — install Ollama to enable (see README).
             </div>
           )}
-          {outlook && <div className="outlook-text">{outlook}</div>}
+          {outlook !== null && (
+            <div className="outlook-text">
+              {outlook || (outlookBusy && 'Analyzing…')}
+              {outlookBusy && outlook && <span className="debate-cursor" />}
+            </div>
+          )}
         </div>
       </div>
 

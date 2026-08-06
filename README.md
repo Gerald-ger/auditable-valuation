@@ -8,10 +8,14 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 
 ```
 React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yfinance — quotes, history,
-      │                            │                     │    news, fundamentals
-      │  Tab 1: Tracker            │                     └─►  OpenBB — US 10Y treasury yield
-      │  Tab 2: Financial Models   │
-      │  Tab 3: Scorecard          └──►  Ollama (localhost:11434) — local AI, optional
+      │                            │                     │    news, fundamentals (15-min cache)
+      │  Tab 1: Tracker            │                     ├─►  OpenBB — US 10Y treasury yield
+      │  Tab 2: Financial Models   │                     │
+      │  Tab 3: Scorecard          ├─►  SQLite (backend/data/app.db)
+      │  Tab 4: Screener           │      score history · watchlist · positions
+      │  Tab 5: Portfolio          │
+      │                            └──►  Ollama (localhost:11434) — local AI, optional,
+      │                                   streamed as newline-delimited JSON
 ```
 
 - **Tab 1 — Tracker**: price chart for US + HK tickers (`AAPL`, `0700.HK`, …) with:
@@ -20,29 +24,96 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
   - toggleable technical indicators, computed locally in
     [frontend/src/indicators.js](frontend/src/indicators.js): **MA10/20/50** overlays,
     **volume** histogram, **RSI(14)** pane with 30/70 bands, **MACD(12,26,9)** pane;
-  - news integration: gold dots mark dates with news; hovering pops up the stories near
-    that date, and a "News behind the chart" list below shows every story. The feed
+  - interaction: scroll to zoom, drag to pan, double-click (or **Reset**) to fit,
+    zoom ±, **Lin / Log / %** price-scale modes, and a magnet crosshair that snaps to
+    OHLC;
+  - event markers: coloured dots mark dates with news **or SEC filings**. Hovering
+    previews them, **clicking opens a panel** with links (the preview is deliberately
+    click-through so it cannot flicker under the cursor). Filter chips toggle each
+    category — Earnings, 8-K event, Company news, Macro news, Insider — with live
+    counts; insider filings start off because they dominate the feed. Events falling on
+    non-trading days snap to the next bar, so nothing is silently dropped. The feed
     blends **company** news with **macro/policy** headlines (Fed, inflation, elections)
-    from the ticker's home-market index (S&P 500 for US, Hang Seng for HK), tagged and
-    deduplicated;
+    from the ticker's home-market index (S&P 500 for US, Hang Seng for HK), plus SEC
+    filings for US listings; a "News behind the chart" list below shows the headlines;
   - "AI outlook" generates a past/present/future analysis; the chat box talks to your
     local AI, grounded in the financial-models reference document plus live data for
     the loaded ticker.
 - **Tab 2 — Financial Models**: pulls the company's financial reports automatically and runs
-  a 5-year FCFF DCF (editable growth / terminal growth / WACC, with a sensitivity grid,
-  anchored to analyst consensus growth when available), ratio analysis, DuPont ROE
-  decomposition, valuation multiples, and revenue trend.
+  a two-stage FCFF DCF — 5 explicit years at the starting growth rate, then a 5-year fade
+  to terminal growth — with editable growth / terminal growth / WACC and a sensitivity
+  grid, anchored to analyst consensus growth when available; plus ratio analysis, DuPont
+  ROE decomposition, valuation multiples, and revenue trend. Every DCF shows an **audit
+  row** (the beta actually used and where it came from, credit spread and interest
+  coverage, tax rate, the exact FCF statement period, forecast shape) and **two trust
+  checks**: what share of enterprise value is terminal value (>75% is flagged), and what
+  exit EV/EBITDA multiple the terminal value implies against today's multiple.
+  Every ratio carries a **0–100 quality bar** — the same score the Scorecard computes from
+  its calibrated ranges for that company type, so "is 1.0 a good current ratio?" is
+  answered in place rather than left to the reader. Metrics the sector profile drops show
+  a dashed "not scored for this type" bar. The revenue panel plots the **level as a line**
+  (near-range baseline, so its shape is visible) above **year-on-year change as
+  zero-centred bars**, because bars scaled from zero made a mature company's four years
+  look identical.
 - **Tab 3 — Scorecard**: deterministic 0–100 score and S/A/B/C/D tier per company, built
   from five pillars (Valuation, Quality, Health, Growth, Momentum) weighted by a sector
   library ([backend/sector_weights.py](backend/sector_weights.py) — banks, REITs,
-  pre-profit companies get substituted metrics). Includes a valuation-range "football
-  field" (DCF vs peer multiples vs analyst targets), an editable peer-comparison table,
-  and an optional AI-written explanation of the score. Design rationale:
-  [docs/scoring-system-design.md](docs/scoring-system-design.md). Validation:
-  `backend\.venv\Scripts\python.exe backend\test_scoring.py`.
+  pre-profit companies get substituted metrics). Opens with a **computed verdict line**
+  naming the strongest and weakest pillar (composed from the scores, not written by the
+  AI, so it works offline and never invents a figure). Includes a valuation-range
+  "football field" — one price rule across all methods, a labelled axis, and a
+  `price above` / `price below` / `in range` read per method — an editable
+  peer-comparison table,
+  and an optional AI-written explanation of the score. Also shows **score history** —
+  every scoring writes a dated row, charted against the price recorded at the time — and
+  a **bull vs bear debate** run as three separate AI passes (bull → bear → verdict), so
+  disagreement stays visible instead of being averaged into one hedged paragraph.
+  Design rationale: [docs/scoring-system-design.md](docs/scoring-system-design.md).
+- **Tab 4 — Screener**: paste a list of tickers, score and rank them with the same
+  deterministic engine. Cards below 60% coverage are listed but not ranked — a thin card
+  must not take a place in a ranking it cannot support. Click a row to open its scorecard.
+- **Tab 5 — Portfolio**: watchlist and holdings. A row with 0 shares is watch-only; add
+  shares and a cost basis and it becomes a position with live P&L, weight, top-1/top-3
+  concentration and a Herfindahl index. The latest stored score is joined onto each row.
 
 All AI features degrade gracefully: until Ollama is installed the site shows an
 "AI offline" notice and everything else keeps working.
+
+### Why scores are stored
+
+The 0–100 score is built from ~40 hand-set anchor curves in
+[backend/scoring.py](backend/scoring.py). Those are grounded in the methodology
+reference, but they have never been calibrated against forward returns — and
+[docs/scoring-system-design.md](docs/scoring-system-design.md) §5 says so explicitly.
+
+Every score is therefore persisted with **the price at scoring time**. That one column is
+what will eventually make "did S tiers actually outperform C tiers?" answerable. It needs
+quarters of data, not days, and there is no backfill: point-in-time fundamentals are not
+available from yfinance. Until then the score remains a plausible heuristic, not a
+validated one — treat it accordingly.
+
+Your data lives in `backend/data/app.db` and is gitignored.
+
+## Tests
+
+```powershell
+backend\.venv\Scripts\python.exe -m pytest          # 57 tests, offline, ~1s
+backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
+```
+
+The suite runs entirely against seven real `get_fundamentals` payloads committed under
+`backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
+pre-profit and HK classification paths. Golden snapshots of every scorecard are checked
+in; after a deliberate methodology change regenerate them and **review the diff — that
+diff is the record of what your change did to every score**:
+
+```powershell
+$env:UPDATE_GOLDEN=1; backend\.venv\Scripts\python.exe -m pytest; $env:UPDATE_GOLDEN=''
+```
+
+Fixtures themselves are regenerated with `backend\tests\capture_fixtures.py`.
+The `network`-marked tests are deselected by default and exist to tell you when
+yfinance changes shape — it has already shipped two different news payloads.
 
 ## Run it
 
@@ -128,25 +199,37 @@ that its "free provider" column predates the measurements above.
 ## Project structure
 
 ```
-backend/    FastAPI + yfinance data adapter, DCF/ratio models, peer comps,
-            deterministic scoring engine + sector weight library, Ollama client
-            requirements.lock.txt      pre-OpenBB state — the rollback target
-            requirements.post-openbb.txt   current state
-frontend/   React (Vite) UI: Tracker, Financial Models, and Scorecard tabs
+backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models,
+            peer comps, deterministic scoring engine + sector weight library,
+            async streaming Ollama client
+            store.py                  SQLite: score history, watchlist, positions
+            data/app.db               your data — gitignored
+            tests/                    pytest suite + committed fixtures + goldens
+            requirements.lock.txt     pre-OpenBB state — the rollback target
+            requirements.post-openbb.txt   runtime state
+            requirements-test.txt     minimal set for CI
+frontend/   React (Vite) UI: Tracker, Financial Models, Scorecard, Screener, Portfolio
 docs/       financial-models-reference.md (the AI's methodology playbook)
             scoring-system-design.md (scoring architecture & rationale)
 CHANGELOG.md   what changed, with measured before/after
 TODOLIST.md    open work, ranked, with the trigger for each deferred item
+pytest.ini     test config; network tests deselected by default
 start.bat   one-click cold start (backend + frontend + browser)
 ```
 
 ## Notes & limitations
 
-- News is limited to the ~10 most recent stories per feed (company + market index),
-  so hover-news is sparse on older dates. **OpenBB does not fix this on the free tier** —
-  both `obb.news.company` and `obb.news.world` are paywalled (see the table above), and no
-  paid plan in that list covers HK news. The free workaround under evaluation is SEC
-  filings as dated US events; HK would need a non-OpenBB source.
+- **News is still ~10 stories per feed**, spanning only a few days — measured
+  2026-08-06, AAPL's 20 news items covered **3 distinct dates**. Chart depth now comes
+  from **SEC filings** instead (free, no key, ~5 years: AAPL has 278 events over 140
+  dates). Both `obb.news.company` and `obb.news.world` remain paywalled, and no paid
+  plan in that list covers HK news.
+  **SEC filings are US-only** — EDGAR has no CIK for `0700.HK`, so HK charts show news
+  markers only (~10 dates) and the chart says so. HK event depth needs a non-OpenBB
+  source (AAStocks, ET Net) and is still a separate project.
+- Filing markers are regulatory events, not headlines. Form 3/4/5 insider filings are
+  217 of AAPL's 278 events, so they are filtered off by default; 144, SC 13G/A and
+  PX14A6G are dropped entirely as chart noise.
 - Volume is share volume from yfinance. Value turnover (price × volume, the HK convention)
   is not implemented and no provider has been confirmed to supply it.
 - DCF base free cash flow comes from the annual cash-flow statement (`OCF + CapEx`, both
@@ -157,12 +240,41 @@ start.bat   one-click cold start (backend + frontend + browser)
   4.3% fallback when OpenBB or the Fed feed is unreachable. HK issuers use the same USD
   rate — the HKD peg makes it an acceptable proxy, not a correct one.
 - The default DCF growth is anchored to analyst forward consensus when available
-  (falling back to trailing revenue growth); WACC uses CAPM with heuristic inputs and a
-  flat credit spread. A 5-year FCFF fade structurally undervalues high-growth mega-caps —
-  large negative upside on those names is the method's stance, not a data error. Always
-  sanity-check with the sensitivity grid and the editable assumptions.
+  (falling back to trailing revenue growth). Note this input does a lot of work: XOM's
+  consensus forward revenue growth is 0%, which drives its result more than any other
+  assumption.
+- **Beta is not trusted blindly.** yfinance reported 0.173 for XOM, which alone moved its
+  DCF upside by ~79 points. A reported beta is used only within `[0.3, 2.5]`; otherwise
+  the median of at least two credible peer betas is substituted, otherwise 1.0. The value
+  used and its source are shown in the DCF audit row. The band catches implausible
+  readings, not merely wrong ones — and yfinance's betas are broken sector-wide for
+  energy (SHEL −0.218, BP −0.212), which is why the two-peer minimum exists.
+- Cost of debt is the risk-free rate plus a synthetic credit spread keyed on interest
+  coverage, not the flat +1.5% used previously. The equity risk premium is still a flat 5%
+  for every market and period.
+- Corporate tax defaults to the statutory rate for the listing currency (HKD 16.5%,
+  USD 21%, otherwise 21%) and is overridable per request.
+- Terminal value is 51–66% of enterprise value on the sample fixtures. Above 75% the UI
+  flags it: at that point the perpetuity assumption, not the explicit forecast, is
+  producing the answer. Cross-check with the implied exit multiple — a DCF that only works
+  by exiting far below today's trading multiple is assuming compression, which is a stance
+  to agree with rather than inherit. Always sanity-check with the sensitivity grid and the
+  editable assumptions.
 - The Scorecard is a deterministic snapshot of fundamentals, valuation and momentum
   against heuristic healthy ranges. It is not a prediction; validation covers
   consistency and plausibility, not forward returns (see docs/scoring-system-design.md §5).
+  Score history is now recorded so this can eventually be tested — it has not been yet.
+- Free cash flow for both the DCF and the two FCF scoring metrics comes from the cash-flow
+  statement. `info["freeCashflow"]` is only a fallback and raises the
+  `fcf_from_info_unverified_period` flag when used, because yfinance reports it annually
+  for some issuers and quarterly for others (MSFT 0.244×, GOOGL 0.309×).
+- The AI never computes or changes a number. It only comments on figures already computed
+  by the deterministic engine, at `temperature: 0` with a fixed seed so the same input
+  gives the same commentary.
+- The bull/bear debate and token streaming have **never been run against a live model** —
+  Ollama is not installed here, so only the offline degradation path is verified. See
+  TODOLIST.md.
+- Portfolio totals sum mixed currencies at face value; there is no FX conversion. The UI
+  warns when holdings span more than one currency.
 - Everything runs locally; nothing is sent to any cloud service.
 - **Decision support only — not certified financial advice.**
