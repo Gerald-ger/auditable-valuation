@@ -1,5 +1,17 @@
 // Technical indicator math. All functions take chart bars ({time, close, ...})
 // and return lightweight-charts-ready [{time, value}] arrays.
+//
+// Every `period` here counts BARS, not days. That distinction became load-bearing
+// once the chart started serving intraday bars for periods up to 2 years: on 1h
+// bars a 50-bar average spans about 7 trading days, not 50, so a series labelled
+// "MA50" would silently mean something different on every period button.
+// PriceChart therefore scales these windows by the bars-per-day the backend
+// measured, and `barsForDays` below is the one place that conversion lives.
+
+/** Bars covering N trading days, floored at 2 so a window is always a window. */
+export function barsForDays(days, barsPerDay) {
+  return Math.max(2, Math.round(days * (barsPerDay || 1)));
+}
 
 export function smaSeries(bars, period) {
   const out = [];
@@ -49,17 +61,18 @@ function emaArray(values, period) {
   return out;
 }
 
-// MACD(12, 26, 9)
-export function macdSeries(bars) {
+// MACD(12, 26, 9) — periods are in BARS, so callers working with intraday bars
+// must scale them if the conventional day-based meaning is to be preserved.
+export function macdSeries(bars, fast = 12, slow = 26, signalPeriod = 9) {
   const closes = bars.map((b) => b.close);
-  const e12 = emaArray(closes, 12);
-  const e26 = emaArray(closes, 26);
-  const validStart = 25; // first index where EMA26 exists
+  const e12 = emaArray(closes, fast);
+  const e26 = emaArray(closes, slow);
+  const validStart = slow - 1; // first index where the slow EMA exists
   if (bars.length <= validStart) return { macd: [], signal: [], hist: [] };
   const macdVals = closes.map((_, i) =>
     e12[i] !== null && e26[i] !== null ? e12[i] - e26[i] : null
   );
-  const sig = emaArray(macdVals.slice(validStart), 9);
+  const sig = emaArray(macdVals.slice(validStart), signalPeriod);
   const macd = [];
   const signal = [];
   const hist = [];

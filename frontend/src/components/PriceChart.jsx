@@ -7,8 +7,13 @@ import {
   HistogramSeries,
   createSeriesMarkers,
 } from 'lightweight-charts';
-import { smaSeries, rsiSeries, macdSeries } from '../indicators';
+import { smaSeries, rsiSeries, macdSeries, barsForDays } from '../indicators';
+import { toChartTime, fromChartTime } from '../charttime';
+import { DrawingsPrimitive } from '../drawingPrimitive';
+import { get, post, patch, del } from '../api';
 
+// Operates on chart-space time, so the date shown on the axis, the date used to
+// group event markers and the date in the hover legend cannot disagree.
 const toDateStr = (t) => {
   if (typeof t === 'string') return t;
   if (typeof t === 'number') return new Date(t * 1000).toISOString().slice(0, 10);
@@ -116,7 +121,15 @@ function groupEventsByBar(bars, events) {
 const dominantType = (items) =>
   EVENT_TYPES.find(([key]) => items.some((i) => i.category === key))?.[0] ?? 'company';
 
-export default function PriceChart({ bars, events, filingsSupported = true }) {
+export default function PriceChart({
+  bars: rawBars = [], events, filingsSupported = true, barsPerDay = 1, ticker = '',
+}) {
+  // Shift once, here, so every downstream consumer — the series, the volume
+  // pane, event grouping, the crosshair legend — works in one time space.
+  const bars = useMemo(
+    () => rawBars.map((b) => ({ ...b, time: toChartTime(b.time) })),
+    [rawBars],
+  );
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
@@ -131,6 +144,37 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
   const [scaleMode, setScaleMode] = useState(0);
   const [show, setShow] = useState({ ma: true, volume: true, rsi: true, macd: false });
   const [types, setTypes] = useState(DEFAULT_TYPES);
+
+  // ── drawings ──────────────────────────────────────────────────────
+  // Stored in chart space (GMT+8 shifted) so rendering needs no conversion;
+  // converted back to true epochs at the persistence boundary below.
+  const [drawings, setDrawings] = useState([]);
+  const [tool, setTool] = useState('cursor');
+  const [selectedId, setSelectedId] = useState(null);
+  const [pending, setPending] = useState(null); // first click of a trendline
+  const drawingsRef = useRef(drawings);
+  const selectedRef = useRef(selectedId);
+  const primitiveRef = useRef(null);
+  drawingsRef.current = drawings;
+  selectedRef.current = selectedId;
+
+  const toRow = (d) => ({
+    id: d.id, kind: d.kind, label: d.label,
+    p1: d.p1, p2: d.p2,
+    t1: d.t1 == null ? null : toChartTime(d.t1),
+    t2: d.t2 == null ? null : toChartTime(d.t2),
+  });
+
+  useEffect(() => {
+    if (!ticker) return;
+    let live = true;
+    get(`/stock/${ticker}/drawings`)
+      .then((r) => { if (live) setDrawings((r.drawings ?? []).map(toRow)); })
+      .catch(() => { if (live) setDrawings([]); });
+    setSelectedId(null);
+    setPending(null);
+    return () => { live = false; };
+  }, [ticker]);
 
   const allGroups = useMemo(() => groupEventsByBar(bars, events ?? []), [bars, events]);
   const visibleGroups = useMemo(
@@ -200,9 +244,19 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
     }
     seriesRef.current = series;
 
+    // drawings live on the price series so they pan and zoom with it
+    const primitive = new DrawingsPrimitive({
+      getDrawings: () => drawingsRef.current,
+      getSelectedId: () => selectedRef.current,
+    });
+    series.attachPrimitive(primitive);
+    primitiveRef.current = primitive;
+
     if (show.ma) {
       for (const [period, color] of MA_CONFIG) {
-        const data = smaSeries(bars, period);
+        // period is in DAYS; convert to bars so MA50 spans 50 trading days
+        // whether the chart is drawing daily, hourly or 2-minute candles
+        const data = smaSeries(bars, barsForDays(period, barsPerDay));
         if (!data.length) continue;
         chart.addSeries(LineSeries, { color, lineWidth: 1.5, ...OVERLAY_OPTS }).setData(data);
       }
@@ -239,7 +293,7 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
         { color: '#f0b90b', lineWidth: 1.5, priceLineVisible: false, title: 'RSI 14' },
         paneIdx,
       );
-      rsi.setData(rsiSeries(bars));
+      rsi.setData(rsiSeries(bars, barsForDays(14, barsPerDay)));
       for (const [price, color] of [[70, 'rgba(246,70,93,0.45)'], [30, 'rgba(46,189,133,0.45)']]) {
         rsi.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
       }
@@ -249,7 +303,10 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
       paneIdx += 1;
     }
     if (show.macd) {
-      const { macd, signal, hist } = macdSeries(bars);
+      const { macd, signal, hist } = macdSeries(
+        bars, barsForDays(12, barsPerDay), barsForDays(26, barsPerDay),
+        barsForDays(9, barsPerDay),
+      );
       if (macd.length) {
         chart.addSeries(HistogramSeries, { ...OVERLAY_OPTS }, paneIdx).setData(hist);
         chart
@@ -310,8 +367,9 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
       chartRef.current = null;
       seriesRef.current = null;
       markersRef.current = null;
+      primitiveRef.current = null;
     };
-  }, [bars, chartType, show, scaleMode]);
+  }, [bars, chartType, show, scaleMode, barsPerDay]);
 
   // ── markers, updated without rebuilding the chart ─────────────────
   // Kept in its own effect so toggling a filter does not recreate the chart and
@@ -338,6 +396,148 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
       setPinned(still ? { ...pinned, items: still.items } : null);
     }
   }, [visibleGroups]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // How much history this period actually holds, and which day-based indicators
+  // therefore cannot be computed from it.
+  const daysCovered = Math.max(1, Math.round(bars.length / (barsPerDay || 1)));
+  const unavailable = [];
+  if (show.ma && bars.length) {
+    const missing = MA_CONFIG.filter(([p]) => barsForDays(p, barsPerDay) >= bars.length);
+    if (missing.length) unavailable.push(missing.map(([p]) => `MA${p}`).join('/'));
+  }
+  if (show.rsi && bars.length && barsForDays(14, barsPerDay) >= bars.length) {
+    unavailable.push('RSI(14)');
+  }
+  if (show.macd && bars.length && barsForDays(26, barsPerDay) >= bars.length) {
+    unavailable.push('MACD(12,26,9)');
+  }
+
+  // ── drawing interaction ───────────────────────────────────────────
+  // Raw pointer events on the container rather than the chart's click
+  // subscription, because dragging a handle needs move/up as well as down —
+  // and while a tool is active or a handle is held, the chart's own pan/zoom
+  // has to be switched off or the canvas fights the cursor for the gesture.
+  useEffect(() => {
+    const el = containerRef.current;
+    const chart = chartRef.current;
+    const primitive = primitiveRef.current;
+    if (!el || !chart || !primitive || !ticker) return undefined;
+
+    const interactive = tool !== 'cursor';
+    chart.applyOptions({
+      handleScroll: !interactive,
+      handleScale: !interactive,
+    });
+
+    let drag = null; // {id, handle}
+
+    const localPoint = (e) => {
+      const r = el.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    const persistMove = (d) => {
+      patch(`/stock/${ticker}/drawings/${d.id}`, {
+        t1: d.t1 == null ? null : fromChartTime(d.t1),
+        p1: d.p1,
+        t2: d.t2 == null ? null : fromChartTime(d.t2),
+        p2: d.p2,
+      }).catch(() => {}); // a failed save must not break the gesture
+    };
+
+    const onDown = (e) => {
+      const { x, y } = localPoint(e);
+      const { time, price } = primitive.toDataPoint(x, y);
+
+      if (tool === 'cursor') {
+        const hit = primitive.hitTest(x, y);
+        setSelectedId(hit?.id ?? null);
+        if (hit) {
+          drag = hit;
+          chart.applyOptions({ handleScroll: false, handleScale: false });
+          e.preventDefault();
+        }
+        primitive.update();
+        return;
+      }
+      if (price == null) return;
+
+      if (tool === 'hline') {
+        post(`/stock/${ticker}/drawings`, { kind: 'hline', p1: price })
+          .then(({ id }) => setDrawings((cur) => [...cur, { id, kind: 'hline', p1: price }]))
+          .catch(() => {});
+        setTool('cursor');
+        return;
+      }
+      if (tool === 'trendline') {
+        if (time == null) return;
+        if (!pending) {
+          setPending({ t1: time, p1: price });
+          return;
+        }
+        const body = {
+          kind: 'trendline',
+          t1: fromChartTime(pending.t1), p1: pending.p1,
+          t2: fromChartTime(time), p2: price,
+        };
+        post(`/stock/${ticker}/drawings`, body)
+          .then(({ id }) => setDrawings((cur) => [...cur,
+            { id, kind: 'trendline', t1: pending.t1, p1: pending.p1, t2: time, p2: price }]))
+          .catch(() => {});
+        setPending(null);
+        setTool('cursor');
+      }
+    };
+
+    const onMove = (e) => {
+      if (!drag) return;
+      const { x, y } = localPoint(e);
+      const { time, price } = primitive.toDataPoint(x, y);
+      if (price == null) return;
+      setDrawings((cur) => cur.map((d) => {
+        if (d.id !== drag.id) return d;
+        if (d.kind === 'hline') return { ...d, p1: price };
+        if (drag.handle === 0) return { ...d, t1: time ?? d.t1, p1: price };
+        if (drag.handle === 1) return { ...d, t2: time ?? d.t2, p2: price };
+        return d;
+      }));
+      primitive.update();
+    };
+
+    const onUp = () => {
+      if (drag) {
+        const moved = drawingsRef.current.find((d) => d.id === drag.id);
+        if (moved) persistMove(moved);
+        drag = null;
+        chart.applyOptions({ handleScroll: true, handleScale: true });
+      }
+    };
+
+    el.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [tool, pending, ticker, chartEpoch]);
+
+  // repaint whenever the drawing set or the selection changes
+  useEffect(() => { primitiveRef.current?.update(); }, [drawings, selectedId]);
+
+  function deleteSelected() {
+    if (selectedId == null) return;
+    del(`/stock/${ticker}/drawings/${selectedId}`).catch(() => {});
+    setDrawings((cur) => cur.filter((d) => d.id !== selectedId));
+    setSelectedId(null);
+  }
+
+  function clearDrawings() {
+    del(`/stock/${ticker}/drawings`).catch(() => {});
+    setDrawings([]);
+    setSelectedId(null);
+  }
 
   const toggle = (key) => setShow((s) => ({ ...s, [key]: !s[key] }));
   const toggleType = (key) => setTypes((t) => ({ ...t, [key]: !t[key] }));
@@ -401,13 +601,68 @@ export default function PriceChart({ bars, events, filingsSupported = true }) {
         {show.ma && (
           <span className="ma-legend">
             {MA_CONFIG.map(([p, color]) => (
-              <span key={p} className="ma-chip">
+              <span
+                key={p}
+                className={`ma-chip ${barsForDays(p, barsPerDay) >= bars.length ? 'ma-chip-unavailable' : ''}`}
+                title={
+                  barsForDays(p, barsPerDay) >= bars.length
+                    ? `Needs ${p} trading days; this period covers about ${daysCovered}.`
+                    : `${p}-trading-day average (${barsForDays(p, barsPerDay)} bars at this interval)`
+                }
+              >
                 <span className="ma-swatch" style={{ background: color }} />
                 MA{p}
               </span>
             ))}
           </span>
         )}
+      </div>
+
+      {/* Indicator windows are day-based, so a short period genuinely cannot
+          produce them — a 50-day average does not exist inside one session.
+          Saying so beats drawing a 50-*bar* line under a "MA50" label. */}
+      {unavailable.length > 0 && (
+        <div className="chart-note">
+          {unavailable.join(', ')} need{unavailable.length === 1 ? 's' : ''} more history than
+          this period covers (~{daysCovered} trading day{daysCovered === 1 ? '' : 's'}). Windows
+          are measured in trading days, so they mean the same thing on every period — pick a
+          longer period to see them.
+        </div>
+      )}
+
+      <div className="chart-toolbar draw-toolbar">
+        <span className="filter-label">Draw</span>
+        <span className="seg-group">
+          {[
+            ['cursor', 'Cursor', 'Select and drag existing lines'],
+            ['trendline', 'Trendline', 'Click the start, then the end'],
+            ['hline', 'Horiz line', 'Click once to place a price level'],
+          ].map(([key, label, hint]) => (
+            <button
+              key={key}
+              className={`seg ${tool === key ? 'active' : ''}`}
+              title={hint}
+              onClick={() => { setTool(key); setPending(null); }}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+        <button className="seg" disabled={selectedId == null} onClick={deleteSelected}>
+          Delete
+        </button>
+        <button className="seg" disabled={!drawings.length} onClick={clearDrawings}>
+          Clear all
+        </button>
+        <span className="chart-note draw-hint">
+          {pending
+            ? 'Click the end point to finish the trendline.'
+            : tool === 'trendline'
+              ? 'Click the start point.'
+              : tool === 'hline'
+                ? 'Click a price level.'
+                : `${drawings.length} saved · your lines are stored and read by the AI outlook and chat.`}
+        </span>
       </div>
 
       <div className="chart-toolbar event-filter">

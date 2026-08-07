@@ -255,6 +255,67 @@ export default function ScorecardTab({ ticker, aiOnline }) {
     }
   }
 
+  /**
+   * Forensic checks — shown beside the score, deliberately not inside it.
+   *
+   * Each row prints its published threshold next to the value, because these
+   * only mean anything against their own literature: a Piotroski 6 is
+   * "middling" and a 7 is "strong", and nothing on the card would tell you that
+   * otherwise. Checks that do not apply say so with the reason rather than
+   * rendering a dash the reader has to interpret.
+   */
+  function ForensicPanel({ data }) {
+    const bandClass = (band) =>
+      ({ safe: 'good', strong: 'good', buyback: 'good', low: 'good',
+         distress: 'bad', weak: 'bad', dilution: 'bad', high: 'bad' })[band] ?? 'neutral';
+
+    const rows = [
+      { key: 'altman_z', label: 'Altman Z',
+        hint: 'bankruptcy risk · safe > 2.99, distress < 1.81',
+        render: (c) => c.value.toFixed(2) },
+      { key: 'piotroski_f', label: 'Piotroski F',
+        hint: 'fundamental improvement · strong ≥ 7, weak ≤ 2',
+        render: (c) => `${c.value} / ${c.out_of}` },
+      { key: 'accrual_ratio', label: 'Accrual ratio',
+        hint: '(net income − operating cash flow) / avg assets · lower is better',
+        render: (c) => `${(c.value * 100).toFixed(1)}%` },
+      { key: 'net_share_issuance', label: 'Net share issuance',
+        hint: 'year-on-year diluted share count · negative is a buyback',
+        render: (c) => `${c.value > 0 ? '+' : ''}${(c.value * 100).toFixed(1)}%` },
+    ];
+
+    return (
+      <div className="panel">
+        <div className="panel-title">
+          Forensic checks
+          <span className="chart-note">not included in the score</span>
+        </div>
+        <table className="comps-table forensic-table">
+          <tbody>
+            {rows.map(({ key, label, hint, render }) => {
+              const c = data[key];
+              return (
+                <tr key={key}>
+                  <td className="forensic-label">
+                    {label}
+                    <span className="forensic-hint">{hint}</span>
+                  </td>
+                  <td className="forensic-value">
+                    {c.applicable ? render(c) : <span className="forensic-na">n/a</span>}
+                  </td>
+                  <td className={`forensic-band ${c.applicable ? bandClass(c.band) : 'neutral'}`}>
+                    {c.applicable ? c.band : c.note}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="chart-note">{data.note}</div>
+      </div>
+    );
+  }
+
   if (!ticker) return <div className="empty-state">Enter a ticker above to build a scorecard.</div>;
   if (loading) return <div className="empty-state loading">Scoring fundamentals, valuation and momentum…</div>;
   if (error) return <div className="error-banner">{error}</div>;
@@ -316,6 +377,8 @@ export default function ScorecardTab({ ticker, aiOnline }) {
           )}
         </div>
       </div>
+
+      {card.forensics && <ForensicPanel data={card.forensics} />}
 
       <div className="panel">
         <div className="panel-title">

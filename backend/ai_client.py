@@ -47,6 +47,14 @@ _SYSTEM_PROMPT = (
     "ranges rather than point estimates, state your assumptions, and end "
     "predictions with a reminder that this is decision support, not certified "
     "financial advice.\n\n"
+    "If the context contains `user_chart_drawings`, those lines were drawn by "
+    "the user on the price chart — they are the user's own claim about where a "
+    "level sits, not a level this system derived. Their geometry (price on the "
+    "line today, slope, how many bars touched it, whether price is above or "
+    "below) has been computed for you and is accurate. Discuss whether the "
+    "evidence supports the line, say so plainly when it does not, and never "
+    "present a drawn level as a model output. Do not compute new prices; use "
+    "only the figures supplied.\n\n"
 )
 
 
@@ -128,8 +136,15 @@ def outlook_prompt(ticker: str) -> str:
 
 
 def outlook_context(quote: dict, history_tail: list[dict],
-                    news: list[dict], analysis: dict) -> str:
-    return json.dumps({
+                    news: list[dict], analysis: dict,
+                    drawings: dict | None = None) -> str:
+    """Everything the model may talk about, already computed.
+
+    `drawings` is kept in its own key rather than folded into `model_outputs`
+    on purpose: those are engine results, a drawing is the user's own assertion
+    about the chart, and the two must not read as the same kind of thing.
+    """
+    context = {
         "quote": quote,
         "recent_prices_last_30_bars": history_tail,
         "recent_news_headlines": [
@@ -140,7 +155,10 @@ def outlook_context(quote: dict, history_tail: list[dict],
             "key_ratios": analysis.get("ratios", {}).get("market"),
             "analyst_target_mean": analysis.get("company", {}).get("targetMeanPrice"),
         },
-    }, default=str)
+    }
+    if drawings and drawings.get("count"):
+        context["user_chart_drawings"] = drawings
+    return json.dumps(context, default=str)
 
 
 NARRATIVE_PROMPT = (

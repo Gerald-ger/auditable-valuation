@@ -18,8 +18,19 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
       │                                   streamed as newline-delimited JSON
 ```
 
+- **Header — search**: type a ticker *or* a company name and pick from the list;
+  typos resolve (`microsft` → MSFT, `tencnt` → 0700.HK) so a slip cannot produce an
+  empty chart. Backed by a local cache of SEC's 10,398 US symbols (free, no key,
+  2–3 ms) merged with live Yahoo search, which is what reaches HK and other non-US
+  listings. Watchlist, holdings and recently viewed tickers sit below as one-click chips.
 - **Tab 1 — Tracker**: price chart for US + HK tickers (`AAPL`, `0700.HK`, …) with:
-  - periods from intraday **1d** (15-min bars) and **5d** (hourly bars) up to **max**;
+  - bars sized to the period — **2-min** for 1d, **5-min** for 5d, 30-min for 1mo,
+    **hourly** for 3mo–2y, daily beyond. 5y and max cannot go finer: Yahoo caps
+    sub-hourly data at 60 days and hourly at 730;
+  - **indicator windows measured in trading days, not bars**, so MA50 means 50 days
+    on every period (350 bars on an hourly chart). A window longer than the period
+    holds is not drawn — one session cannot produce a 50-day average — and the chart
+    says so;
   - chart types: **Candles / Line / OHLC**;
   - toggleable technical indicators, computed locally in
     [frontend/src/indicators.js](frontend/src/indicators.js): **MA10/20/50** overlays,
@@ -70,8 +81,13 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
   disagreement stays visible instead of being averaged into one hedged paragraph.
   Design rationale: [docs/scoring-system-design.md](docs/scoring-system-design.md).
 - **Tab 4 — Screener**: paste a list of tickers, score and rank them with the same
-  deterministic engine. Cards below 60% coverage are listed but not ranked — a thin card
-  must not take a place in a ranking it cannot support. Click a row to open its scorecard.
+  deterministic engine. **Ranking is grouped by company type and never crosses one** —
+  two composites from different sector profiles are outputs of different formulas
+  (different metric sets, pillar weights and anchor curves), so sorting them into one
+  list asserted a comparison the engine never computed. A group with one member is
+  listed, not ranked. Cards below 60% coverage are listed but not ranked either — a thin
+  card must not take a place in a ranking it cannot support. Click a row to open its
+  scorecard.
 - **Tab 5 — Portfolio**: watchlist and holdings. A row with 0 shares is watch-only; add
   shares and a cost basis and it becomes a position with live P&L, weight, top-1/top-3
   concentration and a Herfindahl index. The latest stored score is joined onto each row.
@@ -97,7 +113,7 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 57 tests, offline, ~1s
+backend\.venv\Scripts\python.exe -m pytest          # 140 tests, offline, ~3s
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 ```
 
@@ -245,10 +261,20 @@ start.bat   one-click cold start (backend + frontend + browser)
   assumption.
 - **Beta is not trusted blindly.** yfinance reported 0.173 for XOM, which alone moved its
   DCF upside by ~79 points. A reported beta is used only within `[0.3, 2.5]`; otherwise
-  the median of at least two credible peer betas is substituted, otherwise 1.0. The value
-  used and its source are shown in the DCF audit row. The band catches implausible
-  readings, not merely wrong ones — and yfinance's betas are broken sector-wide for
-  energy (SHEL −0.218, BP −0.212), which is why the two-peer minimum exists.
+  peer betas are **unlevered, medianed and re-levered to the company's own capital
+  structure** (reference doc §1.1.2) — a raw peer median carried the peers' balance
+  sheets rather than the target's. Needs at least two peers with known leverage; without
+  that it falls back to the levered median, then to 1.0. The value used and its source
+  (`reported` / `peer_median_relevered` / `peer_median` / `default`) are shown in the DCF
+  audit row. The band catches implausible readings, not merely wrong ones — and
+  yfinance's betas are broken sector-wide for energy (SHEL −0.218, BP −0.212), which is
+  why the two-peer minimum exists.
+- **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
+  Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each
+  with its published threshold. They stay out of the score because the composite already
+  blends ~40 anchor curves with no forward-return validation; adding four more would move
+  every score without adding evidence. Z reports `n/a` with a reason for banks, insurers,
+  REITs and utilities rather than mislabelling an asset-heavy balance sheet as distress.
 - Cost of debt is the risk-free rate plus a synthetic credit spread keyed on interest
   coverage, not the flat +1.5% used previously. The equity risk premium is still a flat 5%
   for every market and period.

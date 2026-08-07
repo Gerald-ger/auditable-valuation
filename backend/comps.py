@@ -8,7 +8,7 @@ list in the UI, so a bad suggestion is visible and correctable.
 """
 from __future__ import annotations
 
-from statistics import median
+from statistics import median, quantiles
 
 from data_provider import provider
 
@@ -78,8 +78,12 @@ def suggest_peers(ticker: str) -> list[str]:
     return PEER_SUGGESTIONS.get(t) or _fmp_peers(t)
 
 
-def peer_betas(ticker: str) -> list[float]:
-    """Betas of the suggested peers, for financial_models.resolve_beta.
+def peer_beta_inputs(ticker: str) -> list[dict]:
+    """Suggested peers' snapshots, for financial_models.resolve_beta.
+
+    Returns whole snapshots rather than bare betas because resolve_beta unlevers
+    each peer beta before taking the median, which needs that peer's own
+    `total_debt` and `market_cap` — both already on the snapshot.
 
     Reads through the TTL-cached peer snapshot, so on a warm cache this costs
     nothing. Callers should only reach for this when the company's own reported
@@ -88,11 +92,11 @@ def peer_betas(ticker: str) -> list[float]:
     out = []
     for p in suggest_peers(ticker):
         try:
-            beta = provider.get_peer_snapshot(p).get("beta")
+            snap = provider.get_peer_snapshot(p)
         except Exception:
             continue
-        if beta is not None:
-            out.append(beta)
+        if snap.get("beta") is not None:
+            out.append(snap)
     return out
 
 
@@ -170,8 +174,22 @@ def football_field(target_fund: dict, dcf: dict, comps: dict) -> list[dict]:
     ranges = []
 
     if dcf and not dcf.get("error"):
-        vals = [v for row in dcf["sensitivity"]["rows"] for v in row["values"] if v]
-        if vals:
+        # 25th-75th percentile of the sensitivity grid, per the reference doc's
+        # football-field spec (§5.2), not the grid's min/max. The grid's corners
+        # are the compounded worst and best case of two assumptions moved
+        # together, so min/max produced a bar roughly twice as wide as the band
+        # the method actually supports: measured 2026-08-07, AAPL 55.27 -> 26.73,
+        # MSFT 132.95 -> 64.00, 0700.HK 330.00 -> 149.08. The width mattered —
+        # 0700.HK's verdict was "in range" only because of the corners, and reads
+        # "price below" against the interquartile band.
+        vals = sorted(v for row in dcf["sensitivity"]["rows"]
+                      for v in row["values"] if v is not None)
+        if len(vals) >= 4:
+            q1, q3 = quantiles(vals, n=4)[0], quantiles(vals, n=4)[2]
+            ranges.append({"method": "DCF (sensitivity 25th–75th)",
+                           "low": round(q1, 2), "high": round(q3, 2),
+                           "mid": dcf.get("fair_value_per_share")})
+        elif vals:
             ranges.append({"method": "DCF (sensitivity range)",
                            "low": min(vals), "high": max(vals),
                            "mid": dcf.get("fair_value_per_share")})

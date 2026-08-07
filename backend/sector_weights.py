@@ -7,12 +7,21 @@ H=Financial Health, G=Growth, M=Momentum.
 from __future__ import annotations
 
 # Base metric set per pillar (profiles override with add/remove)
+#
+# `analyst_upside` (target price / price - 1) sits in V, not M. It is a
+# valuation signal — "price is below someone's fair value" — and inside the
+# momentum pillar it actively opposed the other three, which all reward price
+# going up: a rally raised price_vs_200dma, range_52w_pos and rel_52w_change
+# while lowering analyst_upside, so the four partly cancelled. Measured on the
+# fixtures, moving it shifts the momentum pillar by up to 18 points (0700.HK
+# 42 -> 24) and the composite by -3 to +1.
 BASE_METRICS = {
-    "V": ["earnings_yield_fwd", "fcf_yield", "ev_ebitda", "dcf_upside_pct"],
+    "V": ["earnings_yield_fwd", "fcf_yield", "ev_ebitda", "dcf_upside_pct",
+          "analyst_upside"],
     "Q": ["roe", "roic", "operating_margin", "gross_margin", "fcf_conversion"],
     "H": ["net_debt_ebitda", "interest_coverage", "current_ratio", "debt_equity"],
     "G": ["revenue_growth", "revenue_cagr_3y", "earnings_growth", "pe_gap"],
-    "M": ["price_vs_200dma", "range_52w_pos", "rel_52w_change", "analyst_upside"],
+    "M": ["price_vs_200dma", "range_52w_pos", "rel_52w_change"],
 }
 
 # Relaxed leverage bands for structurally levered sectors (utilities/REITs/telecom)
@@ -52,7 +61,7 @@ SECTOR_PROFILES = {
     "real_estate_reit": {  # P/E & standard EV/EBITDA logic invalid; FFO + yield focus
         "weights": {"V": 0.30, "Q": 0.20, "H": 0.25, "G": 0.10, "M": 0.15},
         "metrics": {
-            "V": ["dividend_yield", "p_b", "ffo_yield"],
+            "V": ["dividend_yield", "p_b", "ffo_yield", "analyst_upside"],
             "Q": ["roe", "operating_margin"],
             "H": ["net_debt_ebitda", "interest_coverage", "debt_equity"],
             "G": ["revenue_growth", "revenue_cagr_3y", "earnings_growth"],
@@ -63,7 +72,7 @@ SECTOR_PROFILES = {
     "financials_bank": {  # EV-, FCF- and working-capital metrics invalid
         "weights": {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10},
         "metrics": {
-            "V": ["earnings_yield_fwd", "p_b", "dividend_yield"],
+            "V": ["earnings_yield_fwd", "p_b", "dividend_yield", "analyst_upside"],
             "Q": ["roe", "roa"],
             "H": ["equity_assets"],
             "G": ["revenue_growth", "earnings_growth", "pe_gap"],
@@ -73,7 +82,7 @@ SECTOR_PROFILES = {
     "financials_insurance": {
         "weights": {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10},
         "metrics": {
-            "V": ["earnings_yield_fwd", "p_b", "dividend_yield"],
+            "V": ["earnings_yield_fwd", "p_b", "dividend_yield", "analyst_upside"],
             "Q": ["roe", "roa"],
             "H": ["equity_assets"],
             "G": ["revenue_growth", "earnings_growth", "pe_gap"],
@@ -83,7 +92,7 @@ SECTOR_PROFILES = {
     "pre_profit_growth": {  # survival + path-to-profit; confidence capped MEDIUM
         "weights": {"V": 0.15, "Q": 0.15, "H": 0.25, "G": 0.35, "M": 0.10},
         "metrics": {
-            "V": ["ev_sales"],
+            "V": ["ev_sales", "analyst_upside"],
             "Q": ["gross_margin", "operating_margin"],
             "H": ["cash_runway_q", "debt_equity"],
             "G": ["revenue_growth", "revenue_cagr_3y"],
@@ -112,9 +121,21 @@ SECTOR_MAP = {
 }
 
 
-def classify(info: dict) -> str:
+def classify(info: dict, free_cash_flow: float | None = None) -> str:
     """Company-type classification; special types override the sector label
-    (docs/scoring-system-design.md §3)."""
+    (docs/scoring-system-design.md §3).
+
+    `free_cash_flow` is the caller's annual, period-verified FCF — the same
+    figure `financial_models._statement_fcf` resolves. It matters because this
+    function chooses the *profile*, and the profile decides which metrics are
+    scored and how they are weighted; a misroute here changes the whole model,
+    not one number. `info["freeCashflow"]` is the wrong input for that decision:
+    yfinance reports it annually for some issuers and for a single quarter for
+    others (measured 2026-08-06: MSFT 16.4B vs 67.0B on the statement, 0.24x),
+    so a loss-making company with one positive quarter would fall out of
+    `pre_profit_growth`. It stays as the fallback for callers that cannot
+    resolve a statement figure, which is how it behaved before.
+    """
     industry = (info.get("industry") or "").lower()
     sector = (info.get("sector") or "").lower()
 
@@ -126,7 +147,7 @@ def classify(info: dict) -> str:
         return "financials_insurance"
 
     eps = info.get("trailingEps")
-    fcf = info.get("freeCashflow")
+    fcf = free_cash_flow if free_cash_flow is not None else info.get("freeCashflow")
     if eps is not None and eps < 0 and (fcf is None or fcf <= 0):
         return "pre_profit_growth"
 

@@ -15,6 +15,13 @@ export const post = (path, body) =>
     body: JSON.stringify(body ?? {}),
   }).then(handle);
 
+export const patch = (path, body) =>
+  fetch(`${BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  }).then(handle);
+
 export const del = (path) => fetch(`${BASE}${path}`, { method: 'DELETE' }).then(handle);
 
 /**

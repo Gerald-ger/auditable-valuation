@@ -9,6 +9,8 @@ import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from statistics import median
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
@@ -18,8 +20,11 @@ from pydantic import BaseModel
 
 import ai_client
 import comps
+import drawings as drawings_model
 import financial_models
+import forensics
 import scoring
+import search
 import store
 from data_provider import provider
 
@@ -60,8 +65,8 @@ async def _aguard(fn, *args, **kwargs):
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
 
 
-def _peer_betas(f: dict) -> list[float] | None:
-    """Peer betas, but only when the company's own reported beta is not credible.
+def _peer_beta_inputs(f: dict) -> list[dict] | None:
+    """Peer snapshots, but only when the company's own reported beta is not credible.
 
     resolve_beta prefers a plausible reported beta, so fetching peers otherwise
     would be pure waste — and this is the only network call the valuation path
@@ -71,7 +76,7 @@ def _peer_betas(f: dict) -> list[float] | None:
     beta = f["info"].get("beta")
     if beta is not None and financial_models.BETA_MIN <= beta <= financial_models.BETA_MAX:
         return None
-    return comps.peer_betas(f["ticker"])
+    return comps.peer_beta_inputs(f["ticker"])
 
 
 def _ndjson(events: AsyncIterator[dict]) -> StreamingResponse:
@@ -93,9 +98,9 @@ def _ndjson(events: AsyncIterator[dict]) -> StreamingResponse:
 
 
 async def _analysis_with_beta(f: dict) -> dict:
-    """full_analysis off the event loop — _peer_betas can hit the network."""
+    """full_analysis off the event loop — _peer_beta_inputs can hit the network."""
     return await asyncio.to_thread(
-        lambda: financial_models.full_analysis(f, peer_betas=_peer_betas(f)))
+        lambda: financial_models.full_analysis(f, peers=_peer_beta_inputs(f)))
 
 
 async def _text_stream(messages: list[dict], context: str) -> AsyncIterator[dict]:
@@ -108,6 +113,20 @@ async def health():
     return {"status": "ok", "ai": await ai_client.status()}
 
 
+@app.get("/api/search")
+async def search_endpoint(q: str = "", limit: int = 8):
+    """Typo-tolerant symbol/name lookup for the header search box.
+
+    Async + to_thread because the remote tier is a blocking HTTP call and this
+    endpoint fires on every keystroke — blocking a worker per character would
+    starve the pool that serves the rest of the page.
+    """
+    if not q.strip():
+        return {"results": []}
+    results = await asyncio.to_thread(search.search_tickers, q, min(limit, 20))
+    return {"results": results}
+
+
 @app.get("/api/stock/{ticker}/quote")
 def quote(ticker: str):
     q = _guard(provider.get_quote, ticker)
@@ -116,15 +135,62 @@ def quote(ticker: str):
     return q
 
 
+# Finest interval Yahoo actually serves for each period. Measured against live
+# responses 2026-08-07 — these are hard API limits, not preferences:
+#   sub-hourly data  -> last 60 days only  (3mo at 30m returns ZERO bars)
+#   hourly data      -> last 730 days only (5y at 1h returns ZERO bars)
+# so 5y and max cannot go below daily however the UI asks.
+PERIOD_INTERVALS = {
+    "1d": "1m",     # 390 bars — the finest Yahoo serves, and its most rate-limited
+    "5d": "5m",     # 390
+    "1mo": "30m",   # 299
+    "3mo": "1h",    # 441
+    "6mo": "1h",    # 868
+    "1y": "1h",     # 1,749
+    "2y": "1h",     # 3,487
+    "5y": "1d",     # 1,255
+    "max": "1wk",
+}
+DEFAULT_INTERVAL = "1d"
+
+
+def _bars_per_day(bars: list[dict]) -> float:
+    """Median bars per trading day, measured from the data itself.
+
+    The frontend scales indicator windows with this so "MA50" keeps meaning 50
+    *days* whatever the bar size. Derived rather than hard-coded per interval
+    because sessions differ by market — Hong Kong trades 5.5 hours against the
+    US 6.5 — and half-days would skew a constant.
+    """
+    if not bars:
+        return 1.0
+    counts: dict[str, int] = {}
+    for bar in bars:
+        time_value = bar["time"]
+        day = (datetime.fromtimestamp(time_value, tz=timezone.utc).strftime("%Y-%m-%d")
+               if isinstance(time_value, (int, float)) else str(time_value)[:10])
+        counts[day] = counts.get(day, 0) + 1
+    if len(counts) < 3:
+        return float(median(counts.values())) if counts else 1.0
+    # drop the first and last day: both are usually partial sessions
+    ordered = [counts[day] for day in sorted(counts)][1:-1]
+    return float(median(ordered)) if ordered else 1.0
+
+
 @app.get("/api/stock/{ticker}/history")
-def history(ticker: str, period: str = "1y", interval: str = "1d"):
-    # short periods need intraday bars or the chart shows 1-5 candles
-    if interval == "1d":
-        interval = {"1d": "15m", "5d": "60m"}.get(period, "1d")
+def history(ticker: str, period: str = "1y", interval: str = ""):
+    """Bars plus the interval used and its bars-per-day, which the chart needs
+    to keep day-based indicator windows meaning days."""
+    interval = interval or PERIOD_INTERVALS.get(period, DEFAULT_INTERVAL)
     bars = _guard(provider.get_history, ticker, period, interval)
+    if not bars and interval != DEFAULT_INTERVAL:
+        # A thinly traded or newly listed name can have no intraday history
+        # while having daily bars. Falling back beats an empty chart.
+        interval = DEFAULT_INTERVAL
+        bars = _guard(provider.get_history, ticker, period, interval)
     if not bars:
         raise HTTPException(status_code=404, detail=f"No price history for '{ticker}'")
-    return bars
+    return {"interval": interval, "bars_per_day": _bars_per_day(bars), "bars": bars}
 
 
 @app.get("/api/stock/{ticker}/news")
@@ -156,7 +222,7 @@ def events(ticker: str):
 @app.get("/api/stock/{ticker}/analysis")
 def analysis(ticker: str):
     f = _guard(provider.get_fundamentals, ticker)
-    return _guard(financial_models.full_analysis, f, peer_betas=_peer_betas(f))
+    return _guard(financial_models.full_analysis, f, peers=_peer_beta_inputs(f))
 
 
 class DcfAssumptions(BaseModel):
@@ -176,7 +242,7 @@ def custom_dcf(ticker: str, assumptions: DcfAssumptions):
         terminal_growth=assumptions.terminal_growth,
         wacc_override=assumptions.wacc_override,
         tax_rate=assumptions.tax_rate,
-        peer_betas=_peer_betas(f),
+        peers=_peer_beta_inputs(f),
     )
 
 
@@ -192,7 +258,7 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
         or comps.suggest_peers(ticker)
     f = _guard(provider.get_fundamentals, ticker)
     result = comps.comps_analysis(f, tickers)
-    dcf = financial_models.dcf_valuation(f, peer_betas=_peer_betas(f))
+    dcf = financial_models.dcf_valuation(f, peers=_peer_beta_inputs(f))
     result["football_field"] = comps.football_field(f, dcf, result)
     result["current_price"] = f["info"].get("currentPrice") or f["info"].get("regularMarketPrice")
     return result
@@ -210,8 +276,11 @@ def _score_and_record(ticker: str) -> dict:
     # resolve the DCF here so the valuation pillar sees the same peer-corrected
     # beta the Financial Models tab shows; score_company would otherwise compute
     # its own with the raw reported beta
-    dcf = financial_models.dcf_valuation(f, peer_betas=_peer_betas(f))
+    dcf = financial_models.dcf_valuation(f, peers=_peer_beta_inputs(f))
     card = scoring.score_company(f, dcf=dcf)
+    # attached to the card, deliberately outside score_company: these are
+    # reported beside the composite, never folded into it (see forensics.py)
+    card["forensics"] = forensics.forensic_checks(f, card["classification"])
     store.record_score(card, f["info"])
     return card
 
@@ -249,11 +318,22 @@ def _screener_row(card: dict) -> dict:
 
 @app.post("/api/score/batch")
 def score_batch(req: BatchRequest):
-    """Score many tickers and return them ranked.
+    """Score many tickers and return them ranked **within each classification**.
 
     Per docs/scoring-system-design.md §4.3, cards below 60% coverage are still
     returned but flagged `rankable: false` — they must not silently take a place
-    in a cross-company ranking they cannot support.
+    in a ranking they cannot support.
+
+    Ranking never crosses classifications. Composite scores from two different
+    profiles are not the same measurement: the profiles score different metric
+    sets (RIVN's valuation pillar is one metric, AAPL's is five), weight the
+    pillars differently (G is 35% for pre-profit, 10% for a bank), score some
+    shared metrics on different anchor curves (RELAXED_ND_EBITDA), and
+    renormalize around whichever pillars had coverage. Measured 2026-08-07 on
+    the seven fixtures, holding every pillar score fixed and changing only the
+    weights to one common ruler moved three of seven positions, including 2nd
+    place. Sorting them into one list asserted a comparison the engine never
+    computed, so the grouping is the fix rather than a display preference.
     """
     seen, ordered = set(), []
     for raw in req.tickers:
@@ -279,12 +359,37 @@ def score_batch(req: BatchRequest):
 
     for r in rows:
         r["rankable"] = r["composite_score"] is not None and r["coverage_pct"] >= 60
-    rankable = sorted((r for r in rows if r["rankable"]),
-                      key=lambda r: r["composite_score"], reverse=True)
-    unrankable = [r for r in rows if not r["rankable"]]
 
-    return {"results": rankable + unrankable, "failed": failed,
-            "ranked": len(rankable), "excluded_low_coverage": len(unrankable)}
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(r.get("classification") or "unclassified", []).append(r)
+
+    ranked_total = 0
+    out = []
+    for classification in sorted(groups):
+        members = groups[classification]
+        rankable = sorted((r for r in members if r["rankable"]),
+                          key=lambda r: r["composite_score"], reverse=True)
+        for position, r in enumerate(rankable, start=1):
+            r["rank_in_group"] = position
+        unrankable = [r for r in members if not r["rankable"]]
+        for r in unrankable:
+            r["rank_in_group"] = None
+        ranked_total += len(rankable)
+        out.append({
+            "classification": classification,
+            "ranked": len(rankable),
+            # a single-member group is a list, not a ranking — the UI says so
+            "comparable": len(rankable) > 1,
+            "results": rankable + unrankable,
+        })
+
+    # biggest comparable group first: that is where the ranking earns its keep
+    out.sort(key=lambda g: (-g["ranked"], g["classification"]))
+    unrankable_total = sum(len(g["results"]) - g["ranked"] for g in out)
+
+    return {"groups": out, "failed": failed,
+            "ranked": ranked_total, "excluded_low_coverage": unrankable_total}
 
 
 def _safe_score(ticker: str):
@@ -294,6 +399,68 @@ def _safe_score(ticker: str):
         return e
 
 
+# ── chart drawings ───────────────────────────────────────────────────
+
+class DrawingRequest(BaseModel):
+    kind: str                      # 'trendline' | 'hline'
+    p1: float
+    t1: int | None = None          # true UTC epoch, not chart-space time
+    t2: int | None = None
+    p2: float | None = None
+    label: str | None = None
+
+
+class DrawingPatch(BaseModel):
+    t1: int | None = None
+    p1: float | None = None
+    t2: int | None = None
+    p2: float | None = None
+    label: str | None = None
+
+
+KINDS = ("trendline", "hline")
+
+
+@app.get("/api/stock/{ticker}/drawings")
+def get_drawings(ticker: str):
+    return {"drawings": store.list_drawings(ticker)}
+
+
+@app.post("/api/stock/{ticker}/drawings")
+def create_drawing(ticker: str, req: DrawingRequest):
+    if req.kind not in KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {KINDS}")
+    if req.kind == "trendline" and None in (req.t1, req.t2, req.p2):
+        raise HTTPException(status_code=400,
+                            detail="a trendline needs both endpoints (t1,p1,t2,p2)")
+    new_id = store.add_drawing(ticker, req.kind, req.p1, req.t1, req.t2, req.p2, req.label)
+    return {"id": new_id}
+
+
+@app.patch("/api/stock/{ticker}/drawings/{drawing_id}")
+def patch_drawing(ticker: str, drawing_id: int, req: DrawingPatch):
+    store.update_drawing(drawing_id, **req.model_dump(exclude_none=True))
+    return {"ok": True}
+
+
+@app.delete("/api/stock/{ticker}/drawings/{drawing_id}")
+def remove_drawing(ticker: str, drawing_id: int):
+    store.delete_drawing(drawing_id)
+    return {"ok": True}
+
+
+@app.delete("/api/stock/{ticker}/drawings")
+def remove_all_drawings(ticker: str):
+    store.clear_drawings(ticker)
+    return {"ok": True}
+
+
+def _drawing_context(ticker: str, bars: list[dict], price: float | None) -> dict:
+    """Geometry of the user's lines, for the AI context. Computed, never guessed."""
+    rows = store.list_drawings(ticker)
+    return drawings_model.describe_all(rows, bars, price)
+
+
 # ── watchlist / portfolio ────────────────────────────────────────────
 
 class PositionRequest(BaseModel):
@@ -301,6 +468,17 @@ class PositionRequest(BaseModel):
     shares: float = 0.0
     cost_basis: float | None = None
     note: str | None = None
+
+
+@app.get("/api/portfolio/tickers")
+def portfolio_tickers():
+    """Just the symbols, for the header's one-click chips.
+
+    Separate from /api/portfolio because that endpoint prices every position
+    live — a per-tab-change fetch of the full portfolio would spend N quote
+    round-trips to render a row of buttons.
+    """
+    return {"tickers": [p["ticker"] for p in store.list_positions()]}
 
 
 @app.get("/api/portfolio")
@@ -414,8 +592,14 @@ async def _ticker_context(ticker: str | None) -> str:
             asyncio.to_thread(provider.get_quote, ticker),
             asyncio.to_thread(provider.get_fundamentals, ticker),
         )
-        return json.dumps({"quote": q,
-                           "analysis": await _analysis_with_beta(f)}, default=str)
+        # the user's own chart lines, reduced to computed geometry — see
+        # drawings.py for why the model must be told who drew them
+        bars = await asyncio.to_thread(provider.get_history, ticker, "6mo", "1d")
+        return json.dumps({
+            "quote": q,
+            "analysis": await _analysis_with_beta(f),
+            "user_chart_drawings": _drawing_context(ticker, bars, q.get("price")),
+        }, default=str)
     except Exception:
         return ""  # chat still works without live context
 
@@ -433,7 +617,8 @@ async def ai_predict(ticker: str):
     news_items = await _aguard(provider.get_news, ticker)
     f = await _aguard(provider.get_fundamentals, ticker)
     context = ai_client.outlook_context(
-        q, bars[-30:], news_items, await _analysis_with_beta(f))
+        q, bars[-30:], news_items, await _analysis_with_beta(f),
+        drawings=_drawing_context(ticker, bars, q.get("price")))
     prompt = ai_client.outlook_prompt(ticker.upper())
     return _ndjson(_text_stream([{"role": "user", "content": prompt}], context))
 

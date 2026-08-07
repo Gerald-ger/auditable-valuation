@@ -116,6 +116,14 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     m["p_b"] = _clamp(info.get("priceToBook"), 0, 1000)
     m["ev_sales"] = _clamp(info.get("enterpriseToRevenue"), 0, 1000)
     m["dividend_yield"] = div(info.get("dividendYield"), 100)  # yfinance gives percent
+    # NOT NAREIT FFO. Proper FFO is net income + real-estate depreciation
+    # - gains on property sales + impairments. yfinance exposes no gain-on-sale-
+    # of-real-estate row at all (the O fixture reports only "Gain On Sale Of
+    # Security"), so the adjusted figure cannot be built from this source. This
+    # is net income plus total D&A, a proxy that runs high for REITs that sell
+    # property. Cards that actually score it carry `ffo_yield_is_proxy`; see
+    # score_company. Measured on O, the candidate adjustments score 69-77
+    # against 71 here — ~0.5 composite points, not a tier.
     m["ffo_yield"] = _clamp(div((net_income or 0) + (dep_amort or 0), mcap)
                             if net_income is not None else None, -0.5, 0.5)
 
@@ -184,14 +192,21 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
 
 def score_company(f: dict, dcf: dict | None = None) -> dict:
     info = f["info"]
-    classification = sector_weights.classify(info)
+    # The profile decides which metrics are scored and how they are weighted, so
+    # the classifier must not read info["freeCashflow"] — see classify's docstring.
+    statement_fcf = fm._statement_fcf(f["cash_flow"])
+    classification = sector_weights.classify(
+        info, statement_fcf[1] if statement_fcf else None)
     profile = sector_weights.get_profile(classification)
     raw, flags = extract_metrics(f)
 
+    active = [x for lst in profile["metrics"].values() for x in lst]
     # DCF upside only where the model is applicable (profile includes it)
-    if "dcf_upside_pct" in [x for lst in profile["metrics"].values() for x in lst]:
+    if "dcf_upside_pct" in active:
         dcf = dcf if dcf is not None else fm.dcf_valuation(f)
         raw["dcf_upside_pct"] = None if dcf.get("error") else dcf.get("upside_pct")
+    if "ffo_yield" in active and raw.get("ffo_yield") is not None:
+        flags.append("ffo_yield_is_proxy")
 
     equity_multiplier = None
     ratios = fm.ratio_analysis(f)

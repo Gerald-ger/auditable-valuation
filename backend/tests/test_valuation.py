@@ -18,21 +18,32 @@ import financial_models as fm
 
 # ── beta resolution (item 1) ─────────────────────────────────────────
 
+def _peer(beta, debt=None, market_cap=None):
+    """A peer snapshot as data_provider.get_peer_snapshot returns it.
+
+    debt/market_cap default to None so a test opts in to the unlever path only
+    when it means to — without leverage, resolve_beta uses the levered median.
+    """
+    return {"beta": beta, "total_debt": debt, "market_cap": market_cap}
+
+
 def test_credible_reported_beta_is_kept_and_peers_ignored():
-    beta, source = fm.resolve_beta({"beta": 1.09}, peer_betas=[0.8, 0.9])
+    beta, source = fm.resolve_beta({"beta": 1.09}, [_peer(0.8), _peer(0.9)])
     assert (beta, source) == (1.09, "reported")
 
 
 @pytest.mark.parametrize("bad", [0.173, 0.0, -0.5, 3.4, None])
 def test_implausible_beta_falls_back_to_peer_median(bad):
     """yfinance reported 0.173 for XOM, which swung its DCF upside ~79 points."""
-    beta, source = fm.resolve_beta({"beta": bad}, peer_betas=[0.85, 0.95, 1.05])
+    beta, source = fm.resolve_beta({"beta": bad},
+                                   [_peer(0.85), _peer(0.95), _peer(1.05)])
     assert source == "peer_median"
     assert beta == pytest.approx(0.95)
 
 
 def test_peer_betas_are_themselves_filtered_for_credibility():
-    beta, source = fm.resolve_beta({"beta": 0.1}, peer_betas=[0.2, 0.9, 1.1, 4.0])
+    beta, source = fm.resolve_beta(
+        {"beta": 0.1}, [_peer(0.2), _peer(0.9), _peer(1.1), _peer(4.0)])
     assert source == "peer_median"
     assert beta == pytest.approx(1.0), "implausible peers must not enter the median"
 
@@ -41,15 +52,70 @@ def test_a_single_surviving_peer_is_not_treated_as_a_median():
     """XOM's real peer set: CVX 0.488, COP 0.123, SHEL -0.218, BP -0.212.
     Only one clears the credibility band, and it is still implausible for an oil
     major — yfinance's betas are broken sector-wide here, not just for XOM."""
-    beta, source = fm.resolve_beta({"beta": 0.173},
-                                   peer_betas=[0.488, 0.123, -0.218, -0.212])
+    beta, source = fm.resolve_beta(
+        {"beta": 0.173},
+        [_peer(0.488), _peer(0.123), _peer(-0.218), _peer(-0.212)])
     assert source == "default"
     assert beta == fm.BETA_FALLBACK
 
 
 def test_no_credible_beta_anywhere_falls_back_to_one():
-    assert fm.resolve_beta({"beta": None}, peer_betas=[]) == (fm.BETA_FALLBACK, "default")
-    assert fm.resolve_beta({}, peer_betas=None) == (fm.BETA_FALLBACK, "default")
+    assert fm.resolve_beta({"beta": None}, []) == (fm.BETA_FALLBACK, "default")
+    assert fm.resolve_beta({}, None) == (fm.BETA_FALLBACK, "default")
+
+
+# ── unlever / re-lever (reference doc §1.1.2) ────────────────────────
+
+def test_peer_betas_are_unlevered_and_relevered_to_the_target():
+    """A levered peer beta carries the peer's balance sheet, not the target's.
+
+    Peers are levered 1.0x D/E with beta 1.10; the target is debt-free, so the
+    substituted beta must be the *asset* beta, below the peers' levered median.
+        Bu = 1.10 / (1 + 0.79 * 1.0) = 0.6145 ; target D/E = 0 -> Bl = 0.6145
+    """
+    peers = [_peer(1.10, debt=100.0, market_cap=100.0),
+             _peer(1.10, debt=50.0, market_cap=50.0)]
+    beta, source = fm.resolve_beta(
+        {"beta": None, "totalDebt": 0.0, "marketCap": 1000.0}, peers, tax_rate=0.21)
+    assert source == "peer_median_relevered"
+    assert beta == pytest.approx(0.6145, abs=1e-4)
+    assert beta < 1.10, "an unlevered target must not inherit the peers' leverage"
+
+
+def test_relevering_raises_beta_for_a_more_levered_target():
+    peers = [_peer(1.0, debt=0.0, market_cap=100.0),
+             _peer(1.0, debt=0.0, market_cap=100.0)]
+    lo, _ = fm.resolve_beta({"totalDebt": 0.0, "marketCap": 100.0}, peers, 0.21)
+    hi, _ = fm.resolve_beta({"totalDebt": 100.0, "marketCap": 100.0}, peers, 0.21)
+    assert hi > lo, "more leverage is more equity risk"
+    assert hi == pytest.approx(1.79, abs=1e-4)
+
+
+def test_relevered_beta_is_held_inside_the_credibility_band():
+    """A very levered target must not re-lever its way out of the band."""
+    peers = [_peer(2.0, debt=0.0, market_cap=100.0),
+             _peer(2.0, debt=0.0, market_cap=100.0)]
+    beta, source = fm.resolve_beta(
+        {"totalDebt": 900.0, "marketCap": 100.0}, peers, 0.21)
+    assert source == "peer_median_relevered"
+    assert beta == fm.BETA_MAX
+
+
+def test_unknown_peer_leverage_degrades_to_the_levered_median():
+    """Unlevering needs each peer's own D/E; without it, the old path stands."""
+    beta, source = fm.resolve_beta(
+        {"beta": None, "totalDebt": 0.0, "marketCap": 100.0},
+        [_peer(0.9), _peer(1.1)], 0.21)
+    assert source == "peer_median"
+    assert beta == pytest.approx(1.0)
+
+
+def test_unknown_target_leverage_degrades_to_the_levered_median():
+    beta, source = fm.resolve_beta(
+        {"beta": None},  # no totalDebt / marketCap
+        [_peer(0.9, 10.0, 100.0), _peer(1.1, 10.0, 100.0)], 0.21)
+    assert source == "peer_median"
+    assert beta == pytest.approx(1.0)
 
 
 def test_xom_reported_beta_is_replaced_by_the_peer_median(monkeypatch):
@@ -58,7 +124,7 @@ def test_xom_reported_beta_is_replaced_by_the_peer_median(monkeypatch):
     f = load_fundamentals("XOM")
     assert f["info"]["beta"] < fm.BETA_MIN, "fixture must still exercise this path"
 
-    a = fm.dcf_valuation(f, peer_betas=[0.85, 0.9, 1.0, 0.95])["assumptions"]
+    a = fm.dcf_valuation(f, peers=[_peer(0.85), _peer(0.9), _peer(1.0), _peer(0.95)])["assumptions"]
     assert a["beta_source"] == "peer_median"
     assert a["beta"] == pytest.approx(0.925)
     assert a["beta_reported"] == pytest.approx(0.173), "the raw value stays auditable"
@@ -73,10 +139,10 @@ def test_fair_value_falls_as_beta_rises(stem, monkeypatch):
     """The invariant the 0.173 reading violated: more risk cannot be worth more."""
     monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals(stem)
-    # peer_betas only takes effect when the reported beta is not credible
+    # peers only take effect when the reported beta is not credible
     f["info"]["beta"] = 0.0
     values = [
-        fm.dcf_valuation(f, peer_betas=[b])["fair_value_per_share"]
+        fm.dcf_valuation(f, peers=[_peer(b), _peer(b)])["fair_value_per_share"]
         for b in (0.4, 0.8, 1.2, 1.6)
     ]
     assert values == sorted(values, reverse=True), values

@@ -47,6 +47,22 @@ CREATE TABLE IF NOT EXISTS score_history (
     PRIMARY KEY (ticker, as_of_date)
 );
 
+CREATE TABLE IF NOT EXISTS drawings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker     TEXT    NOT NULL,
+    kind       TEXT    NOT NULL,          -- 'trendline' | 'hline'
+    -- true UTC epochs, never chart-space time: the chart shifts for display
+    -- (GMT+8) but a drawing must survive a change of display timezone
+    t1         INTEGER,
+    p1         REAL    NOT NULL,
+    t2         INTEGER,
+    p2         REAL,
+    label      TEXT,
+    created_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS drawings_ticker ON drawings(ticker);
+
 CREATE TABLE IF NOT EXISTS positions (
     ticker     TEXT PRIMARY KEY,
     shares     REAL NOT NULL DEFAULT 0,       -- 0 = watchlist-only entry
@@ -172,3 +188,49 @@ def list_positions() -> list[dict]:
     with _conn() as c:
         rows = c.execute("SELECT * FROM positions ORDER BY ticker").fetchall()
     return [dict(r) for r in rows]
+
+
+# ── chart drawings ───────────────────────────────────────────────────
+#
+# Stored server-side rather than in the browser so the AI can read them without
+# the page posting its canvas state on every request, and so they follow the
+# analysis rather than the machine it was drawn on.
+
+def add_drawing(ticker: str, kind: str, p1: float, t1: int | None = None,
+                t2: int | None = None, p2: float | None = None,
+                label: str | None = None) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO drawings (ticker, kind, t1, p1, t2, p2, label, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ticker.upper(), kind, t1, p1, t2, p2, label, _utc_now()),
+        )
+        return cur.lastrowid
+
+
+def list_drawings(ticker: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM drawings WHERE ticker = ? ORDER BY id", (ticker.upper(),)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_drawing(drawing_id: int, **fields) -> None:
+    """Move an endpoint. Only geometry and the label are mutable."""
+    allowed = {k: v for k, v in fields.items() if k in ("t1", "p1", "t2", "p2", "label")}
+    if not allowed:
+        return
+    sets = ", ".join(f"{k} = :{k}" for k in allowed)
+    with _conn() as c:
+        c.execute(f"UPDATE drawings SET {sets} WHERE id = :id", {**allowed, "id": drawing_id})
+
+
+def delete_drawing(drawing_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM drawings WHERE id = ?", (drawing_id,))
+
+
+def clear_drawings(ticker: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM drawings WHERE ticker = ?", (ticker.upper(),))

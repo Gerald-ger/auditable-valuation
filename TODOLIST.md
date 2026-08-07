@@ -44,10 +44,37 @@ yfinance's energy betas are broken sector-wide (CVX 0.488, COP 0.123, SHEL −0.
 BP −0.212), peer substitution cannot rescue that sector either — XOM falls through
 to the neutral 1.0 default.
 
+Peer betas are now unlevered and re-levered (2026-08-07), which fixes *which*
+capital structure the substitute carries but not the band problem: a wrong-but-
+plausible input still passes, and a sector-wide break still defeats the peer tier.
+
 **Options:** accept it (the audit row shows the beta and its source, and beta is
 inspectable); add a sector-median beta table as a third tier; or compute beta from
 price history directly, which is the only real fix and needs 2–5 years of weekly
 returns for the stock and its index.
+
+### 🔵 Cross-sectional normalization needs a universe, not a `scoring.py` change
+
+Quant review §6 item 2 (score against the peer *distribution*, not absolute
+thresholds) is the right diagnosis and is **blocked on data, not effort**. A
+sector z-score or percentile needs a universe to rank within; this app has 21
+hand-curated peer entries, ~2.5 s per ticker, and no bulk endpoint. Four peers
+cannot produce a percentile.
+
+**Trigger: a data source that can return a sector's constituents in one call.**
+Until then the scores stay absolute-anchored, which means they carry market
+direction — in a rally every valuation score falls and every momentum score
+rises together.
+
+### 🔵 Forensic checks are displayed but not scored
+
+`forensics.py` computes Altman Z, Piotroski F, accruals and net share issuance;
+none feed the composite. That was deliberate — folding four more uncalibrated
+curves into a composite that has never been validated adds motion, not evidence.
+
+**Trigger: the IC study below.** If tier separation turns out to be real, these
+are the first candidates to add; if it does not, nothing should be added to the
+composite at all.
 
 ### 🟡 Commit the pending work
 
@@ -163,6 +190,32 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-07 — comparability, beta methodology, forensic checks
+
+Measured before/after in `CHANGELOG.md`. Acts on quant-review §6 items 1 and 4,
+plus four defects found reading the code.
+
+- **Screener ranked across company types** — the one thing in the app that was
+  provably wrong rather than merely unvalidated. Now grouped by classification;
+  single-member groups are listed, not ranked. Changing only the pillar weights
+  to one common ruler had moved three of seven fixture positions.
+- **`classify()` read `info["freeCashflow"]`** — the field the codebase had
+  already rejected, deciding which *profile* a company gets. Now statement FCF.
+  No fixture changed classification; this was latent.
+- **Football field used the sensitivity grid's corners** — now 25th–75th per
+  reference doc §5.2. Bars roughly halved; 0700.HK's verdict flipped.
+- **`analyst_upside` sat in Momentum**, opposing the other three metrics. Moved
+  to Valuation. AAPL crosses B→A.
+- **Peer betas were a raw levered median** — now unlevered and re-levered to the
+  target's own D/E, per reference doc §1.1.2 and the Simply Wall St spec.
+- **Added forensic checks** (Altman Z, Piotroski F, accruals, net issuance),
+  display-only, with explicit applicability.
+
+Deliberately **not** taken from Simply Wall St: terminal growth = 10Y yield
+(would set terminal growth above long-run nominal GDP, which reference doc
+§1.1.3 forbids). Not yet taken: Damodaran ERP (needs sourced figures) and the
+5-year-average risk-free rate (the free `treasury_rates` call returns 1 year).
 
 ### ✅ 2026-08-06 (c) — price chart
 

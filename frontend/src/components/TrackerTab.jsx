@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { get, stream } from '../api';
 import { num, big } from '../format';
 import PriceChart from './PriceChart';
+import { DISPLAY_TZ_LABEL } from '../charttime';
 import ChatBox from './ChatBox';
 
 const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
@@ -9,6 +10,10 @@ const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
 export default function TrackerTab({ ticker, aiOnline }) {
   const [quote, setQuote] = useState(null);
   const [bars, setBars] = useState([]);
+  // interval is chosen by the backend per period (2m for 1d, 1h for 1y, ...);
+  // barsPerDay lets the chart keep MA/RSI/MACD windows measured in trading days
+  const [barsPerDay, setBarsPerDay] = useState(1);
+  const [interval, setInterval_] = useState('1d');
   // every datable item (news + SEC filings) for the chart markers; the list
   // below stays headlines-only, which is what "News behind the chart" means
   const [events, setEvents] = useState([]);
@@ -31,7 +36,11 @@ export default function TrackerTab({ ticker, aiOnline }) {
     ])
       .then(([q, h, e]) => {
         setQuote(q);
-        setBars(h);
+        // guarded: a backend older than the page returns a bare array here,
+        // and an undefined `bars` throws inside the chart's render
+        setBars(h.bars ?? []);
+        setBarsPerDay(h.bars_per_day || 1);
+        setInterval_(h.interval ?? '1d');
         setEvents(e.events);
         setFilingsSupported(e.filings_supported);
       })
@@ -106,11 +115,21 @@ export default function TrackerTab({ ticker, aiOnline }) {
           {loading ? (
             <div className="empty-state loading">Loading…</div>
           ) : (
-            <PriceChart bars={bars} events={events} filingsSupported={filingsSupported} />
+            <PriceChart
+              bars={bars}
+              events={events}
+              filingsSupported={filingsSupported}
+              barsPerDay={barsPerDay}
+              ticker={ticker}
+            />
           )}
           <div className="chart-note">
-            Scroll to zoom · drag to pan · double-click to fit · hover a dot to preview, click to
-            open its stories
+            {bars.length.toLocaleString()} bars at {interval} · times in {DISPLAY_TZ_LABEL}
+            {interval.endsWith('m') || interval.endsWith('h')
+              ? ' (a US session runs 21:30–04:00 and so spans two dates)'
+              : ''}{' '}
+            · scroll to zoom · drag to pan · double-click to fit · hover a dot to preview,
+            click to open its stories
           </div>
         </div>
 

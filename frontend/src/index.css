@@ -80,6 +80,134 @@ h1 {
   gap: 8px;
 }
 
+/* ── Header search ────────────────────────────── */
+.search-box {
+  position: relative;
+  min-width: 340px;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.search-field input {
+  width: 100%;
+  padding-right: 30px;
+}
+
+.search-spinner {
+  position: absolute;
+  right: 10px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: search-spin 0.7s linear infinite;
+}
+
+@keyframes search-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Results overlay the page rather than pushing it down — the header must not
+   change height while typing or the whole layout jumps per keystroke. */
+.search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.search-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.search-row.active {
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.search-symbol {
+  font-weight: 700;
+  font-size: 13px;
+  min-width: 68px;
+}
+
+.search-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-exch {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.search-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.search-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.search-chip {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.search-chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.search-chip.saved {
+  border-color: rgba(46, 189, 133, 0.5);
+  color: #2ebd85;
+}
+
+.ma-chip-unavailable {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
 input {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1375,6 +1503,39 @@ textarea:focus {
   cursor: pointer;
 }
 
+/* Ranking is grouped by company type and never crosses one — the heading is
+   the boundary of what the numbers below it can legitimately be compared to. */
+.screener-why {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin: 12px 0 4px;
+}
+
+.screener-group {
+  margin-top: 18px;
+}
+
+.screener-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.screener-group-head .chart-note {
+  margin-top: 0;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .screener-ticker {
   font-weight: 700;
   cursor: pointer;
@@ -1404,6 +1565,44 @@ textarea:focus {
 .pillar-excluded-cell {
   font-style: italic;
   opacity: 0.75;
+}
+
+/* ── Forensic checks (Scorecard) ──────────────── */
+.forensic-table td {
+  vertical-align: top;
+}
+
+.forensic-label {
+  text-align: left !important;
+  font-weight: 600;
+}
+
+.forensic-hint {
+  display: block;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.forensic-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.forensic-band {
+  text-align: left !important;
+  font-size: 12px;
+}
+
+.forensic-band.good { color: #2ebd85; }
+.forensic-band.bad { color: #f6465d; }
+.forensic-band.neutral { color: var(--muted); }
+
+.forensic-na {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 /* ── Portfolio tab ───────────────────────────── */
@@ -1502,4 +1701,53 @@ footer {
   color: var(--muted);
   font-size: 12px;
   text-align: center;
+}
+
+/* ── Error boundary ───────────────────────────── */
+/* A render throw used to unmount the whole tree and leave a black page with no
+   message. This keeps the failure visible and names its usual cause. */
+.error-boundary {
+  background: var(--panel);
+  border: 1px solid #f6465d;
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin: 16px 0;
+  max-width: 640px;
+}
+
+.error-boundary-title {
+  font-weight: 700;
+  color: #f6465d;
+  margin-bottom: 8px;
+}
+
+.error-boundary p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.error-boundary-detail {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 12px;
+}
+
+/* ── Chart drawing toolbar ────────────────────── */
+.draw-toolbar .draw-hint {
+  margin-top: 0;
+  flex: 1;
+  min-width: 200px;
+}
+
+.draw-toolbar .seg {
+  padding: 4px 10px;
+  font-size: 12px;
 }

@@ -1,7 +1,7 @@
 {
  "0700_HK": {
   "classification": "communication_svcs",
-  "composite_score": 75,
+  "composite_score": 74,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -29,12 +29,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 96,
      "price_vs_200dma": 30,
      "range_52w_pos": 32,
      "rel_52w_change": 11
     },
-    "score": 42
+    "score": 24
    },
    "quality": {
     "insufficient": false,
@@ -50,19 +49,20 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 96,
      "dcf_upside_pct": 82,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 43,
      "fcf_yield": 64
     },
-    "score": 68
+    "score": 74
    }
   },
   "tier": "A"
  },
  "AAPL": {
   "classification": "technology",
-  "composite_score": 64,
+  "composite_score": 67,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [
@@ -92,12 +92,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 53,
      "price_vs_200dma": 82,
      "range_52w_pos": 81,
      "rel_52w_change": 86
     },
-    "score": 76
+    "score": 83
    },
    "quality": {
     "insufficient": false,
@@ -113,15 +112,16 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 53,
      "dcf_upside_pct": 0,
      "earnings_yield_fwd": 41,
      "ev_ebitda": 7,
      "fcf_yield": 42
     },
-    "score": 22
+    "score": 29
    }
   },
-  "tier": "B"
+  "tier": "A"
  },
  "JPM": {
   "classification": "financials_bank",
@@ -151,12 +151,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 52,
      "price_vs_200dma": 87,
      "range_52w_pos": 97,
      "rel_52w_change": 57
     },
-    "score": 73
+    "score": 80
    },
    "quality": {
     "insufficient": false,
@@ -169,18 +168,19 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 52,
      "dividend_yield": 51,
      "earnings_yield_fwd": 76,
      "p_b": 52
     },
-    "score": 60
+    "score": 58
    }
   },
   "tier": "A"
  },
  "MSFT": {
   "classification": "technology",
-  "composite_score": 72,
+  "composite_score": 73,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -208,12 +208,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 72,
      "price_vs_200dma": 83,
      "range_52w_pos": 73,
      "rel_52w_change": 18
     },
-    "score": 62
+    "score": 58
    },
    "quality": {
     "insufficient": false,
@@ -229,23 +228,25 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 72,
      "dcf_upside_pct": 7,
      "earnings_yield_fwd": 58,
      "ev_ebitda": 30,
      "fcf_yield": 38
     },
-    "score": 33
+    "score": 41
    }
   },
   "tier": "A"
  },
  "O": {
   "classification": "real_estate_reit",
-  "composite_score": 64,
+  "composite_score": 63,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [
-   "fcf_from_info_unverified_period"
+   "fcf_from_info_unverified_period",
+   "ffo_yield_is_proxy"
   ],
   "pillars": {
    "growth": {
@@ -269,12 +270,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 62,
      "price_vs_200dma": 60,
      "range_52w_pos": 62,
      "rel_52w_change": 41
     },
-    "score": 56
+    "score": 54
    },
    "quality": {
     "insufficient": false,
@@ -287,11 +287,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 62,
      "dividend_yield": 94,
      "ffo_yield": 71,
      "p_b": 75
     },
-    "score": 80
+    "score": 76
    }
   },
   "tier": "B"
@@ -322,12 +323,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 83,
      "price_vs_200dma": 47,
      "range_52w_pos": 41,
      "rel_52w_change": 75
     },
-    "score": 62
+    "score": 54
    },
    "quality": {
     "insufficient": false,
@@ -340,16 +340,17 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 83,
      "ev_sales": 78
     },
-    "score": 78
+    "score": 81
    }
   },
   "tier": "A"
  },
  "XOM": {
   "classification": "energy",
-  "composite_score": 69,
+  "composite_score": 70,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -377,12 +378,11 @@
    "momentum": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 65,
      "price_vs_200dma": 77,
      "range_52w_pos": 70,
      "rel_52w_change": 89
     },
-    "score": 75
+    "score": 79
    },
    "quality": {
     "insufficient": false,
@@ -398,12 +398,13 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
+     "analyst_upside": 65,
      "dcf_upside_pct": 0,
      "earnings_yield_fwd": 76,
      "ev_ebitda": 72,
      "fcf_yield": 58
     },
-    "score": 51
+    "score": 54
    }
   },
   "tier": "A"

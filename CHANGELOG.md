@@ -7,6 +7,228 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-07 (c) — GMT+8 clock, 1-minute bars, chart drawings
+
+### Fixed
+
+- **The chart showed UTC, which matched neither the exchange nor the reader.**
+  yfinance returns exchange-local timestamps and the backend converts them to
+  epochs correctly, but lightweight-charts renders an epoch as UTC and has no
+  timezone setting. Measured: AAPL's 09:30 ET open drew as **13:30**, and
+  0700.HK's 09:30 HKT open drew as **01:30**. Intraday bars are now shifted to
+  **GMT+8** at the chart boundary (`charttime.js`), one clock for every market.
+  Daily and weekly bars are date strings and pass through untouched — a US daily
+  bar dated 2026-08-06 is that session, not a moment to be shifted.
+  Consequence, stated in the UI: a US session runs **21:30 → 03:59** in GMT+8 and
+  therefore spans two calendar dates. Inherent to the choice, not a defect.
+
+### Changed
+
+- **1-day charts use 1-minute bars** (was 2m): 390 bars, the finest Yahoo serves
+  and its most rate-limit-prone feed. No indicator behaviour changes — day-based
+  windows already exceeded a single session at 2m.
+
+### Added
+
+- **Trendline and horizontal-level drawing tools.** lightweight-charts@5.2.0
+  ships *no* drawing tools (checked: `TrendLine`/`DrawingTool`/`LineTool` — zero
+  matches), only the primitive API, so the renderer, hit-testing, drag handles
+  and pixel↔price/time conversion are all custom (`drawingPrimitive.js`).
+  Draw, select, drag either endpoint, delete, clear. While a tool is active or a
+  handle is held, the chart's own pan/zoom is switched off so the canvas does not
+  fight the cursor for the gesture.
+  Persisted in SQLite per ticker as **true UTC epochs**, never chart-space time,
+  so a drawing survives a change of display timezone. `store.py`, `main.py`
+- **The local AI can read your drawings** — through the deterministic engine, not
+  by looking at pixels. `drawings.py` computes the price on the line today, its
+  slope per day, distance from current price, and how many bars came within 0.5%
+  of it; the AI receives those figures and comments on them. Every drawing is
+  tagged `drawn_by: "user"` and the context block says in words that these are
+  the reader's assertions rather than engine output — without that the model
+  would discuss a hand-drawn level as though the system derived it, which is the
+  one thing the AI in this app must never do.
+  **Unverified end-to-end:** Ollama is still not installed, so the geometry is
+  tested offline but no model has ever consumed it. See `TODOLIST.md`.
+
+### Tests
+
+153 offline (was 140): 13 new in `test_drawings.py` covering line extrapolation
+beyond the drawn segment, degenerate (vertical) trendlines, touch counting at the
+0.5% tolerance, and the user-assertion labelling that keeps a drawn level from
+reading as a computed one.
+
+---
+
+## 2026-08-07 (b) — Ticker search, finer chart bars, day-based indicators
+
+### Added
+
+- **Typo-tolerant search box with a clickable result list**, replacing the bare
+  text input that sent whatever you typed straight to yfinance — one wrong
+  character produced an empty chart and no explanation.
+  Two tiers, merged on one relevance scale (`search.py`):
+  - **local**: SEC EDGAR's symbol/name list via `obb.equity.search(provider="sec")`
+    — 10,398 US symbols, free, no key, cached to disk for 30 days. Fuzzy-matched
+    with difflib. **2–3 ms** warm.
+  - **remote**: `yf.Search`, the only route to Hong Kong and other non-US names.
+  Ranking is tiered so an exact symbol always wins, but a remote hit outranks a
+  local *name* match — the measured failure being that "tencent" matched Tencent
+  **Music** (a US listing) while 0700.HK, the wanted answer, fell off the list.
+  - Latency work: a first pass took **1.85 s** on "microsft" scanning all 10,398
+    rows twice. Bucketing fuzzy candidates by first character plus difflib's own
+    `real_quick_ratio`/`quick_ratio` prefilters brought the local tier to 2–3 ms.
+    The trade-off is stated in the code: a typo *in the first character* is not
+    corrected.
+  - `enable_fuzzy_query=True` on the Yahoo call, which is **off by default**.
+    With it off Yahoo returns nothing at all for `microsft` or `tencnt`; with it
+    on both resolve (and `tencnt` -> 0700.HK), and the call gets *faster* —
+    1645 ms -> 278 ms, because the no-match path is the slow one. A 3 s timeout
+    keeps a slow lookup from stalling a per-keystroke dropdown.
+- **One-click chips** under the search box for watchlist/holdings (new
+  `/api/portfolio/tickers` — deliberately separate from `/api/portfolio`, which
+  prices every position live) and recently viewed tickers (`recents.js`,
+  localStorage).
+
+### Changed
+
+- **Chart bars are much finer up to 2 years** (`PERIOD_INTERVALS` in `main.py`).
+  Measured against live Yahoo responses, because these are hard API limits:
+
+  | period | was | now | bars |
+  |---|---|---|---|
+  | 1d | 15m | **2m** | 195 |
+  | 5d | 60m | **5m** | 390 |
+  | 1mo | 1d | **30m** | 299 |
+  | 3mo / 6mo / 1y / 2y | 1d | **1h** | 441 / 868 / 1,749 / 3,487 |
+  | 5y / max | 1d | 1d / 1wk | — |
+
+  **5y and max cannot go finer.** Sub-hourly data is capped at the last 60 days
+  (3mo at 30m returns *zero* bars) and hourly at 730 days (5y at 1h returns
+  *zero* bars). `/history` now falls back to daily rather than rendering an
+  empty chart when a name has no intraday history.
+
+- **Indicator windows are now measured in trading days, not bars.** Every period
+  in `indicators.js` counted bars, so finer candles silently redefined every
+  indicator: on 1h bars "MA50" was a 50-bar ≈ **7.2-trading-day** average, and
+  RSI(14) was ≈ 2 days. This already affected the 1d/5d tabs before this change;
+  serving intraday bars up to 2y would have spread it across the whole chart.
+  `/history` now returns a measured `bars_per_day` — derived from the data, not
+  hard-coded, because Hong Kong's session is shorter than New York's — and
+  `barsForDays()` converts. MA50 on a 1y hourly chart is now a 350-bar average,
+  which is 50 trading days, as the label says.
+
+  Consequence, stated plainly: a window that needs more history than the period
+  holds is **not drawn**, because a 50-day average does not exist inside one
+  session. On 1d and 5d no moving average is available; on 1mo, MA10 and MA20
+  are, MA50 is not. The chart says which and why rather than drawing a
+  differently-meaning line under the same label.
+
+### Tests
+
+140 offline (was 119): 21 new covering search ranking, typo tolerance, remote
+failure degradation, the period->interval contract (including the two zero-bar
+limits above), and `bars_per_day`.
+
+---
+
+## 2026-08-07 — Comparability, beta methodology, forensic checks
+
+Acts on the priorities in [docs/quant-review-2026-08-06.md](docs/quant-review-2026-08-06.md)
+§6 and four defects found reading the code afterwards. Every figure below was
+measured against the seven committed fixtures with the risk-free rate pinned.
+
+### Fixed
+
+- **The Screener ranked across company types, which is not a defined comparison.**
+  `score_batch` sorted every card by `composite_score` regardless of
+  classification, and the UI numbered the result 1..N. Two composites from
+  different profiles are outputs of different formulas: the profiles score
+  different metric sets (RIVN's valuation pillar was one metric, AAPL's four),
+  weight the pillars differently (G is 35% for pre-profit and 10% for a bank),
+  score some shared metrics on different anchor curves (`RELAXED_ND_EBITDA`),
+  and renormalize around whichever pillars had coverage.
+  **Measured:** holding every pillar score fixed and changing *only* the weights
+  to one common ruler moved three of seven positions — RIVN 2nd→6th, JPM 4th→2nd,
+  O 7th→4th. Ranking is now grouped by classification and never crosses one;
+  single-member groups are marked `comparable: false` and left unranked.
+  On the default seven-ticker input only `technology` has two members, so the
+  tab now shows plainly that there was almost no valid ranking in it.
+  `main.py:score_batch`, `ScreenerTab.jsx`
+
+- **The classifier read the one field the codebase had already rejected.**
+  `classify()` chose `pre_profit_growth` off `info["freeCashflow"]`, which
+  yfinance reports annually for some issuers and for a single quarter for others
+  (MSFT 16.4B vs 67.0B on the statement, 0.24×). That field decides the
+  *profile*, and the profile decides the whole model — a misroute changes every
+  metric and weight, not one number. Now takes the period-verified statement FCF
+  the rest of the app uses. **No fixture changes classification**; this closes a
+  latent hazard rather than a live wrong answer. `sector_weights.py`, `scoring.py`
+
+- **The football field drew the DCF bar from the sensitivity grid's corners.**
+  The reference doc (§5.2) specifies the 25th–75th percentile; the code took
+  min/max, which is the compounded worst and best case of two assumptions moved
+  together. **Measured widths:** AAPL 55.27→26.73, MSFT 132.95→64.00, XOM
+  30.26→14.42, O 32.50→14.31, 0700.HK 330.00→149.08. The width was load-bearing:
+  0700.HK read `in range` only because of the corners and reads `price below`
+  against the interquartile band. `comps.py`
+
+- **The Momentum pillar contained a metric that opposed the other three.**
+  `price_vs_200dma`, `range_52w_pos` and `rel_52w_change` all reward price going
+  up; `analyst_upside` rewards price being *below* a target, so a rally raised
+  three and lowered one and they partly cancelled. It is a valuation signal and
+  now sits in the Valuation pillar for every profile. **Measured:** momentum
+  moves up to 18 points (0700.HK 42→24), composite −3 to +1, AAPL crosses B→A
+  (64→67). `sector_weights.py`
+
+- **`ffo_yield` is not NAREIT FFO** — it is net income plus total D&A, with no
+  deduction for gains on property sales. yfinance exposes no gain-on-sale-of-real-
+  estate row at all, so the correct figure cannot be built from this source. The
+  computation is unchanged (candidate adjustments scored 69–77 against 71 on O,
+  ~0.5 composite points) but cards that score it now carry `ffo_yield_is_proxy`
+  instead of implying a precision the data cannot support. `scoring.py`
+
+### Changed
+
+- **Peer betas are unlevered before the median and re-levered to the target**,
+  per reference doc §1.1.2 — previously a raw levered median, which imported the
+  peers' balance sheets along with their business risk:
+  `Bu = Bl / (1 + (1-Tc)·D/E)`, then re-levered at the target's own D/E. Needs
+  each peer's leverage, so `get_peer_snapshot` now carries `total_debt` (free —
+  same `info` call). Degrades in order: re-levered median → levered median (when
+  too many peers lack leverage) → neutral 1.0, and the result is held inside the
+  same credibility band as a reported beta. `beta_source` records which path ran.
+  This is the [Simply Wall St](https://github.com/SimplyWallSt/Company-Analysis-Model)
+  spec item with the best evidence-per-hour; their published ERP and 5-year-average
+  risk-free rate are **not** done (the free `treasury_rates` call returns only
+  1 year — 249 rows, mean 4.27% vs spot 4.63%). Their terminal-growth-equals-10Y
+  rule was deliberately **not** adopted: at a 4.6% yield it sets terminal growth
+  above long-run nominal GDP, which reference doc §1.1.3 forbids.
+  `financial_models.py`, `comps.py`, `data_provider.py`, `main.py`
+
+### Added
+
+- **Forensic checks panel** on the Scorecard: Altman Z, Piotroski F, Sloan
+  accrual ratio, net share issuance — the four highest-evidence, lowest-cost
+  gaps against GuruFocus, all computable from statements already fetched.
+  **Displayed, never scored.** The composite already blends ~40 anchor curves
+  that have never been validated against forward returns; four more unvalidated
+  curves would move every score without adding evidence. Each row prints its
+  published threshold so the reader applies it.
+  Applicability is explicit rather than silent: Z returns `n/a` with a reason for
+  banks and insurers (no working-capital or sales term) **and for REITs and
+  utilities** — the O fixture scores 1.08, Altman's "distress" band, for an
+  investment-grade REIT covering interest 2.0×, because Z's sales/assets and
+  working-capital terms read an asset-heavy levered balance sheet as failure.
+  Altman's Z'' variant covers those and is not implemented. `forensics.py`
+
+### Tests
+
+119 offline (was 94): 21 new in `test_forensics.py`, 5 new unlever/re-lever cases
+in `test_valuation.py`. Golden snapshots regenerated — the diff is the record of
+the pillar move and is reproduced above.
+
+---
+
 ## 2026-08-06 (d) — Readability: ratio quality bars, revenue trend, scorecard verdict
 
 Verified in a real browser over CDP.

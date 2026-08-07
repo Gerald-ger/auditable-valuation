@@ -214,6 +214,11 @@ class YFinanceProvider:
             # beta rides along free on the same info call; financial_models uses
             # the peer median when a company's own reported beta is not credible
             "beta": _clean(info.get("beta")),
+            # with market cap, this gives each peer's D/E, which is what lets
+            # financial_models.resolve_beta unlever a peer beta before taking the
+            # median and re-lever it to the target's own capital structure
+            # (reference doc §1.1.2). Free — same info call, no extra request.
+            "total_debt": _clean(info.get("totalDebt")),
             "pe_trailing": _clean(info.get("trailingPE")),
             "pe_forward": _clean(info.get("forwardPE")),
             "price_to_book": _clean(info.get("priceToBook")),

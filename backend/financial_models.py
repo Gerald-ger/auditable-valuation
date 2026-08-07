@@ -123,17 +123,59 @@ def tax_rate_for(info: dict) -> float:
     return TAX_RATE_BY_CURRENCY.get(info.get("currency"), DEFAULT_TAX_RATE)
 
 
-def resolve_beta(info: dict, peer_betas: list[float] | None = None) -> tuple[float, str]:
+def _debt_to_equity(debt, market_cap) -> float | None:
+    """Market-value D/E. Zero debt is a real answer; missing debt is not."""
+    if debt is None or not market_cap or market_cap <= 0:
+        return None
+    return max(debt, 0.0) / market_cap
+
+
+def resolve_beta(info: dict, peers: list[dict] | None = None,
+                 tax_rate: float = DEFAULT_TAX_RATE) -> tuple[float, str]:
     """(beta, source). Reported beta wins when it is credible; peers break the tie.
 
-    peer_betas is injected by the caller — this function never fetches.
+    `peers` is injected by the caller — this function never fetches. Each entry
+    is a peer snapshot: `beta`, `market_cap`, `total_debt`.
+
+    When a peer's leverage is known, its beta is **unlevered before the median
+    and re-levered to the target's own capital structure** (reference doc
+    §1.1.2):
+
+        Bu_i = Bl_i / (1 + (1 - Tc) * (D/E)_i)
+        Bl   = median(Bu) * (1 + (1 - Tc) * (D/E)_target)
+
+    A levered peer beta carries that peer's balance sheet, not the target's, so
+    substituting a raw peer median imported the peers' leverage along with their
+    business risk. Unlevering strips the financing effect out, leaving asset risk
+    that is genuinely comparable, and re-levering puts the target's own leverage
+    back on. Tc is the target's statutory rate for every peer — a simplification
+    that holds for a domestic peer set and is wrong for a cross-border one.
+
+    Degrades in order: re-levered peer median -> raw levered peer median (when
+    leverage is unknown for too many peers) -> neutral 1.0. The result is held
+    inside the same credibility band applied to a reported beta, so a heavily
+    levered target cannot re-lever its way to an absurd number.
     """
     raw = info.get("beta")
     if raw is not None and BETA_MIN <= raw <= BETA_MAX:
         return raw, "reported"
-    usable = [b for b in (peer_betas or []) if b is not None and BETA_MIN <= b <= BETA_MAX]
-    if len(usable) >= MIN_PEER_BETAS:
-        return round(median(usable), 4), "peer_median"
+
+    credible = [p for p in (peers or [])
+                if p.get("beta") is not None and BETA_MIN <= p["beta"] <= BETA_MAX]
+
+    target_de = _debt_to_equity(info.get("totalDebt"), info.get("marketCap"))
+    if target_de is not None:
+        unlevered = []
+        for p in credible:
+            de = _debt_to_equity(p.get("total_debt"), p.get("market_cap"))
+            if de is not None:
+                unlevered.append(p["beta"] / (1 + (1 - tax_rate) * de))
+        if len(unlevered) >= MIN_PEER_BETAS:
+            relevered = median(unlevered) * (1 + (1 - tax_rate) * target_de)
+            return round(min(max(relevered, BETA_MIN), BETA_MAX), 4), "peer_median_relevered"
+
+    if len(credible) >= MIN_PEER_BETAS:
+        return round(median([p["beta"] for p in credible]), 4), "peer_median"
     return BETA_FALLBACK, "default"
 
 
@@ -212,9 +254,9 @@ def ratio_analysis(f: dict) -> dict:
     }
 
 
-def _wacc(f: dict, tax_rate: float, peer_betas: list[float] | None = None) -> dict:
+def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
     info = f["info"]
-    beta, beta_source = resolve_beta(info, peer_betas)
+    beta, beta_source = resolve_beta(info, peers, tax_rate)
     # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy
     rf = risk_free_rate(RISK_FREE_RATE)
     cost_of_equity = rf + beta * EQUITY_RISK_PREMIUM
@@ -254,7 +296,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
                   terminal_growth: float = TERMINAL_GROWTH,
                   wacc_override: float | None = None,
                   tax_rate: float | None = None,
-                  peer_betas: list[float] | None = None) -> dict:
+                  peers: list[dict] | None = None) -> dict:
     info = f["info"]
     if tax_rate is None:
         tax_rate = tax_rate_for(info)
@@ -278,7 +320,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
         growth_source = "analyst_consensus_fwd" if fwd is not None else "trailing_revenue_growth"
         growth_rate = max(min(rg if rg is not None else 0.05, 0.25), 0.0)
 
-    wacc_parts = _wacc(f, tax_rate, peer_betas)
+    wacc_parts = _wacc(f, tax_rate, peers)
     wacc = wacc_override if wacc_override is not None else wacc_parts["wacc"]
     if wacc <= terminal_growth:
         return {"error": f"WACC ({wacc:.2%}) must exceed terminal growth ({terminal_growth:.2%})."}
@@ -372,13 +414,13 @@ def revenue_trend(f: dict) -> list[dict]:
             for p, v in _series(f["income_statement"], "Total Revenue")]
 
 
-def full_analysis(f: dict, peer_betas: list[float] | None = None) -> dict:
+def full_analysis(f: dict, peers: list[dict] | None = None) -> dict:
     return {
         "ticker": f["ticker"],
         "company": {k: f["info"].get(k) for k in
                     ["longName", "sector", "industry", "currency", "marketCap",
                      "targetMeanPrice", "recommendationKey", "numberOfAnalystOpinions"]},
         "ratios": ratio_analysis(f),
-        "dcf": dcf_valuation(f, peer_betas=peer_betas),
+        "dcf": dcf_valuation(f, peers=peers),
         "revenue_trend": revenue_trend(f),
     }

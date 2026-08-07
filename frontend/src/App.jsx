@@ -5,6 +5,9 @@ import ModelsTab from './components/ModelsTab';
 import ScorecardTab from './components/ScorecardTab';
 import ScreenerTab from './components/ScreenerTab';
 import PortfolioTab from './components/PortfolioTab';
+import SearchBar from './components/SearchBar';
+import ErrorBoundary from './components/ErrorBoundary';
+import { pushRecent } from './recents';
 
 const TABS = [
   ['tracker', '📈 Tracker'],
@@ -20,9 +23,10 @@ const TICKER_TABS = new Set(['tracker', 'models', 'scorecard']);
 
 export default function App() {
   const [tab, setTab] = useState('tracker');
-  const [input, setInput] = useState('AAPL');
   const [ticker, setTicker] = useState('AAPL');
   const [aiOnline, setAiOnline] = useState(false);
+  // watchlist + holdings, surfaced as one-click chips under the search box
+  const [saved, setSaved] = useState([]);
 
   useEffect(() => {
     const check = () =>
@@ -34,14 +38,17 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  function load() {
-    const t = input.trim().toUpperCase();
-    if (t) setTicker(t);
-  }
+  // Refetched on tab changes so a position added in the Portfolio tab shows up
+  // as a chip without a page reload.
+  useEffect(() => {
+    get('/portfolio/tickers')
+      .then((r) => setSaved(r.tickers ?? []))
+      .catch(() => setSaved([]));
+  }, [tab]);
 
   /** Jump from a Screener/Portfolio row straight into that company's scorecard. */
   function openScorecard(t) {
-    setInput(t);
+    pushRecent(t);
     setTicker(t);
     setTab('scorecard');
   }
@@ -51,17 +58,7 @@ export default function App() {
       <header>
         <h1>Stock Analysis Platform</h1>
         {TICKER_TABS.has(tab) && (
-          <div className="ticker-box">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && load()}
-              placeholder="Ticker — e.g. AAPL, MSFT, 0700.HK"
-            />
-            <button className="primary" onClick={load}>
-              Load
-            </button>
-          </div>
+          <SearchBar value={ticker} saved={saved} onSelect={setTicker} />
         )}
         <nav>
           {TABS.map(([key, label]) => (
@@ -76,11 +73,15 @@ export default function App() {
         </nav>
       </header>
       <main>
-        {tab === 'tracker' && <TrackerTab ticker={ticker} aiOnline={aiOnline} />}
-        {tab === 'models' && <ModelsTab ticker={ticker} />}
-        {tab === 'scorecard' && <ScorecardTab ticker={ticker} aiOnline={aiOnline} />}
-        {tab === 'screener' && <ScreenerTab onPick={openScorecard} />}
-        {tab === 'portfolio' && <PortfolioTab onPick={openScorecard} />}
+        {/* keyed on tab+ticker so navigating away from a failed render resets it
+            rather than leaving the boundary stuck on a stale error */}
+        <ErrorBoundary key={`${tab}:${ticker}`}>
+          {tab === 'tracker' && <TrackerTab ticker={ticker} aiOnline={aiOnline} />}
+          {tab === 'models' && <ModelsTab ticker={ticker} />}
+          {tab === 'scorecard' && <ScorecardTab ticker={ticker} aiOnline={aiOnline} />}
+          {tab === 'screener' && <ScreenerTab onPick={openScorecard} />}
+          {tab === 'portfolio' && <PortfolioTab onPick={openScorecard} />}
+        </ErrorBoundary>
       </main>
       <footer>
         Data: yfinance (OpenBB adapter ready) · AI: local Ollama · Decision support only —
