@@ -113,9 +113,13 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 140 tests, offline, ~3s
+backend\.venv\Scripts\python.exe -m pytest          # 153 tests, offline, ~3s
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 ```
+
+That 153 is what pytest reports: 97 offline test functions, of which fifteen are
+parametrised and fan out — six of them across all seven fixtures. The other 8 of
+the 161 collected are the `network` ones, deselected by default.
 
 The suite runs entirely against seven real `get_fundamentals` payloads committed under
 `backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
