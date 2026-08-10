@@ -169,7 +169,13 @@ function DcfAudit({ dcf }) {
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>
           {' · '}credit spread <b>{pct(a.credit_spread)}</b>
           {a.interest_coverage !== null && (
-            <span className="muted-note"> (coverage {num(a.interest_coverage, 1)}×)</span>
+            <span className="muted-note">
+              {' '}(coverage {num(a.interest_coverage, 1)}×
+              {/* the period is shown because it is not always the newest one:
+                  both legs are pinned to a single year, and for AAPL that is
+                  2023 — yfinance stopped reporting interest after it */}
+              {a.interest_coverage_period && ` in ${a.interest_coverage_period}`})
+            </span>
           )}
           {' · '}tax <b>{pct(a.tax_rate)}</b>
           {' · '}FCF <b>{big(a.base_fcf)}</b>
@@ -178,12 +184,42 @@ function DcfAudit({ dcf }) {
             ({a.fcf_source === 'cash_flow_statement' ? a.fcf_period : 'info — period unverified'})
           </span>
           {' · '}forecast <b>{a.stage1_years}+{a.stage2_years}y</b>
+          {/* Only shown when the two currencies actually differ, which is the
+              China-domiciled HK listings: 0700.HK reports CNY and trades HKD.
+              Without conversion its upside read +30.5% against +44.5% correct. */}
+          {a.fx_basis === 'converted' && (
+            <span className="muted-note">
+              {' '}· statements in <b>{a.reporting_currency}</b>, converted to{' '}
+              <b>{a.currency}</b> at {num(a.fx_rate_used, 4)}
+            </span>
+          )}
         </span>
       </div>
 
       <div className="dcf-audit-row">
         <span className="dcf-label">Trust checks</span>
         <span>
+          {/* A bridge leg the provider did not report is assumed zero so the
+              model still runs, which makes a company look debt-free rather than
+              unreported. Saying so is the whole point of the assumption. */}
+          {d.net_debt_assumed_zero?.length > 0 && (
+            <>
+              <span className="warn-chip">
+                {d.net_debt_assumed_zero.map((leg) => leg.replace('_', ' ')).join(' and ')} not
+                reported — assumed zero in the equity bridge
+              </span>{' '}
+            </>
+          )}
+          {/* Fair value is in the reporting currency and the price is not, so
+              an upside would be a comparison of two different units. */}
+          {a.fx_basis === 'rate_unavailable' && (
+            <>
+              <span className="warn-chip">
+                no {a.reporting_currency}/{a.currency} rate — upside withheld, fair value is
+                in {a.reporting_currency}
+              </span>{' '}
+            </>
+          )}
           <span className={d.terminal_value_high ? 'warn-chip' : 'ok-chip'}>
             terminal value {termPct === null ? '—' : `${termPct.toFixed(0)}%`} of EV
           </span>
@@ -311,6 +347,25 @@ export default function ModelsTab({ ticker }) {
             </span>
           )}
         </div>
+        {/* A DCF built on `CFO - CapEx` is meaningless for some company types
+            and still returns a confident-looking number: O renders a -63.0%
+            upside off a base cash flow that treats a REIT's property
+            acquisitions as maintenance capex, and a bank has no such quantity at
+            all. The scoring engine already drops dcf_upside_pct for these
+            profiles; this says so here rather than leaving the two tabs to
+            disagree in silence. The model is still shown — the reader may want
+            the sensitivity grid — but it is not presented as an answer. */}
+        {card && card.dcf_applicable === false && (
+          <div className="ai-offline-note">
+            A discounted-cash-flow valuation does not apply to a{' '}
+            {card.classification.replaceAll('_', ' ')}: free cash flow here is{' '}
+            {card.classification === 'real_estate_reit'
+              ? 'operating cash flow less capital expenditure, and for a REIT that capex is property acquisition rather than maintenance'
+              : 'not a meaningful quantity for this balance sheet'}
+            . The Scorecard leaves it out of the valuation pillar for the same reason — read
+            the peer multiples and the football field instead.
+          </div>
+        )}
         <div className="dcf-controls">
           <label>
             Growth yr-1 %
@@ -333,13 +388,21 @@ export default function ModelsTab({ ticker }) {
         ) : (
           dcf && (
             <>
+              {/* Every figure on this panel is quoted in one currency, and it
+                  is named — an unlabelled 628.44 under a header reading "Mkt cap
+                  4.33T HKD" was in a different unit from the price beside it
+                  until the conversion below existed. */}
               <div className="dcf-result">
                 <div>
-                  <span className="dcf-label">Fair value / share</span>
+                  <span className="dcf-label">
+                    Fair value / share {dcf.assumptions?.currency}
+                  </span>
                   <span className="dcf-big">{num(dcf.fair_value_per_share)}</span>
                 </div>
                 <div>
-                  <span className="dcf-label">Current price</span>
+                  <span className="dcf-label">
+                    Current price {dcf.assumptions?.currency}
+                  </span>
                   <span className="dcf-big">{num(dcf.current_price)}</span>
                 </div>
                 <div>
@@ -433,7 +496,22 @@ export default function ModelsTab({ ticker }) {
             ['Current ratio', num(ratios.liquidity.current_ratio, 2), 'current_ratio'],
             ['Quick ratio', num(ratios.liquidity.quick_ratio, 2)],
             ['Debt / equity', num(ratios.solvency.debt_to_equity, 2), 'debt_equity'],
-            ['Interest coverage', num(ratios.solvency.interest_coverage, 1), 'interest_coverage'],
+            [
+              'Interest coverage',
+              // EBIT and interest are pinned to one period, which is not always
+              // the newest — naming the year is what stops a stale-but-honest
+              // ratio reading as a current one
+              <>
+                {num(ratios.solvency.interest_coverage, 1)}
+                {ratios.solvency.interest_coverage_period && (
+                  <span className="muted-note">
+                    {' '}
+                    {ratios.solvency.interest_coverage_period.slice(0, 4)}
+                  </span>
+                )}
+              </>,
+              'interest_coverage',
+            ],
             ['Net debt', big(ratios.solvency.net_debt)],
           ]}
         />

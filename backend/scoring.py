@@ -89,7 +89,6 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     eps = info.get("forwardEps") or info.get("trailingEps")
     net_income = fm._latest(inc, "Net Income", "Net Income Common Stockholders")
     ebit = fm._latest(inc, "EBIT", "Operating Income")
-    interest = fm._latest(inc, "Interest Expense")
     equity = fm._latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
     assets = fm._latest(bal, "Total Assets")
     dep_amort = fm._latest(cf, "Depreciation And Amortization", "Depreciation Amortization Depletion")
@@ -109,9 +108,26 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     def div(a, b):
         return a / b if a is not None and b not in (None, 0) else None
 
+    # Yields divide a statement figure by market capitalisation, and for an
+    # issuer that reports in one currency and trades in another those are
+    # different units — 0700.HK reports CNY and trades HKD. `fx` converts the
+    # numerator; it is 1.0 for every single-currency issuer. None means the two
+    # differ and no rate was available, in which case the yields are dropped
+    # rather than computed on a mixed basis (`fcf_yield` read 0.0439 unconverted
+    # against 0.0478 correct, scoring 63.9 against 67.8).
+    fx, fx_mismatch = fm.statement_to_market_fx(
+        info.get("currency"), info.get("financialCurrency"))
+    if fx_mismatch and fx is None:
+        flags.append("fx_rate_unavailable")
+
+    def to_market(value):
+        """A statement figure expressed in the currency market cap is quoted in."""
+        return value * fx if value is not None and fx is not None else None
+
     m = {}
+    # eps and price are both trading-currency, so this one needs no conversion
     m["earnings_yield_fwd"] = _clamp(div(eps, price), -0.5, 0.5)
-    m["fcf_yield"] = _clamp(div(fcf, mcap), -0.5, 0.5)
+    m["fcf_yield"] = _clamp(div(to_market(fcf), mcap), -0.5, 0.5)
     # A negative EV/EBITDA is not a cheap one. EBITDA <= 0 flips the ratio's
     # sign and the ascending anchors would clip it to the *best* score — the
     # same reason net_debt_ebitda below guards its denominator. Negative EV the
@@ -127,7 +143,19 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     pb = info.get("priceToBook")
     m["p_b"] = _clamp(pb, 0, 1000) if pb is not None and pb > 0 else None
     m["ev_sales"] = _clamp(info.get("enterpriseToRevenue"), 0, 1000)
-    m["dividend_yield"] = div(info.get("dividendYield"), 100)  # yfinance gives percent
+    # A non-payer is a zero yield, not an unreported one. yfinance omits
+    # dividendYield entirely rather than sending 0, and None means "unreported"
+    # to piecewise_score — so the metric was dropped from the pillar average
+    # instead of scoring its 20-point floor, which *raised* the average it left.
+    # Measured on JPM 2026-08-10, changing nothing else: paying 1.68% scored
+    # valuation 58, cutting to 0.10% scored 51, and cutting to zero scored 60 —
+    # a suspended dividend came out ahead of a token one and recovered the whole
+    # composite. That is the loudest signal the profiles scoring this metric
+    # have (staples, utilities, REITs, banks, insurers), so it cannot read as
+    # missing data. The residual risk is the reverse case — a real payer whose
+    # yield yfinance fails to report now scores 20 rather than being skipped —
+    # which score_company surfaces as `dividend_yield_assumed_zero`.
+    m["dividend_yield"] = (info.get("dividendYield") or 0.0) / 100  # yfinance gives percent
     # NOT NAREIT FFO. Proper FFO is net income + real-estate depreciation
     # - gains on property sales + impairments. yfinance exposes no gain-on-sale-
     # of-real-estate row at all (the O fixture reports only "Gain On Sale Of
@@ -136,8 +164,9 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     # property. Cards that actually score it carry `ffo_yield_is_proxy`; see
     # score_company. Measured on O, the candidate adjustments score 69-77
     # against 71 here — ~0.5 composite points, not a tier.
-    m["ffo_yield"] = _clamp(div((net_income or 0) + (dep_amort or 0), mcap)
-                            if net_income is not None else None, -0.5, 0.5)
+    m["ffo_yield"] = _clamp(
+        div(to_market((net_income or 0) + (dep_amort or 0))
+            if net_income is not None else None, mcap), -0.5, 0.5)
 
     # ROE is undefined on negative equity — and a negative-equity issuer with a
     # negative net income reports a spuriously *positive* ROE. Same trigger as
@@ -171,7 +200,13 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     net_debt = (total_debt or 0) - (total_cash or 0)
     # `ebitda` resolved above alongside the ev_ebitda guard
     m["net_debt_ebitda"] = _clamp(max(net_debt, 0) / ebitda if ebitda and ebitda > 0 else None, 0, 50)
-    m["interest_coverage"] = _clamp(div(ebit, interest), -50, 200)
+    # Both legs from one period. Pairing the newest EBIT with the newest
+    # interest independently made AAPL's coverage FY2025 operating income over
+    # FY2023 interest — 33.8x, a ratio of two different years. `ebit` above
+    # stays unpinned on purpose: NOPAT wants the most recent operating income,
+    # and it is divided by a balance-sheet figure, not another income row.
+    coverage, _ = fm.interest_coverage(inc)
+    m["interest_coverage"] = _clamp(coverage, -50, 200)
     m["current_ratio"] = _clamp(info.get("currentRatio"), 0, 20)
     de = div(total_debt, equity) if equity and equity > 0 else None
     if de is None and equity is not None and equity <= 0:
@@ -226,6 +261,10 @@ def score_company(f: dict, dcf: dict | None = None) -> dict:
         raw["dcf_upside_pct"] = None if dcf.get("error") else dcf.get("upside_pct")
     if "ffo_yield" in active and raw.get("ffo_yield") is not None:
         flags.append("ffo_yield_is_proxy")
+    # Only where the metric counts: every non-payer would otherwise carry this,
+    # including profiles that never score a dividend. Same rule as ffo_yield above.
+    if "dividend_yield" in active and info.get("dividendYield") is None:
+        flags.append("dividend_yield_assumed_zero")
 
     ratios = fm.ratio_analysis(f)
     equity_multiplier = ratios["dupont"]["equity_multiplier"]
@@ -241,8 +280,11 @@ def score_company(f: dict, dcf: dict | None = None) -> dict:
             if s is None:
                 missing.append(metric)
             else:
-                # DuPont guard: leverage-manufactured ROE is not quality
-                if metric == "roe" and equity_multiplier and equity_multiplier > 4 and s > 70:
+                # DuPont guard: leverage-manufactured ROE is not quality —
+                # except where the leverage is the business model rather than a
+                # financing choice (see sector_weights.LEVERAGE_IS_STRUCTURAL)
+                if metric == "roe" and classification not in sector_weights.LEVERAGE_IS_STRUCTURAL \
+                        and equity_multiplier and equity_multiplier > 4 and s > 70:
                     s = 70
                     if "dupont_leverage_cap_applied" not in flags:
                         flags.append("dupont_leverage_cap_applied")
@@ -279,6 +321,14 @@ def score_company(f: dict, dcf: dict | None = None) -> dict:
         "ticker": f["ticker"],
         "as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "classification": classification,
+        # Whether a discounted-cash-flow valuation means anything for this
+        # company type, decided by the profile rather than by whether the model
+        # happened to return a number. A REIT produces a complete DCF from
+        # `CFO - CapEx` and it is meaningless — capex *is* a REIT's acquisitions
+        # — so the valuation pillar already drops `dcf_upside_pct`. Exported so
+        # the Financial Models tab can say so instead of showing O a -63% upside
+        # with the same weight as a valid one.
+        "dcf_applicable": "dcf_upside_pct" in active,
         "composite_score": composite,
         "tier": tier,
         "tier_label": tier_label,

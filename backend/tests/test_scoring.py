@@ -21,6 +21,7 @@ from conftest import FIXTURES, load_fundamentals
 
 import financial_models as fm
 import scoring
+import sector_weights
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "golden_scores.json"
 UPDATING = os.environ.get("UPDATE_GOLDEN") == "1"
@@ -82,7 +83,12 @@ def test_fcf_metrics_use_the_cash_flow_statement(stem):
     assert statement is not None, "fixture must exercise the statement path"
 
     mcap = f["info"]["marketCap"]
-    assert raw["fcf_yield"] == pytest.approx(statement[1] / mcap, rel=1e-9)
+    # FCF comes off the statements and market cap off the market, so a
+    # cross-currency issuer needs the numerator converted before the division —
+    # 0700.HK reports CNY and trades HKD.
+    fx, _ = fm.statement_to_market_fx(f["info"].get("currency"),
+                                      f["info"].get("financialCurrency"))
+    assert raw["fcf_yield"] == pytest.approx(statement[1] * fx / mcap, rel=1e-9)
     assert "fcf_from_info_unverified_period" not in flags
 
 
@@ -291,3 +297,116 @@ def test_roe_kept_on_positive_equity():
     m, flags = scoring.extract_metrics(_minimal({"returnOnEquity": 0.25}, balance))
     assert m["roe"] == 0.25
     assert "roe_skipped_negative_equity" not in flags
+
+
+# ── a suspended dividend is a zero, not a missing value ──────────────
+#
+# yfinance omits dividendYield for a non-payer instead of sending 0, and None
+# means "unreported" to piecewise_score — so the metric left the pillar average
+# rather than scoring its 20-point floor, which raised the average it left
+# behind. Measured on JPM 2026-08-10 before the fix: valuation 58 paying 1.68%,
+# 51 paying 0.10%, and 60 paying nothing at all. Both fixtures whose profile
+# scores this metric are payers, so the goldens cannot police it.
+
+def test_a_non_payer_scores_the_yield_floor_rather_than_being_skipped():
+    m, _ = scoring.extract_metrics(_minimal({}))
+    assert m["dividend_yield"] == 0.0
+    assert scoring.piecewise_score(
+        m["dividend_yield"], scoring.METRIC_ANCHORS["dividend_yield"]) == 20
+
+
+def test_dividend_yield_keeps_the_percent_convention():
+    """yfinance reports 1.68 for a 1.68% yield, not 0.0168."""
+    m, _ = scoring.extract_metrics(_minimal({"dividendYield": 1.68}))
+    assert m["dividend_yield"] == pytest.approx(0.0168)
+
+
+@pytest.mark.parametrize("yield_pct,expected_order", [(1.68, 2), (0.10, 1), (None, 0)])
+def test_cutting_the_dividend_never_improves_the_valuation_pillar(yield_pct, expected_order):
+    """The inversion itself: the pillar must be monotonic in the yield.
+
+    Parametrised so the failure names which rung broke; `expected_order` is only
+    used to sort the results the test collects below.
+    """
+    f = load_fundamentals("JPM")
+    f["info"]["dividendYield"] = yield_pct
+    card = scoring.score_company(f)
+    assert card["pillars"]["valuation"]["metrics"]["dividend_yield"]["score"] == (
+        {2: 51, 1: 22, 0: 20}[expected_order])
+
+
+def test_the_valuation_pillar_falls_monotonically_with_the_dividend():
+    def pillar(yield_pct):
+        f = load_fundamentals("JPM")
+        f["info"]["dividendYield"] = yield_pct
+        return scoring.score_company(f)["pillars"]["valuation"]["score"]
+
+    paying, token, none = pillar(1.68), pillar(0.10), pillar(None)
+    assert paying > token >= none, (
+        f"a dividend cut must not improve valuation: {paying} -> {token} -> {none}")
+
+
+def test_the_assumed_zero_is_flagged_only_where_the_metric_counts():
+    """Every non-payer would otherwise carry this flag, including profiles that
+    never score a dividend — RIVN's pre_profit_growth among them."""
+    bank = load_fundamentals("JPM")
+    bank["info"]["dividendYield"] = None
+    assert "dividend_yield_assumed_zero" in scoring.score_company(bank)["flags"]
+
+    tech = load_fundamentals("RIVN")   # pre_profit_growth: no dividend metric
+    assert tech["info"].get("dividendYield") is None
+    assert "dividend_yield_assumed_zero" not in scoring.score_company(tech)["flags"]
+
+
+def test_a_reported_yield_raises_no_assumption_flag():
+    assert "dividend_yield_assumed_zero" not in scoring.score_company(
+        load_fundamentals("O"))["flags"]
+
+
+# ── the DuPont ROE cap, and where it does not belong ─────────────────
+
+def test_a_bank_is_not_penalised_for_being_a_bank():
+    """JPM's equity multiplier is 12.2 because deposit-funded intermediation is
+    what a bank is. Capping its ROE cost 8 points on the metric its Quality
+    pillar leans hardest on and flagged it for financial engineering."""
+    card = scoring.score_company(load_fundamentals("JPM"))
+    ratios = fm.ratio_analysis(load_fundamentals("JPM"))
+
+    assert ratios["dupont"]["equity_multiplier"] > 4      # the cap's trigger
+    assert card["pillars"]["quality"]["metrics"]["roe"]["score"] > 70
+    assert "dupont_leverage_cap_applied" not in card["flags"]
+
+
+def test_the_cap_still_fires_where_leverage_is_a_choice():
+    """AAPL's 148% ROE sits on an equity base buybacks have nearly erased. That
+    is exactly what the guard is for, and it must keep working."""
+    card = scoring.score_company(load_fundamentals("AAPL"))
+    assert card["pillars"]["quality"]["metrics"]["roe"]["score"] == 70
+    assert "dupont_leverage_cap_applied" in card["flags"]
+
+
+def test_a_reit_is_still_capped():
+    """Structurally levered, but a REIT lifting ROE with debt is a real concern
+    rather than a regulatory floor — so it is deliberately not exempt."""
+    assert "real_estate_reit" not in sector_weights.LEVERAGE_IS_STRUCTURAL
+
+
+# ── DCF applicability travels with the card ──────────────────────────
+
+@pytest.mark.parametrize("stem,applicable", [
+    ("AAPL", True), ("MSFT", True), ("XOM", True), ("0700_HK", True),
+    ("JPM", False),    # no CFO - CapEx to speak of
+    ("O", False),      # capex is property acquisition, not maintenance
+    ("RIVN", False),   # pre-profit: no positive FCF to discount
+])
+def test_dcf_applicability_matches_the_profile(stem, applicable):
+    """The Financial Models tab reads this to avoid showing O a -63% upside with
+    the same weight as a valid one. It must follow the profile, not whether the
+    model happened to return a number."""
+    card = scoring.score_company(load_fundamentals(stem))
+    assert card["dcf_applicable"] is applicable
+    # the flag must track the profile's metric list, which is what scored plus
+    # what the profile wanted and could not compute
+    active = {m for p in card["pillars"].values() for m in p["metrics"]}
+    active |= set(card["missing_metrics"])
+    assert ("dcf_upside_pct" in active) is applicable

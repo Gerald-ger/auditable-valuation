@@ -11,7 +11,7 @@ import copy
 
 import pytest
 
-from conftest import load_fundamentals
+from conftest import TEST_CNY_HKD, load_fundamentals
 
 import financial_models as fm
 
@@ -162,13 +162,212 @@ def _with_coverage(ebit, interest):
     (10.0, 10.0, 0.070),     # 1.0x -> distressed
 ])
 def test_credit_spread_tracks_interest_coverage(ebit, interest, expected):
-    spread, coverage = fm._credit_spread(_with_coverage(ebit, interest))
+    spread, coverage, period = fm._credit_spread(_with_coverage(ebit, interest))
     assert spread == expected
     assert coverage == pytest.approx(ebit / interest)
+    assert period == "2025-12-31"
 
 
 def test_credit_spread_defaults_when_coverage_is_unavailable():
-    assert fm._credit_spread({"income_statement": {}}) == (fm.DEFAULT_CREDIT_SPREAD, None)
+    assert fm._credit_spread({"income_statement": {}}) == (fm.DEFAULT_CREDIT_SPREAD, None, None)
+
+
+# ── both legs of a ratio must come from one period ───────────────────
+#
+# `_latest` walks back until it finds anything, so two independent calls will
+# pair this year's numerator with a years-old denominator. Measured on the AAPL
+# fixture 2026-08-10: EBIT resolved 2025-09-30 while Interest Expense resolved
+# 2023-09-30 (yfinance stopped reporting the row), giving a displayed interest
+# coverage of 33.83x built from two different businesses. Pinned, it reads 29.06x
+# for 2023-09-30 — both score 100, so no composite moved and the goldens cannot
+# police this.
+
+def test_interest_coverage_never_crosses_two_periods():
+    income = {"2025-12-31": {"EBIT": 500.0},                        # no interest row
+              "2023-12-31": {"EBIT": 300.0, "Interest Expense": 10.0}}
+    coverage, period = fm.interest_coverage(income)
+    assert period == "2023-12-31"
+    assert coverage == pytest.approx(30.0)        # 300/10, not 500/10
+
+
+def test_interest_coverage_prefers_the_newest_complete_period():
+    income = {"2025-12-31": {"EBIT": 500.0, "Interest Expense": 10.0},
+              "2023-12-31": {"EBIT": 300.0, "Interest Expense": 10.0}}
+    assert fm.interest_coverage(income) == (pytest.approx(50.0), "2025-12-31")
+
+
+def test_interest_coverage_is_none_when_no_period_reports_both():
+    assert fm.interest_coverage({"2025-12-31": {"EBIT": 500.0}}) == (None, None)
+
+
+def test_aapl_interest_coverage_reads_one_year(monkeypatch):
+    """The fixture this was found on. The pinned period is stale — yfinance has
+    not reported AAPL's interest since 2023 — but stale-and-consistent is a
+    ratio, and fresh-over-stale is not."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    coverage, period = fm.interest_coverage(f["income_statement"])
+    assert period == "2023-09-30"
+    ebit = fm._value_at(f["income_statement"], period, "EBIT", "Operating Income")
+    interest = fm._value_at(f["income_statement"], period, "Interest Expense")
+    assert coverage == pytest.approx(ebit / abs(interest))
+    # the ratio the two-call version produced, for the record
+    assert coverage != pytest.approx(
+        fm._latest(f["income_statement"], "EBIT", "Operating Income") / abs(interest))
+
+
+def test_ratio_analysis_reports_the_period_its_coverage_came_from():
+    ratios = fm.ratio_analysis(load_fundamentals("AAPL"))
+    assert ratios["solvency"]["interest_coverage_period"] == "2023-09-30"
+
+
+# ── a missing bridge leg is named, not silently zeroed ───────────────
+
+def test_net_debt_names_the_leg_it_had_to_assume(monkeypatch):
+    """`or 0` keeps the DCF working when one field is absent, but an unreported
+    totalDebt otherwise reads as a debt-free company: AAPL 143.99 -> 147.41."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    assert fm.dcf_valuation(f)["diagnostics"]["net_debt_assumed_zero"] == []
+
+    f["info"]["totalDebt"] = None
+    assert fm.dcf_valuation(f)["diagnostics"]["net_debt_assumed_zero"] == ["total_debt"]
+
+
+def test_both_missing_bridge_legs_are_named(monkeypatch):
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    f["info"]["totalDebt"] = f["info"]["totalCash"] = None
+    diagnostics = fm.dcf_valuation(f)["diagnostics"]
+    assert diagnostics["net_debt_assumed_zero"] == ["total_debt", "total_cash"]
+
+
+# ── statements and shares can be in different currencies ─────────────
+#
+# 0700.HK reports CNY and trades HKD (verified live 2026-08-10; 9988.HK and
+# 1810.HK the same). The DCF builds enterprise value from statement cash flows
+# and bridges with totalDebt/totalCash, which follow the statements — then
+# compared the result against a trading-currency price. Unconverted, upside read
+# +30.5%; converted at the pinned test rate of 1.10 it reads +44.5%.
+#
+# The FX rate is pinned in conftest, so these assert the plumbing, not a quote.
+
+def test_a_cross_currency_dcf_is_quoted_in_the_trading_currency():
+    f = load_fundamentals("0700_HK")
+    dcf = fm.dcf_valuation(f)
+    a = dcf["assumptions"]
+    assert (a["currency"], a["reporting_currency"]) == ("HKD", "CNY")
+    assert a["fx_basis"] == "converted"
+    assert a["fx_rate_used"] == pytest.approx(TEST_CNY_HKD)
+
+
+def test_conversion_scales_the_valuation_by_exactly_the_rate():
+    """Fair value, EV and equity value all move together; nothing is left behind
+    in the reporting currency.
+
+    WACC is pinned on both sides because conversion is *not* a pure scaling:
+    the capital-structure weights compare a trading-currency market cap against a
+    reporting-currency debt balance, so correcting that legitimately moves the
+    discount rate too (0700.HK 7.69% -> 7.66%). Holding it fixed isolates the one
+    thing under test here.
+    """
+    f = load_fundamentals("0700_HK")
+    # same company, told its statements are already in HKD -> no conversion
+    g = load_fundamentals("0700_HK")
+    g["info"]["financialCurrency"] = "HKD"
+
+    wacc = fm.dcf_valuation(g)["assumptions"]["wacc_used"]
+    converted = fm.dcf_valuation(f, wacc_override=wacc)
+    unconverted = fm.dcf_valuation(g, wacc_override=wacc)
+
+    assert unconverted["assumptions"]["fx_basis"] == "single_currency"
+    for key in ("fair_value_per_share", "enterprise_value", "equity_value"):
+        assert converted[key] == pytest.approx(
+            unconverted[key] * TEST_CNY_HKD, rel=1e-3), key
+
+
+def test_correcting_the_currency_also_corrects_the_wacc_weights():
+    """The other half: a reporting-currency debt balance weighed against a
+    trading-currency market cap understated the debt weight, and with it the
+    share of the cheaper after-tax cost of debt."""
+    f = load_fundamentals("0700_HK")
+    g = load_fundamentals("0700_HK")
+    g["info"]["financialCurrency"] = "HKD"
+
+    corrected = fm.dcf_valuation(f)["assumptions"]
+    mixed = fm.dcf_valuation(g)["assumptions"]
+    assert corrected["weight_equity"] < mixed["weight_equity"]
+    assert corrected["wacc"] < mixed["wacc"]
+
+
+def test_conversion_leaves_the_unit_free_diagnostics_alone():
+    """Terminal share and the implied exit multiple divide two reporting-currency
+    figures, so scaling them would reintroduce the very mismatch being removed.
+
+    The WACC is compared separately: its capital-structure weights *do* change,
+    because they weigh a trading-currency market cap against a reporting-currency
+    debt balance and that comparison was mixed before.
+    """
+    f = load_fundamentals("0700_HK")
+    converted = fm.dcf_valuation(f)
+
+    g = load_fundamentals("0700_HK")
+    g["info"]["financialCurrency"] = "HKD"
+    unconverted = fm.dcf_valuation(g)
+
+    # hold WACC fixed so only the conversion is under test
+    same_wacc = fm.dcf_valuation(f, wacc_override=unconverted["assumptions"]["wacc_used"])
+    for key in ("terminal_value_share", "implied_exit_ev_ebitda"):
+        assert same_wacc["diagnostics"][key] == pytest.approx(
+            unconverted["diagnostics"][key], rel=1e-6), key
+    assert converted["diagnostics"]["terminal_value_share"] is not None
+
+
+def test_the_sensitivity_grid_is_converted_with_everything_else():
+    """A grid left in the reporting currency would put the football field's DCF
+    bar in one unit and the price rule in another."""
+    f = load_fundamentals("0700_HK")
+    dcf = fm.dcf_valuation(f)
+    grid = [v for row in dcf["sensitivity"]["rows"] for v in row["values"] if v is not None]
+    assert min(grid) < dcf["fair_value_per_share"] < max(grid)
+    assert dcf["fair_value_per_share"] > 600   # HKD; the CNY figure was 628 -> 695
+
+
+def test_upside_is_withheld_when_no_rate_can_be_fetched(monkeypatch):
+    """The comparison, not the valuation, is what breaks without a rate — so the
+    fair value is still reported and only the cross-currency claim is dropped."""
+    monkeypatch.setattr(fm, "fx_rate", lambda a, b: 1.0 if a == b else None)
+    dcf = fm.dcf_valuation(load_fundamentals("0700_HK"))
+    assert dcf["assumptions"]["fx_basis"] == "rate_unavailable"
+    assert dcf["assumptions"]["fx_rate_used"] is None
+    assert dcf["upside_pct"] is None
+    assert dcf["fair_value_per_share"] is not None
+
+
+def test_a_single_currency_issuer_is_untouched_by_any_of_this(monkeypatch):
+    """No rate is even looked up, so a currency outage cannot affect a US name."""
+    def explode(a, b):
+        raise AssertionError(f"looked up {a}/{b} for a single-currency issuer")
+    monkeypatch.setattr(fm, "fx_rate", explode)
+    dcf = fm.dcf_valuation(load_fundamentals("AAPL"))
+    assert dcf["assumptions"]["fx_basis"] == "single_currency"
+    assert dcf["fair_value_per_share"] == pytest.approx(143.99, rel=1e-3)
+
+
+def test_peer_leverage_is_put_on_one_basis_before_unlevering():
+    """A peer's debt is reporting-currency and its market cap trading-currency,
+    so its D/E needs the peer's own rate — not the target's."""
+    hk_peer = {"beta": 1.2, "market_cap": 1_000.0 * TEST_CNY_HKD, "total_debt": 1_000.0,
+               "currency": "HKD", "financial_currency": "CNY"}
+    us_peer = {"beta": 1.2, "market_cap": 1_000.0, "total_debt": 1_000.0,
+               "currency": "USD", "financial_currency": "USD"}
+    # same true leverage (1.0x) once both are on one basis, so same unlevered beta
+    info = {"beta": None, "totalDebt": 1_000.0, "marketCap": 1_000.0,
+            "currency": "USD", "financialCurrency": "USD"}
+    from_hk = fm.resolve_beta(info, [hk_peer, hk_peer])
+    from_us = fm.resolve_beta(info, [us_peer, us_peer])
+    assert from_hk == from_us
+    assert from_hk[1] == "peer_median_relevered"
 
 
 def test_credit_spread_differentiates_real_companies(monkeypatch):

@@ -7,6 +7,130 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-10 — currency correctness, scoring guards, a crash, and the tests that were missing
+
+Full three-lens review (finance / engineering / UI) run against every fixture by executing
+the code rather than reading it. Backend **153 → 246 passing** plus 3 deliberate xfails;
+frontend **22 → 44**. Every behavioural fix below was mutation-tested: reintroducing the
+defect fails only the tests that own it.
+
+### Fixed
+
+- **A company's statements and its shares can be in different currencies, and the DCF
+  compared them directly.** 0700.HK reports in **CNY** and trades in **HKD** — confirmed
+  against Tencent's published FY2024 revenue of RMB 660,257m, which the fixture matches to
+  the yuan. Enterprise value was built from statement cash flows and bridged with
+  `totalDebt`/`totalCash` (which follow the statements), then divided by shares and
+  compared against an HKD price.
+
+  Which `info` field sits on which side of the rate is **measured, not assumed** — yfinance
+  documents none of it. Against the quarterly statements, 9988.HK's `totalDebt` and
+  `totalCash` come back at **1.0000** and **0.9998** (reporting currency), while 0700.HK's
+  `bookValue` and `trailingEps` sit **1.13×** their statement equivalents against a CNYHKD
+  spot of 1.1627 (trading currency). `financialCurrency` was not in the `info` whitelist,
+  so the app could not previously detect the mismatch at all.
+
+  Corrected at seven boundaries: the DCF equity bridge, the WACC capital-structure weights,
+  `resolve_beta`'s peer D/E (each peer on its own rate), `fcf_yield`, `ffo_yield`,
+  `comps.ev_implied`, and Altman Z's `equity_liabilities` term. Measured on 0700.HK —
+  upside **+30.5% → +44.5%**, fair value **628.44 → 695.47 HKD**, `fcf_yield` score 64 → 68,
+  composite **74 → 75**. The unit-free diagnostics (terminal-value share, implied exit
+  multiple) are deliberately *not* scaled; the WACC does move (7.69% → 7.66%) because its
+  weights were genuinely mixed.
+
+  `fx_rate` returns **None** rather than a fallback constant when unreachable — a stale
+  risk-free rate moves a valuation a little, a wrong FX rate rescales all of it. Callers
+  then withhold the upside, drop the two market-cap yields, and report Altman Z as `n/a`
+  with the reason. Pinned by `-m network` tests so a provider change cannot move every HK
+  valuation silently.
+
+- **A dividend cut to zero *improved* the valuation pillar.** yfinance omits
+  `dividendYield` for a non-payer rather than sending 0, and `None` reads as *unreported*,
+  so the metric left the pillar average instead of scoring its 20-point floor — raising the
+  average it left behind. Measured on JPM, changing nothing else: **1.68% → 58, 0.10% → 51,
+  zero → 60**. A suspended dividend beat a token one and recovered the whole composite,
+  across exactly the profiles where a cut matters most (staples, utilities, REITs, banks,
+  insurers). Now scored as zero, with `dividend_yield_assumed_zero` raised only where the
+  profile uses the metric. Latent on the fixtures — both are payers — so six direct tests
+  pin it.
+
+- **A cost basis of `0` took down the Portfolio tab, unrecoverably.** `unrealized_pnl` and
+  `unrealized_pnl_pct` do not share a null condition — zero cost is a real gain and an
+  undefined return — and the renderer read the second off the first's guard. The
+  `TypeError` fired inside the component's own render, so `ErrorBoundary` unmounted the
+  whole tab *including the add/edit form needed to fix the position*: the only way back was
+  deleting `app.db`. Reachable by typing `0` in a field whose sibling placeholder suggests
+  `0`. The row arithmetic moved out of the endpoint into `main.position_values` so the
+  contract could be tested at all — being inline is why the shape shipped unchecked.
+
+- **Two ratios paired figures from different fiscal years.** `_credit_spread` and
+  `ratio_analysis`'s interest coverage each called `_latest` twice, independently, and
+  `_latest` walks back until it finds *anything*: AAPL resolved EBIT at **2025-09-30** and
+  Interest Expense at **2023-09-30**, so the 33.8× coverage on screen — and scored 100 in
+  the Health pillar — was a ratio of two different businesses. Both legs are now pinned to
+  the newest period reporting both, and that period is displayed. AAPL reads **29.06× in
+  2023**; both score 100, so no composite moved and the goldens could never have caught it.
+
+- **The DuPont leverage cap fired on banks.** JPM's equity multiplier is 12.2 because
+  deposit-funded intermediation is what a bank is, and the guard cut ROE **78.4 → 70** while
+  raising `dupont_leverage_cap_applied` — which reads to a user as an accusation of
+  financial engineering. The bank profile already measures capital adequacy properly via
+  `equity_assets`. Exempted through `sector_weights.LEVERAGE_IS_STRUCTURAL`: JPM quality
+  **75 → 79**, composite **70 → 71**, flag gone. AAPL (multiplier 4.9, ROE 149%) stays
+  capped — that is what the guard is for. REITs are deliberately not exempt.
+
+- **A missing debt figure read as a debt-free company.** `(totalDebt or 0)` moved AAPL's
+  fair value **143.99 → 147.41** with nothing on screen to say why, while `ratio_analysis`
+  correctly returned `None` for the same input. The DCF still computes — refusing to value
+  a company over one absent field is worse — but now names the leg it assumed, on the audit
+  row.
+
+- **`null >= 0` is `true` in JS**, so an unavailable portfolio P&L rendered green. Same bug
+  already fixed once on the DCF upside chip.
+
+### Changed
+
+- **A DCF is no longer presented as an answer for company types it does not fit.** O
+  returned a confident **−63.0%** upside off a base cash flow that treats a REIT's property
+  acquisitions as maintenance capex; a bank has no `CFO − CapEx` at all. The scoring engine
+  already knew — both profiles drop `dcf_upside_pct` — so the card now exports
+  `dcf_applicable` and the Financial Models tab states it. The model is still shown; it is
+  not shown as a result.
+- **The DCF panel names its currency.** An unlabelled `628.44` sat four lines under a header
+  reading `Mkt cap 4.33T HKD`, in a different unit. Where a conversion happened the audit
+  row states the reporting currency and the rate used.
+
+### Added
+
+- **`tests/test_plausibility.py` — the §5.2 acceptance criteria as assertions.** The design
+  doc specifies "RIVN … Tier 3–5" and "no bankrupt-adjacent name outranks a mega-cap
+  compounder"; RIVN scores **74 / Tier A**, above MSFT 73, JPM 71, XOM 70 and AAPL 67. The
+  profile weights the pillar it fails at 15% (quality 10 — operating margin −50.4%) and the
+  one it aces at 35%, and `cash_runway_q` reads 27.3 quarters because it divides cash by
+  operating burn and ignores capex.
+
+  Nobody noticed because **`golden_scores.json` had recorded 74/A as the expected value**.
+  Snapshot tests catch unintended change and are structurally blind to a wrong answer that
+  never changes — the third time that limitation has bitten this codebase. Filed as
+  `xfail(strict=True)`: reported in every run, and an error the moment a calibration change
+  fixes it. The remedy is a pending decision, recorded in `TODOLIST.md`.
+
+- **Tests for the two modules doing unaudited maths.** `comps.py` (20) — the
+  football-field interquartile band, the positive-only peer median, the EV→equity bridge in
+  `ev_implied`. `indicators.js` (24) — Wilder's RSI against his own worked dataset, MACD
+  alignment and EMA seeding. Both were already correct; neither had a single test.
+
+  Mutation testing then found two holes in the *new* tests: a period-2 RSI case cannot
+  distinguish Wilder smoothing from a plain mean (at n=2 the recurrence collapses to
+  `(avg + x)/2`), and nothing pinned the EMA's SMA seed until a slope-1 ramp was added,
+  where the SMA seed puts MACD's first point at exactly **7.0** against **−4.97** for a
+  raw-value seed.
+
+- **`main.position_values`** and 11 tests, pinning which portfolio fields can be null and
+  when — the contract whose violation caused the crash above.
+
+---
+
 ## 2026-08-07 (c) — GMT+8 clock, 1-minute bars, chart drawings
 
 ### Fixed

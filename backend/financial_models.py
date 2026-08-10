@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from statistics import median
 
-from data_provider import risk_free_rate
+from data_provider import fx_rate, risk_free_rate
 
 # Assumption defaults (user-overridable via the API)
 RISK_FREE_RATE = 0.043      # fallback only — WACC uses the live US 10Y when reachable
@@ -85,6 +85,44 @@ def _value_at(statement: dict, period: str, *row_names):
         if rows.get(name) is not None:
             return rows[name]
     return None
+
+
+def paired_latest(statement: dict, names_a: tuple, names_b: tuple):
+    """(period, a, b) from the newest period reporting **both**, else None.
+
+    Two independent `_latest` calls will happily pair this year's numerator with
+    a years-old denominator, because each walks back until it finds anything.
+    Measured on the AAPL fixture 2026-08-10: `_latest` for EBIT resolves
+    2025-09-30 while `_latest` for Interest Expense resolves 2023-09-30 — yfinance
+    stopped reporting the row — so the interest coverage on screen was FY2025
+    operating income over FY2023 interest, a ratio of two different businesses.
+
+    This is the same discipline `_statement_fcf` enforces by returning its period
+    and `fcf_conversion` inherits from it: a ratio is only a ratio when both legs
+    describe one period. A stale-but-consistent answer beats a fresh-looking
+    mixed one, and the period is returned so callers can say which year it is.
+    """
+    for period in sorted(statement.keys(), reverse=True):
+        a = _value_at(statement, period, *names_a)
+        b = _value_at(statement, period, *names_b)
+        if a is not None and b is not None:
+            return period, a, b
+    return None
+
+
+EBIT_ROWS = ("EBIT", "Operating Income")
+INTEREST_ROWS = ("Interest Expense",)
+
+
+def interest_coverage(income_statement: dict):
+    """(coverage, period) — EBIT over interest expense, both from one period."""
+    pair = paired_latest(income_statement, EBIT_ROWS, INTEREST_ROWS)
+    if pair is None:
+        return None, None
+    period, ebit, interest = pair
+    if not interest:
+        return None, period
+    return ebit / abs(interest), period
 
 
 def _series(statement: dict, *row_names) -> list[tuple[str, float]]:
@@ -177,11 +215,54 @@ def tax_rate_for(info: dict) -> float:
     return TAX_RATE_BY_CURRENCY.get(info.get("currency"), DEFAULT_TAX_RATE)
 
 
-def _debt_to_equity(debt, market_cap) -> float | None:
-    """Market-value D/E. Zero debt is a real answer; missing debt is not."""
-    if debt is None or not market_cap or market_cap <= 0:
+def statement_to_market_fx(trading_currency, reporting_currency):
+    """(rate, mismatch) taking a statement figure into the trading currency.
+
+    Statements are denominated in `financialCurrency` and the shares trade in
+    `currency`, and for a China-domiciled Hong Kong listing those differ — 0700.HK
+    reports CNY and trades HKD. Measured live 2026-08-10 against the quarterly
+    statements, the split inside yfinance's `info` is:
+
+        reporting currency   totalDebt, totalCash, totalRevenue, ebitda,
+                             freeCashflow, operatingCashflow  (9988.HK matches
+                             its quarterly balance sheet at 1.0000 and 0.9998)
+        trading currency     currentPrice, marketCap, bookValue, trailingEps,
+                             forwardEps  (0700.HK's book value and EPS both sit
+                             1.12-1.13x their statement equivalents against a
+                             CNYHKD spot of 1.1627)
+
+    So a DCF built from statement cash flows and bridged with `totalDebt` lands
+    in the reporting currency, while the price it is compared against is in the
+    trading one. Unconverted, 0700.HK read +30.5% upside where the FX-correct
+    figure is around +42%.
+
+    `mismatch` is True whenever the two currencies genuinely differ, so callers
+    can tell "no conversion needed" (rate 1.0) from "conversion needed but
+    unavailable" (rate None) — those must not behave the same.
+    """
+    if not trading_currency or not reporting_currency:
+        return 1.0, False
+    if trading_currency == reporting_currency:
+        return 1.0, False
+    return fx_rate(reporting_currency, trading_currency), True
+
+
+def _to_trading(info: dict):
+    """statement_to_market_fx for a whole `info` dict."""
+    return statement_to_market_fx(info.get("currency"), info.get("financialCurrency"))
+
+
+def _debt_to_equity(debt, market_cap, fx: float | None = 1.0) -> float | None:
+    """Market-value D/E. Zero debt is a real answer; missing debt is not.
+
+    `debt` arrives in the reporting currency and `market_cap` in the trading one,
+    so `fx` converts the numerator before the ratio is taken. It is 1.0 for every
+    single-currency issuer, and None when the two differ and no rate was
+    available — in which case the ratio is not computed rather than mixed.
+    """
+    if debt is None or not market_cap or market_cap <= 0 or fx is None:
         return None
-    return max(debt, 0.0) / market_cap
+    return max(debt, 0.0) * fx / market_cap
 
 
 def resolve_beta(info: dict, peers: list[dict] | None = None,
@@ -217,11 +298,16 @@ def resolve_beta(info: dict, peers: list[dict] | None = None,
     credible = [p for p in (peers or [])
                 if p.get("beta") is not None and BETA_MIN <= p["beta"] <= BETA_MAX]
 
-    target_de = _debt_to_equity(info.get("totalDebt"), info.get("marketCap"))
+    target_fx, _ = _to_trading(info)
+    target_de = _debt_to_equity(info.get("totalDebt"), info.get("marketCap"), target_fx)
     if target_de is not None:
         unlevered = []
         for p in credible:
-            de = _debt_to_equity(p.get("total_debt"), p.get("market_cap"))
+            # each peer carries its own currency pair — an HK peer set can mix
+            # HKD-reporting and CNY-reporting names
+            peer_fx, _ = statement_to_market_fx(p.get("currency"),
+                                                p.get("financial_currency"))
+            de = _debt_to_equity(p.get("total_debt"), p.get("market_cap"), peer_fx)
             if de is not None:
                 unlevered.append(p["beta"] / (1 + (1 - tax_rate) * de))
         if len(unlevered) >= MIN_PEER_BETAS:
@@ -233,18 +319,20 @@ def resolve_beta(info: dict, peers: list[dict] | None = None,
     return BETA_FALLBACK, "default"
 
 
-def _credit_spread(f: dict) -> tuple[float, float | None]:
-    """(spread, interest_coverage) — cost of debt should reflect leverage."""
-    inc = f["income_statement"]
-    ebit = _latest(inc, "EBIT", "Operating Income")
-    interest = _latest(inc, "Interest Expense")
-    if ebit is None or not interest:
-        return DEFAULT_CREDIT_SPREAD, None
-    coverage = ebit / abs(interest)
+def _credit_spread(f: dict) -> tuple[float, float | None, str | None]:
+    """(spread, interest_coverage, coverage_period) — cost of debt reflects leverage.
+
+    The period comes back so the audit row can say which year the coverage that
+    set this spread was measured in; see `paired_latest` for why it is one year
+    rather than the newest of each leg.
+    """
+    coverage, period = interest_coverage(f["income_statement"])
+    if coverage is None:
+        return DEFAULT_CREDIT_SPREAD, None, period
     for floor, spread in CREDIT_SPREAD_LADDER:
         if coverage >= floor:
-            return spread, round(coverage, 2)
-    return CREDIT_SPREAD_LADDER[-1][1], round(coverage, 2)
+            return spread, round(coverage, 2), period
+    return CREDIT_SPREAD_LADDER[-1][1], round(coverage, 2), period
 
 
 def ratio_analysis(f: dict) -> dict:
@@ -253,13 +341,14 @@ def ratio_analysis(f: dict) -> dict:
 
     revenue = _latest(inc, "Total Revenue")
     net_income = _latest(inc, "Net Income", "Net Income Common Stockholders")
-    ebit = _latest(inc, "EBIT", "Operating Income")
-    interest = _latest(inc, "Interest Expense")
     equity = _latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
     assets = _latest(bal, "Total Assets")
 
     def div(a, b):
         return round(a / b, 4) if a is not None and b not in (None, 0) else None
+
+    # both legs from one period — see paired_latest
+    coverage, coverage_period = interest_coverage(inc)
 
     dupont = {
         "net_margin": div(net_income, revenue),
@@ -278,7 +367,8 @@ def ratio_analysis(f: dict) -> dict:
         },
         "solvency": {
             "debt_to_equity": div(info.get("totalDebt"), equity),
-            "interest_coverage": div(ebit, interest),
+            "interest_coverage": round(coverage, 4) if coverage is not None else None,
+            "interest_coverage_period": coverage_period,
             "net_debt": (info.get("totalDebt") - info.get("totalCash"))
                         if info.get("totalDebt") is not None and info.get("totalCash") is not None else None,
         },
@@ -315,8 +405,11 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
     rf = risk_free_rate(RISK_FREE_RATE)
     cost_of_equity = rf + beta * EQUITY_RISK_PREMIUM
     market_cap = info.get("marketCap") or 0
-    total_debt = info.get("totalDebt") or 0
-    spread, coverage = _credit_spread(f)
+    # the capital-structure weights compare a trading-currency market cap with a
+    # reporting-currency debt balance, so the debt leg is converted first
+    fx, _ = _to_trading(info)
+    total_debt = (info.get("totalDebt") or 0) * (fx if fx is not None else 1.0)
+    spread, coverage, coverage_period = _credit_spread(f)
     cost_of_debt = rf + spread
     total = market_cap + total_debt
     if total == 0:
@@ -332,6 +425,7 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
         "cost_of_equity": round(cost_of_equity, 4),
         "credit_spread": spread,
         "interest_coverage": coverage,
+        "interest_coverage_period": coverage_period,
         "cost_of_debt_after_tax": round(cost_of_debt * (1 - tax_rate), 4),
         "weight_equity": round(market_cap / total, 4) if total else 1.0,
         "wacc": round(wacc, 4),
@@ -403,11 +497,33 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
 
     explicit_pv, terminal_pv, growth_factor = project(wacc, terminal_growth)
     ev = explicit_pv + terminal_pv
-    net_debt = (info.get("totalDebt") or 0) - (info.get("totalCash") or 0)
+    # Missing is not zero. An unreported totalDebt makes the bridge read as a
+    # debt-free company and lifts fair value with nothing on screen to say why —
+    # simulated on AAPL 2026-08-10, dropping totalDebt moved fair value 143.99 ->
+    # 147.41 and net debt +21.9bn -> -62.4bn, silently. `ratio_analysis` already
+    # returns None for the same input. The DCF keeps computing, because refusing
+    # to value a company over one absent field is worse, but it names the leg it
+    # had to assume so the reader can discount the answer accordingly.
+    total_debt, total_cash = info.get("totalDebt"), info.get("totalCash")
+    net_debt = (total_debt or 0) - (total_cash or 0)
+    net_debt_assumed = [name for name, value in
+                        (("total_debt", total_debt), ("total_cash", total_cash))
+                        if value is None]
     equity_value = ev - net_debt
     shares = info.get("sharesOutstanding")
-    fair_value = equity_value / shares if shares else None
     price = info.get("currentPrice") or info.get("regularMarketPrice")
+
+    # Everything computed above is in the *reporting* currency: the cash flows
+    # come from the statements and net debt from totalDebt/totalCash, which
+    # follow them. The price does not. `conv` is applied at the output boundary
+    # only — the ratios below (terminal share, implied exit multiple) divide two
+    # reporting-currency figures and are unit-free already, so converting them
+    # would break what conversion is meant to fix.
+    fx, fx_mismatch = _to_trading(info)
+    fx_basis = ("single_currency" if not fx_mismatch
+                else "converted" if fx is not None else "rate_unavailable")
+    conv = fx if fx is not None else 1.0
+    fair_value = equity_value * conv / shares if shares else None
 
     # Cross-check: what exit multiple does the perpetuity terminal value imply?
     # A perpetuity that only works by exiting far above today's trading multiple
@@ -427,7 +543,8 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             if w <= g or not shares:
                 row["values"].append(None)
             else:
-                row["values"].append(round((enterprise_value(w, g) - net_debt) / shares, 2))
+                row["values"].append(
+                    round((enterprise_value(w, g) - net_debt) * conv / shares, 2))
         sensitivity.append(row)
 
     terminal_share = round(terminal_pv / ev, 4) if ev else None
@@ -450,13 +567,25 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "stage2_years": STAGE2_YEARS,
             **wacc_parts,
             "wacc_used": round(wacc, 4),
+            # every figure below is quoted in `currency`; `fx_basis` says whether
+            # that took a conversion, and `reporting_currency` names what the
+            # statements were denominated in before it
+            "currency": info.get("currency"),
+            "reporting_currency": info.get("financialCurrency"),
+            "fx_basis": fx_basis,
+            "fx_rate_used": round(conv, 6) if fx_mismatch and fx is not None else None,
         },
-        "enterprise_value": round(ev),
-        "net_debt": net_debt,
-        "equity_value": round(equity_value),
+        "enterprise_value": round(ev * conv),
+        "net_debt": net_debt * conv,
+        "equity_value": round(equity_value * conv),
         "fair_value_per_share": round(fair_value, 2) if fair_value else None,
         "current_price": price,
-        "upside_pct": round((fair_value / price - 1) * 100, 1) if fair_value and price else None,
+        # Suppressed when the statements and the shares are in different
+        # currencies and no rate could be fetched: comparing a reporting-currency
+        # fair value against a trading-currency price is the defect this whole
+        # boundary exists to remove, and printing it anyway would restore it.
+        "upside_pct": round((fair_value / price - 1) * 100, 1)
+                      if fair_value and price and fx_basis != "rate_unavailable" else None,
         "diagnostics": {
             # >75% is the conventional warning line: above it the valuation is
             # driven by the terminal assumption, not by the explicit forecast.
@@ -464,6 +593,8 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "terminal_value_high": terminal_share is not None and terminal_share > 0.75,
             "implied_exit_ev_ebitda": implied_exit_multiple,
             "current_ev_ebitda": info.get("enterpriseToEbitda"),
+            # empty is the healthy case: both legs of the bridge were reported
+            "net_debt_assumed_zero": net_debt_assumed,
         },
         "sensitivity": {
             "terminal_growth_cols": [round(terminal_growth + d, 4)

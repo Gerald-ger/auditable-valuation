@@ -481,6 +481,33 @@ def portfolio_tickers():
     return {"tickers": [p["ticker"] for p in store.list_positions()]}
 
 
+def position_values(price: float | None, shares: float, cost: float | None) -> dict:
+    """The four money figures for one portfolio row.
+
+    `unrealized_pnl` and `unrealized_pnl_pct` deliberately do **not** share a
+    null condition, and a renderer that assumes they do will crash on a real
+    input. A cost basis of exactly zero — a gift, a vest, or a typo in a field
+    whose sibling placeholder suggests `0` — produces a genuine absolute gain
+    and no meaningful percentage return, because the denominator is zero. Both
+    answers are correct; the pair is simply not all-or-nothing, so each has to
+    be read on its own.
+
+    Extracted from the endpoint so that contract is pinned by a test: it was
+    unreachable while it lived inline, which is why the crash shipped.
+    """
+    market_value = price * shares if price is not None else None
+    cost_value = cost * shares if cost is not None else None
+    return {
+        "market_value": market_value,
+        "cost_value": cost_value,
+        "unrealized_pnl": (market_value - cost_value)
+                          if market_value is not None and cost_value is not None else None,
+        # `cost` truthiness rather than `is not None`: zero cost, no return
+        "unrealized_pnl_pct": ((price / cost - 1) * 100)
+                              if price is not None and cost else None,
+    }
+
+
 @app.get("/api/portfolio")
 def portfolio():
     """Watchlist and holdings, priced live, with the latest stored score joined in.
@@ -502,20 +529,13 @@ def portfolio():
         q = quotes.get(p["ticker"]) or {}
         price = q.get("price")
         shares, cost = p["shares"] or 0.0, p["cost_basis"]
-        market_value = price * shares if price is not None else None
-        cost_value = cost * shares if cost is not None else None
         card = scores.get(p["ticker"])
         rows.append({
             **p,
             "name": q.get("name"),
             "currency": q.get("currency"),
             "price": price,
-            "market_value": market_value,
-            "cost_value": cost_value,
-            "unrealized_pnl": (market_value - cost_value)
-                              if market_value is not None and cost_value is not None else None,
-            "unrealized_pnl_pct": ((price / cost - 1) * 100)
-                                  if price is not None and cost else None,
+            **position_values(price, shares, cost),
             "score": card["composite"] if card else None,
             "tier": card["tier"] if card else None,
             "score_as_of": card["as_of_date"] if card else None,

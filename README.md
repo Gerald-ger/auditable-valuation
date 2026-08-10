@@ -113,13 +113,22 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 153 tests, offline, ~3s
+backend\.venv\Scripts\python.exe -m pytest          # 246 pass, 3 xfail, offline, ~2.5s
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
+cd frontend; npm test                                   # 44 tests
 ```
 
-That 153 is what pytest reports: 97 offline test functions, of which fifteen are
-parametrised and fan out — six of them across all seven fixtures. The other 8 of
-the 161 collected are the `network` ones, deselected by default.
+Of the 264 collected, 15 are `network`-marked and deselected by default. The 3
+expected failures are real: `tests/test_plausibility.py` encodes the acceptance
+criteria written in [docs/scoring-system-design.md](docs/scoring-system-design.md) §5.2
+("RIVN … Tier 3–5", "no bankrupt-adjacent name outranks a mega-cap compounder"),
+and the engine does not currently meet them — RIVN scores 74/A. They are
+`xfail(strict=True)`, so the violation is reported in every run and turns into an
+error the moment a calibration change fixes it.
+
+That file exists because **golden snapshots catch unintended change and are
+structurally blind to a wrong answer that never changes.** The golden had recorded
+RIVN at 74/A as the expected value since the day it was written.
 
 The suite runs entirely against seven real `get_fundamentals` payloads committed under
 `backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
@@ -259,6 +268,16 @@ start.bat   one-click cold start (backend + frontend + browser)
 - The DCF risk-free rate is the live US 10Y treasury yield, refreshed once per day, with a
   4.3% fallback when OpenBB or the Fed feed is unreachable. HK issuers use the same USD
   rate — the HKD peg makes it an acceptable proxy, not a correct one.
+- **A company's statements and its shares can be in different currencies**, and for the
+  China-domiciled Hong Kong listings they are: 0700.HK reports in CNY and trades in HKD
+  (so do 9988.HK and 1810.HK). Cash flows, `totalDebt` and `totalCash` follow the
+  statements; price, market cap, book value and EPS follow the market. Measured against
+  the quarterly statements 2026-08-10 — 9988.HK's `totalDebt` and `totalCash` match its
+  own balance sheet at 1.0000 and 0.9998 — and pinned by `-m network` tests, because
+  nothing in yfinance documents this split. Everything the DCF panel shows is converted
+  into the **trading** currency and the panel names it. When no FX rate can be fetched the
+  upside is **withheld** rather than computed across two units, the two market-cap yields
+  are dropped, and Altman Z reports `n/a`; the rate is never guessed at.
 - The default DCF growth is anchored to analyst forward consensus when available
   (falling back to trailing revenue growth). Note this input does a lot of work: XOM's
   consensus forward revenue growth is 0%, which drives its result more than any other
@@ -294,6 +313,17 @@ start.bat   one-click cold start (backend + frontend + browser)
   against heuristic healthy ranges. It is not a prediction; validation covers
   consistency and plausibility, not forward returns (see docs/scoring-system-design.md §5).
   Score history is now recorded so this can eventually be tested — it has not been yet.
+- **Composites from different company types are not on one scale, and one open failure
+  proves it.** RIVN scores 74 ("A — Solid") against AAPL's 67, because the
+  `pre_profit_growth` profile weights the pillar it fails at 15% (quality 10: operating
+  margin −50%) and the pillar it aces at 35%. The design doc's own acceptance criteria
+  say a pre-profit name belongs in Tier 3–5; `tests/test_plausibility.py` records the
+  breach. The Screener refuses to rank across types for exactly this reason — the
+  Portfolio tab shows stored scores side by side and does not.
+- **A DCF is not shown as an answer for company types it does not fit.** Banks have no
+  `CFO − CapEx` at all, and a REIT's capex is property acquisition rather than
+  maintenance, so the model still returns a number (O: −63%) that means nothing. Both the
+  Scorecard's valuation pillar and the Financial Models tab now say so instead.
 - Free cash flow for both the DCF and the two FCF scoring metrics comes from the cash-flow
   statement. `info["freeCashflow"]` is only a fallback and raises the
   `fcf_from_info_unverified_period` flag when used, because yfinance reports it annually

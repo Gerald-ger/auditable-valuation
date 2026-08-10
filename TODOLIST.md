@@ -10,6 +10,48 @@ Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliber
 
 ## Now
 
+### 🔵 The engine fails its own written acceptance criterion, and the golden froze it
+
+`docs/scoring-system-design.md` §5.2 specifies that a `pre_profit_growth` card lands in
+**Tier 3–5** and that **"no bankrupt-adjacent name outranks a mega-cap compounder"**.
+Measured 2026-08-10: RIVN scores **74 / Tier A**, above MSFT 73, JPM 71, XOM 70 and
+AAPL 67.
+
+The mechanism is visible in the pillar detail. The profile weights the pillar RIVN fails
+at **15%** (quality 10 — gross margin 7.5%, operating margin −50.4%) and the pillar it
+aces at **35%** (growth 98). Health scores 82 largely on `cash_runway_q` = 27.3 quarters,
+because [scoring.py](backend/scoring.py) computes runway as cash over *operating* burn and
+ignores capex — for a company building factories that is the wrong denominator.
+
+Now pinned by `tests/test_plausibility.py` as `xfail(strict=True)`, so it is reported in
+every run and becomes an error the moment a calibration change fixes it. Written that way
+rather than as a hard failure because a CI that is red on purpose gets ignored within a
+week.
+
+**Why nobody noticed:** `golden_scores.json` recorded `74 / A` as the *expected* value.
+Snapshot tests catch unintended change and are structurally blind to a wrong answer that
+never changes. This is the third time that limitation has bitten — the FCFF fix and the
+negative-denominator guards both hit it — so the plausibility file is the standing answer,
+not a one-off.
+
+**Decision needed.** Three defensible routes, none taken yet:
+- cap the tier for `pre_profit_growth` (blunt, honest, keeps the pillar detail);
+- reweight the profile and net capex out of `cash_runway_q` (more principled, but re-tunes
+  a curve that was never validated against returns in the first place);
+- accept it and state on the card that pre-profit composites are not comparable.
+
+### 🟡 The Portfolio tab compares scores the Screener refuses to compare
+
+[ScreenerTab.jsx:85-91](frontend/src/components/ScreenerTab.jsx#L85-L91) carries a
+prominent warning that composites from different profiles are not one measurement —
+citing, as it happens, exactly the numbers above. The Portfolio tab then renders those
+same stored composites in one column, adjacent rows, with no classification and no
+caveat.
+
+**Fix:** join `classification` onto the portfolio rows (`store.latest_scores` already has
+it) and either group or label them. **Trigger: before reading the portfolio's score column
+as a ranking.**
+
 ### 🔵 The FCFF add-back does not net off interest income
 
 Resolved 2026-08-09 (b) below, with one deliberate gap. The add-back is **gross**
@@ -181,6 +223,10 @@ The HKD peg makes the risk-free proxy defensible; a flat global ERP is a simplif
 with no such excuse. A HKD government-bond yield and a per-market ERP would be the
 correct inputs.
 
+*(Distinct from the reporting-currency mismatch fixed 2026-08-10. That was a units bug —
+CNY cash flows compared against an HKD price. This is a choice of discount-rate inputs,
+and it is still open.)*
+
 ### 🔵 HK charts still have almost no event markers
 
 SEC filings gave US tickers ~5 years of dated events (AAPL: 278 events, 140 dates),
@@ -222,6 +268,91 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-10 — three-lens review: finance, engineering, UI
+
+Full review of the platform against every fixture by running the code, not reading it.
+Seven defects fixed, two recorded as open (above), all six behavioural fixes
+mutation-tested. Backend **153 → 246 passing** (+3 xfail), frontend **22 → 44**.
+
+**A company's statements and its shares can be in different currencies.** 0700.HK reports
+in CNY and trades in HKD — verified against Tencent's published FY2024 revenue of
+RMB 660,257m, which the fixture matches exactly. The DCF built enterprise value from
+statement cash flows, bridged with `totalDebt`/`totalCash` (which follow the statements),
+then compared the per-share result against an HKD price. The split inside yfinance's
+`info` was **measured, not assumed** — 9988.HK's `totalDebt` and `totalCash` match its own
+quarterly balance sheet at 1.0000 and 0.9998, while 0700.HK's `bookValue` and `trailingEps`
+sit 1.13× their statement equivalents against a CNYHKD spot of 1.1627. `financialCurrency`
+was not in the `info` whitelist, so the app could not previously *detect* the mismatch at
+all. Fixed at seven boundaries: the DCF equity bridge, the WACC capital-structure weights,
+`resolve_beta`'s peer D/E, `fcf_yield`, `ffo_yield`, `comps.ev_implied` and Altman Z's
+`equity_liabilities` term. `fx_rate` returns **None** rather than a fallback constant when
+it cannot be fetched — a stale risk-free rate moves a valuation a little, a wrong FX rate
+rescales all of it — and callers withhold the comparison instead. Measured: 0700.HK upside
+**+30.5% → +44.5%** at the pinned test rate, composite 74 → 75.
+
+**A dividend cut to zero improved the valuation pillar.** yfinance omits `dividendYield`
+for a non-payer rather than sending 0, and `None` means *unreported* to `piecewise_score` —
+so the metric left the pillar average instead of scoring its 20-point floor, raising the
+average it left behind. Measured on JPM, changing nothing else: 1.68% → valuation 58,
+0.10% → 51, **zero → 60**. A suspended dividend came out ahead of a token one. Now scored
+as zero with `dividend_yield_assumed_zero` raised only where the profile actually uses the
+metric. Latent on the fixtures (both payers), so six direct tests pin it.
+
+**A cost basis of `0` took down the Portfolio tab unrecoverably.** `unrealized_pnl` and
+`unrealized_pnl_pct` do not share a null condition — zero cost is a real gain and an
+undefined return — and the renderer read the second off the first's guard. The `TypeError`
+landed inside the component's own render, so `ErrorBoundary` unmounted the tab *including
+the add/edit form*, leaving no route back from the UI. Reachable by typing `0` in a field
+whose sibling placeholder suggests `0`. The arithmetic moved out of the endpoint into
+`main.position_values` so the contract could be tested at all; that it was inline is why
+the shape shipped unchecked.
+
+**Two ratios paired figures from different fiscal years.** `_credit_spread` and
+`ratio_analysis`'s interest coverage each called `_latest` twice, independently, and
+`_latest` walks back until it finds anything: AAPL resolved EBIT at 2025-09-30 and Interest
+Expense at **2023-09-30**, so the 33.8× on screen was two different businesses. Now pinned
+to the newest period reporting both, with the period returned and displayed — the same
+discipline `_statement_fcf` already enforced. Reads 29.06× for 2023; both score 100, so no
+composite moved and the goldens could not have caught it.
+
+**The DuPont ROE cap fired on banks.** JPM's equity multiplier is 12.2 because
+deposit-funded intermediation is what a bank *is*, and the guard cut its ROE 78.4 → 70
+while flagging `dupont_leverage_cap_applied` — which reads as an accusation of financial
+engineering. The bank profile already measures capital adequacy through `equity_assets`.
+Exempted via `sector_weights.LEVERAGE_IS_STRUCTURAL`; JPM composite 70 → **71**, quality
+75 → 79. AAPL (multiplier 4.9, ROE 149%) is still capped, correctly. REITs deliberately
+are not exempt — a REIT lifting ROE with debt is a real concern, not a regulatory floor.
+
+**A missing debt figure read as a debt-free company.** `(totalDebt or 0)` moved AAPL's
+fair value 143.99 → 147.41 with nothing on screen to say why, while `ratio_analysis`
+returned `None` for the same input. The DCF still computes — refusing to value a company
+over one absent field is worse — but names the leg it assumed, and the audit row shows it.
+
+**A DCF was displayed for company types it does not fit.** O returned a complete −63.0%
+upside off a base cash flow treating a REIT's property acquisitions as maintenance capex.
+The scoring engine already knew, dropping `dcf_upside_pct` from the REIT and bank profiles;
+the card now exports `dcf_applicable` and the Financial Models tab says so.
+
+**Two modules doing unaudited maths had no tests.** `comps.py` (football-field IQR, every
+peer-implied share value) and `indicators.js` (Wilder RSI, MACD) — 20 and 24 tests added.
+Both were correct: RSI reproduces Wilder's own worked dataset. Mutation testing found two
+gaps in the new tests themselves — a period-2 RSI case cannot distinguish Wilder smoothing
+from a plain mean (the recurrence collapses), and nothing pinned the EMA's SMA seed until a
+slope-1 ramp assertion was added, where MACD's first point is exactly 7.0.
+
+Every behavioural fix was mutation-tested: reintroducing each defect fails only the tests
+that own it. Golden diff is two tickers — 0700.HK (currency) and JPM (DuPont scope) — with
+the other five byte-identical.
+
+**Also found, not fixed** (see Now, plus §A4 in the review): the EV→equity bridge omits
+minority interest, preferred stock and associates — worth +4.5% on 0700.HK at book, and
+JPM carries $20.0bn of preferred that is ignored entirely. Splitting "subtract MI and
+preferred" (standard) from "add associates at cost" (cost is not value) needs a decision.
+Accessibility is a separate pass: 2 aria attributes and 0 roles across the app, with 22
+`title` tooltips carrying information that has no other route, and `PillarBar` is a
+clickable `<div>` so the metric breakdown cannot be opened without a mouse. The palette
+itself measures clean — every text token passes WCAG AA on both surfaces.
 
 ### ✅ 2026-08-09 (d) — event markers land on the right session, and on the right bar
 

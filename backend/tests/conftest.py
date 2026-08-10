@@ -41,6 +41,38 @@ def pinned_risk_free_rate(monkeypatch):
                         lambda fallback: financial_models.RISK_FREE_RATE)
 
 
+# CNY -> HKD. A round test constant, not a market quote: the point is that the
+# 0700.HK fixture reports in CNY and trades in HKD, not what the pair was worth
+# on any given day. Spot was 1.1627 when the split was measured (2026-08-10).
+TEST_CNY_HKD = 1.10
+
+
+@pytest.fixture(autouse=True)
+def pinned_fx_rate(monkeypatch):
+    """Pin cross-currency conversion for every test.
+
+    Statements are denominated in `financialCurrency` and shares trade in
+    `currency`; 0700.HK reports CNY and trades HKD, so its DCF, its market-cap
+    yields and its Altman Z all convert between the two. Left live, this
+    'offline' suite would need a network call per run and every 0700.HK golden
+    would drift with the currency market — exactly the reason the risk-free rate
+    is pinned above.
+
+    Patched on `financial_models` because that module does `from data_provider
+    import fx_rate`, binding the name at import; every other caller reaches it
+    through `financial_models.statement_to_market_fx`.
+    """
+    import financial_models
+    rates = {("CNY", "HKD"): TEST_CNY_HKD}
+
+    def fake_fx_rate(from_ccy, to_ccy):
+        if not from_ccy or not to_ccy:
+            return None
+        return 1.0 if from_ccy == to_ccy else rates.get((from_ccy, to_ccy))
+
+    monkeypatch.setattr(financial_models, "fx_rate", fake_fx_rate)
+
+
 @pytest.fixture
 def fundamentals():
     return load_fundamentals

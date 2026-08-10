@@ -18,6 +18,8 @@ rather than a number that looks computed.
 """
 from __future__ import annotations
 
+import financial_models as fm
+
 # Altman (1968), original public-company Z. Zones are Altman's own.
 Z_SAFE, Z_DISTRESS = 2.99, 1.81
 # Piotroski (2000): nine binary tests; >=7 strong, <=2 weak.
@@ -96,7 +98,22 @@ def altman_z(f: dict, classification: str) -> dict:
     liabilities = _at(bal, period, "Total Liabilities Net Minority Interest")
     ebit = _at(inc, _periods(inc)[0] if inc else None, "EBIT", "Operating Income")
     revenue = _at(inc, _periods(inc)[0] if inc else None, "Total Revenue")
+
+    # Four of Altman's five terms divide one statement figure by another and are
+    # unit-free. `equity_liabilities` is the exception: market cap is quoted in
+    # the trading currency while liabilities come from the statements, so for an
+    # issuer reporting in a different currency the term is a mixed ratio and its
+    # 0.6 weight carries the error straight into Z.
     market_cap = f["info"].get("marketCap")
+    fx, fx_mismatch = fm.statement_to_market_fx(
+        f["info"].get("currency"), f["info"].get("financialCurrency"))
+    if fx_mismatch:
+        if fx is None:
+            return {"applicable": False,
+                    "note": "Statements and shares are in different currencies "
+                            "and no exchange rate was available, so the "
+                            "market-value term cannot be put on one basis."}
+        market_cap = market_cap / fx if market_cap is not None else None
 
     terms = {
         "working_capital_assets": (1.2, _div(working_capital, assets)),

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from statistics import median, quantiles
 
+import financial_models as fm
 from data_provider import provider
 
 PEER_SUGGESTIONS = {
@@ -138,9 +139,16 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
     net_debt = (info.get("totalDebt") or 0) - (info.get("totalCash") or 0)
     implied = {}
 
+    # An EV multiple times a statement figure lands in the reporting currency,
+    # as does net debt, so the bridged per-share value has to be converted before
+    # it can sit on a football field beside a trading-currency price. The
+    # earnings multiples below need no conversion: EPS is already trading-currency.
+    fx, fx_mismatch = fm.statement_to_market_fx(
+        info.get("currency"), info.get("financialCurrency"))
+
     def ev_implied(mult, metric):
-        if mult and metric and shares:
-            return round((mult * metric - net_debt) / shares, 2)
+        if mult and metric and shares and fx is not None:
+            return round((mult * metric - net_debt) * fx / shares, 2)
         return None
 
     if medians.get("pe_forward") and info.get("forwardEps"):

@@ -107,6 +107,23 @@ SECTOR_PROFILES = {
 
 LOGISTICS_INDUSTRY_HINTS = ("freight", "logistics", "railroad", "marine", "trucking")
 
+# Classifications where a high equity multiplier is the licence, not a choice.
+# `scoring.score_company` caps ROE at 70 when assets/equity exceeds 4, because a
+# company manufacturing returns with debt is not a quality company. A bank is the
+# exception that breaks the rule: JPM's multiplier is 12.2 because deposit-funded
+# intermediation is what a bank *is*, and capping its ROE cost 8 points on the
+# single metric its Quality pillar leans hardest on (78.4 -> 70, ~1.3 composite)
+# while flagging `dupont_leverage_cap_applied` — which reads to a user as an
+# accusation of financial engineering. These profiles already measure capital
+# adequacy properly through `equity_assets` in the Health pillar, so the guard is
+# both wrong and redundant here.
+#
+# REITs are deliberately NOT on this list. They are structurally levered too, but
+# a REIT lifting ROE with debt is a real concern rather than a regulatory floor,
+# and their leverage reaches the score through debt_equity and a relaxed
+# net_debt_ebitda curve rather than a capital-adequacy metric.
+LEVERAGE_IS_STRUCTURAL = ("financials_bank", "financials_insurance")
+
 SECTOR_MAP = {
     "technology": "technology",
     "communication services": "communication_svcs",

@@ -9,9 +9,10 @@ These tests exist to tell you the shape changed *before* the UI does.
 from __future__ import annotations
 
 import pytest
+import yfinance as yf
 
 import financial_models as fm
-from data_provider import provider
+from data_provider import fx_rate, provider
 
 pytestmark = pytest.mark.network
 
@@ -82,3 +83,102 @@ def test_history_returns_ordered_bars():
     bars = provider.get_history("AAPL", "1mo", "1d")
     assert len(bars) > 5
     assert [b["time"] for b in bars] == sorted(b["time"] for b in bars)
+
+
+# ── which side of the FX rate each info field sits on ────────────────
+#
+# The whole currency conversion rests on one empirical claim: yfinance quotes
+# *absolute statement figures* in `financialCurrency` and *market and per-share
+# figures* in `currency`. That is not documented anywhere by the provider, so it
+# is measured here rather than assumed. Determined 2026-08-10 against three
+# China-domiciled HK listings; 9988.HK matched its own quarterly balance sheet
+# to 1.0000 (totalDebt) and 0.9998 (totalCash), which is what settled it.
+#
+# If yfinance ever changes this, every HK valuation silently moves by the FX
+# rate and nothing else would catch it.
+
+CROSS_CURRENCY_TICKER = "9988.HK"  # trades HKD, reports CNY, and its info fields
+                                   # match its quarterly statements exactly
+# Same currency pair, but this one reliably produces a DCF — 9988.HK's statement
+# free cash flow is not always positive, and a skipped end-to-end test is not a
+# passing one.
+CROSS_CURRENCY_VALUED = "0700.HK"
+
+
+def test_the_two_currency_fields_are_both_present():
+    """Without `financialCurrency` the app cannot detect a mismatch at all."""
+    info = provider.get_fundamentals(CROSS_CURRENCY_TICKER)["info"]
+    assert info["currency"] == "HKD"
+    assert info["financialCurrency"] == "CNY"
+
+
+def test_debt_and_cash_are_quoted_in_the_reporting_currency():
+    """`totalDebt` / `totalCash` follow the statements, not the share price.
+
+    They are the net-debt bridge, so if they were trading-currency the DCF would
+    be subtracting converted debt from unconverted enterprise value.
+    """
+    t = yf.Ticker(CROSS_CURRENCY_TICKER)
+    info = t.info or {}
+    quarterly = t.quarterly_balance_sheet
+    period = quarterly.columns[0]
+
+    for info_key, row in (("totalDebt", "Total Debt"),
+                          ("totalCash", "Cash Cash Equivalents And Short Term Investments")):
+        statement_value = float(quarterly.loc[row, period])
+        ratio = info[info_key] / statement_value
+        assert ratio == pytest.approx(1.0, rel=0.02), (
+            f"{info_key} is {ratio:.4f}x its statement value — if that is near the "
+            f"CNY/HKD rate rather than 1.0, yfinance has moved it to the trading "
+            f"currency and financial_models.statement_to_market_fx is now wrong")
+
+
+def test_per_share_figures_are_quoted_in_the_trading_currency():
+    """`bookValue` and `trailingEps` are ~FX x their statement equivalents.
+
+    This is the other half of the split: convert these too and the conversion
+    would be applied twice.
+    """
+    info = provider.get_fundamentals(CROSS_CURRENCY_TICKER)["info"]
+    rate = fx_rate("CNY", "HKD")
+    assert rate is not None, "no CNYHKD rate — cannot run this check"
+
+    price = info["currentPrice"]
+    # priceToBook and trailingPE are built from these; if the per-share figures
+    # were reporting-currency while price is trading, both ratios would be off
+    # by the rate and this identity would fail.
+    assert price / info["bookValue"] == pytest.approx(info["priceToBook"], rel=0.02)
+    assert info["marketCap"] == pytest.approx(price * info["sharesOutstanding"], rel=0.02)
+
+
+def test_a_cross_currency_valuation_is_reported_in_the_trading_currency():
+    """End to end: the fair value a user reads must be in the same unit as the
+    price sitting next to it."""
+    f = provider.get_fundamentals(CROSS_CURRENCY_VALUED)
+    dcf = fm.dcf_valuation(f)
+    assert not dcf.get("error"), dcf.get("error")
+    assumptions = dcf["assumptions"]
+    assert assumptions["fx_basis"] == "converted"
+    assert assumptions["currency"] == "HKD"
+    assert assumptions["reporting_currency"] == "CNY"
+    assert assumptions["fx_rate_used"] > 1.0     # 1 CNY buys more than 1 HKD
+    assert dcf["upside_pct"] is not None
+
+
+def test_a_single_currency_issuer_converts_nothing():
+    dcf = fm.dcf_valuation(provider.get_fundamentals("AAPL"))
+    assert dcf["assumptions"]["fx_basis"] == "single_currency"
+    assert dcf["assumptions"]["fx_rate_used"] is None
+
+
+def test_fx_rate_round_trips():
+    """A pair and its inverse must multiply to 1, or one of them is upside down —
+    the failure mode that would scale a whole valuation by rate squared."""
+    forward, backward = fx_rate("CNY", "HKD"), fx_rate("HKD", "CNY")
+    assert forward and backward
+    assert forward * backward == pytest.approx(1.0, rel=0.02)
+
+
+def test_fx_rate_is_none_for_a_pair_that_does_not_exist():
+    """None, not a fallback constant: callers suppress the comparison instead."""
+    assert fx_rate("CNY", "NOTACURRENCY") is None

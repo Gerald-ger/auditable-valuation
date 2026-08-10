@@ -118,6 +118,49 @@ def risk_free_rate(fallback: float) -> float:
     return fallback
 
 
+_FX_CACHE: dict[tuple[str, str], tuple[str, float]] = {}  # (pair) -> (date, rate)
+
+
+def fx_rate(from_ccy: str | None, to_ccy: str | None) -> float | None:
+    """Units of `to_ccy` per 1 `from_ccy`, or **None** when it cannot be fetched.
+
+    Needed because a company's statements and its shares can be denominated
+    differently: measured live 2026-08-10, 0700.HK, 9988.HK and 1810.HK all
+    trade in HKD and report in CNY. The cash flows a DCF discounts come from the
+    statements and the price it compares them against comes from the market, so
+    without this the two sides of the comparison are different units.
+
+    Returning None rather than a constant is deliberate, and the opposite of
+    `risk_free_rate` above. A stale risk-free rate moves a valuation a little; a
+    wrong FX rate rescales all of it, and there is no defensible constant for a
+    currency pair. Callers suppress the comparison instead of printing a number
+    built on a guess.
+
+    yfinance rather than `obb.currency`: it is already this app's data source,
+    the `CNYHKD=X` pair is served on the same client we already construct, and it
+    costs no second provider on the valuation path. Cached per calendar day, and
+    failures are not cached, so an outage does not pin a ticker for the session.
+    """
+    if not from_ccy or not to_ccy:
+        return None
+    if from_ccy == to_ccy:
+        return 1.0
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = (from_ccy, to_ccy)
+    hit = _FX_CACHE.get(key)
+    if hit and hit[0] == today:
+        return hit[1]
+    try:
+        close = yf.Ticker(f"{from_ccy}{to_ccy}=X").history(period="5d")["Close"]
+        rate = float(close.iloc[-1])
+    except Exception:
+        return None
+    if not (math.isfinite(rate) and rate > 0):
+        return None
+    _FX_CACHE[key] = (today, rate)
+    return rate
+
+
 class YFinanceProvider:
     def get_quote(self, ticker: str) -> dict:
         info = yf.Ticker(ticker).info or {}
@@ -239,6 +282,11 @@ class YFinanceProvider:
             "ticker": ticker.upper(),
             "name": info.get("longName") or info.get("shortName"),
             "market_cap": _clean(info.get("marketCap")),
+            # market_cap is in the trading currency and total_debt in the
+            # reporting one, so resolve_beta needs both labels to put a peer's
+            # D/E on one basis. Free — same info call.
+            "currency": info.get("currency"),
+            "financial_currency": info.get("financialCurrency"),
             # beta rides along free on the same info call; financial_models uses
             # the peer median when a company's own reported beta is not credible
             "beta": _clean(info.get("beta")),
@@ -333,7 +381,14 @@ class YFinanceProvider:
         return {
             "ticker": ticker.upper(),
             "info": {k: _clean(info.get(k)) for k in [
-                "longName", "sector", "industry", "currency", "marketCap",
+                # `currency` is what the shares trade in; `financialCurrency` is
+                # what the statements are reported in, and for a China-domiciled
+                # HK listing they differ — 0700.HK trades in HKD and reports in
+                # CNY (verified live 2026-08-10, same for 9988.HK). Without this
+                # field the app cannot tell that the cash flows it discounts and
+                # the price it compares them against are different units.
+                "longName", "sector", "industry", "currency", "financialCurrency",
+                "marketCap",
                 "currentPrice", "regularMarketPrice", "sharesOutstanding", "beta",
                 "trailingPE", "forwardPE", "priceToBook", "enterpriseValue",
                 "enterpriseToEbitda", "enterpriseToRevenue", "pegRatio",

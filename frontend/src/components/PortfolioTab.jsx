@@ -126,10 +126,14 @@ export default function PortfolioTab({ onPick }) {
             </div>
             <div>
               <div className="dcf-label">Unrealized P&L</div>
+              {/* null >= 0 is true in JS, so an unavailable total rendered
+                  green. Same bug already fixed on the DCF upside chip. */}
               <div
-                className={`dcf-big ${totals.unrealized_pnl >= 0 ? 'up' : 'down'}`}
+                className={`dcf-big ${
+                  totals.unrealized_pnl == null ? '' : totals.unrealized_pnl >= 0 ? 'up' : 'down'
+                }`}
               >
-                {totals.unrealized_pnl === null || totals.unrealized_pnl === undefined
+                {totals.unrealized_pnl == null
                   ? '—'
                   : `${totals.unrealized_pnl >= 0 ? '+' : ''}${big(totals.unrealized_pnl)}`}
                 {totals.unrealized_pnl_pct !== null &&
@@ -185,10 +189,21 @@ export default function PortfolioTab({ onPick }) {
                       <td>{num(r.cost_basis)}</td>
                       <td>{r.market_value ? big(r.market_value) : '—'}</td>
                       <td>{r.weight_pct ? `${r.weight_pct.toFixed(1)}%` : '—'}</td>
+                      {/* The two P&L fields have different null conditions — a
+                          zero cost basis has a real gain and no percentage
+                          return (see position_values in main.py). Reading the
+                          percentage off the absolute one's guard threw, and
+                          because the throw is inside this render the
+                          ErrorBoundary took the add/edit form down with the
+                          table, leaving no way to correct the position. */}
                       <td className={r.unrealized_pnl > 0 ? 'up' : r.unrealized_pnl < 0 ? 'down' : ''}>
-                        {r.unrealized_pnl === null || r.unrealized_pnl === undefined
+                        {r.unrealized_pnl == null
                           ? '—'
-                          : `${big(r.unrealized_pnl)} (${r.unrealized_pnl_pct >= 0 ? '+' : ''}${r.unrealized_pnl_pct.toFixed(1)}%)`}
+                          : `${big(r.unrealized_pnl)}${
+                              r.unrealized_pnl_pct == null
+                                ? ''
+                                : ` (${r.unrealized_pnl_pct >= 0 ? '+' : ''}${r.unrealized_pnl_pct.toFixed(1)}%)`
+                            }`}
                       </td>
                       <td>
                         {r.score !== null && r.score !== undefined ? (

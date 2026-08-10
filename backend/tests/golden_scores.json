@@ -1,7 +1,7 @@
 {
  "0700_HK": {
   "classification": "communication_svcs",
-  "composite_score": 74,
+  "composite_score": 75,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -50,12 +50,12 @@
     "insufficient": false,
     "metrics": {
      "analyst_upside": 96,
-     "dcf_upside_pct": 82,
+     "dcf_upside_pct": 91,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 43,
-     "fcf_yield": 64
+     "fcf_yield": 68
     },
-    "score": 74
+    "score": 77
    }
   },
   "tier": "A"
@@ -125,12 +125,10 @@
  },
  "JPM": {
   "classification": "financials_bank",
-  "composite_score": 70,
+  "composite_score": 71,
   "confidence": "HIGH",
   "coverage_pct": 100,
-  "flags": [
-   "dupont_leverage_cap_applied"
-  ],
+  "flags": [],
   "pillars": {
    "growth": {
     "insufficient": false,
@@ -161,9 +159,9 @@
     "insufficient": false,
     "metrics": {
      "roa": 79,
-     "roe": 70
+     "roe": 78
     },
-    "score": 75
+    "score": 79
    },
    "valuation": {
     "insufficient": false,
