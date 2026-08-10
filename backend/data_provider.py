@@ -170,6 +170,31 @@ class YFinanceProvider:
         return items[:limit]
 
     @staticmethod
+    def _publish_epoch(content: dict, item: dict) -> int | None:
+        """Publish time as a UTC epoch, or None when the feed omits it.
+
+        Both yfinance shapes carry a real timestamp — an ISO string or a unix
+        epoch — which `date` below throws away by truncating to ten characters.
+        The chart uses this to place an intraday marker on the bar the story
+        actually landed in rather than on the session open.
+
+        A naive ISO string is read as UTC: `.timestamp()` would otherwise
+        interpret it in the server's local zone, which silently shifts every
+        marker by the host's offset.
+        """
+        pub = content.get("pubDate") or content.get("displayTime")
+        if pub:
+            try:
+                parsed = datetime.fromisoformat(str(pub).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.timestamp())
+        stamp = item.get("providerPublishTime")
+        return int(stamp) if isinstance(stamp, (int, float)) else None
+
+    @staticmethod
     def _parse_news(raw: list, category: str, limit: int) -> list[dict]:
         items = []
         for item in raw[:limit]:
@@ -197,6 +222,9 @@ class YFinanceProvider:
                 "title": title,
                 "summary": content.get("summary") or "",
                 "date": date,
+                # None for feeds that omit it, and absent from SEC filings
+                # entirely — the chart falls back to date placement for both.
+                "published_at": YFinanceProvider._publish_epoch(content, item),
                 "url": url,
                 "publisher": publisher,
                 "category": category,

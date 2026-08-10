@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+import data_provider
 import main
 import search
 
@@ -174,3 +175,43 @@ def test_bars_per_day_never_returns_zero():
     """It is a divisor in the frontend; zero would produce Infinity windows."""
     assert main._bars_per_day([]) == 1.0
     assert main._bars_per_day([{"time": "2026-08-07"}]) >= 1.0
+
+
+# ── news publish timestamps (chart marker placement) ─────────────────
+
+def _epoch(content, item=None):
+    return data_provider.YFinanceProvider._publish_epoch(content, item or {})
+
+
+def test_iso_publish_time_becomes_an_epoch():
+    assert _epoch({"pubDate": "2026-08-06T14:05:00Z"}) == 1786025100
+
+
+def test_naive_iso_is_read_as_utc_not_server_local():
+    """.timestamp() on a naive datetime uses the host's zone, which would shift
+    every marker by the server's offset — 8 hours on the dev machine."""
+    assert _epoch({"pubDate": "2026-08-06T14:05:00"}) == _epoch({"pubDate": "2026-08-06T14:05:00Z"})
+
+
+def test_offset_iso_is_normalised_to_utc():
+    assert _epoch({"pubDate": "2026-08-06T10:05:00-04:00"}) == _epoch({"pubDate": "2026-08-06T14:05:00Z"})
+
+
+def test_legacy_epoch_shape_is_carried_through():
+    assert _epoch({}, {"providerPublishTime": 1786025100}) == 1786025100
+
+
+def test_missing_publish_time_is_none():
+    assert _epoch({}, {}) is None
+
+
+def test_unparseable_publish_time_is_none_rather_than_raising():
+    """A feed change must degrade to date placement, not 500 the events call."""
+    assert _epoch({"pubDate": "last Tuesday"}) is None
+
+
+def test_parsed_news_items_carry_published_at():
+    raw = [{"content": {"title": "T", "pubDate": "2026-08-06T14:05:00Z"}}]
+    item = data_provider.YFinanceProvider._parse_news(raw, "company", 10)[0]
+    assert item["published_at"] == 1786025100
+    assert item["date"] == "2026-08-06"  # unchanged, still the fallback

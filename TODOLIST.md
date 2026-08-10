@@ -223,6 +223,47 @@ would need a third category. Decide whether you want that before it gets built.
 
 ## Done
 
+### ✅ 2026-08-09 (d) — event markers land on the right session, and on the right bar
+
+Two changes, in that order, because the second is pointless on top of the first.
+
+**The marker was on the wrong session.** Events were grouped by the bar's
+GMT+8-shifted date while `e.date` arrives from the backend as a UTC date.
+`charttime.js` already documents that a shifted US session straddles midnight —
+09:30-16:00 ET renders 21:30 on the session's own date through 04:00 the next —
+so the second calendar date mapped onto a bar *mid-way through the previous
+session*. An event dated D sat three hours into session D-1. Verified before
+fixing by evaluating the real function source against synthetic US and HK
+sessions. Matching now happens in true UTC, where every US and HK session sits
+inside one date; the group's displayed `date` stays chart-space, preserving the
+file's stated invariant that axis, popup header and hover legend cannot disagree.
+HK was already correct and is unchanged.
+
+**The marker was at the session open.** yfinance's news feed carries a real
+publish time — an ISO string or a unix epoch — that `_parse_news` was discarding
+with `str(pub)[:10]`. It is now kept as `published_at` (UTC epoch, additive, so
+`/news`, the AI context and SEC filings are untouched), and an intraday chart
+places a timestamped story on the bar it happened *during*, so the reader sees
+the reaction that followed. Stories landing in a gap — after the close, over a
+weekend — move to the next bar, matching the existing next-trading-day rule.
+Grouping is now keyed on the bar rather than the date, so clustering follows
+whatever interval the user picked: identical to before on daily charts, hourly
+on an hourly one.
+
+Deliberately not done: netting the two precisions into one look. News has a
+time, SEC filings do not, and the dots are identical — so the popup states which
+it is (`2026-08-06 22:05` against `2026-08-06 · day only`) and the tooltip says
+the timestamp is the publisher's, not the moment the market learned. Adding a
+marker shape for it would have collided with the existing size-by-count rule.
+
+`groupEventsByBar`, `toDateStr` and `eventStamp` moved to `src/events.js` — the
+same pure-module pattern as `indicators.js` and `charttime.js`. **This is the
+first frontend test suite**: vitest, 22 tests, wired into CI, plus 7 backend
+tests for the timestamp parsing. Mutation-tested: reverting the timezone match,
+the containing-bar rule and the median bar-span each fail only the tests that
+own them. The median case initially survived — the fixture's gaps did not
+distinguish it from the mean — and a test was added for it.
+
 ### ✅ 2026-08-09 (c) — negative denominators no longer score as cheap
 
 Full-calculation audit: DCF engine cross-checked against the closed-form annuity

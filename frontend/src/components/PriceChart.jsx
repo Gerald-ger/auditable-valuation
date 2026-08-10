@@ -9,7 +9,7 @@ import {
 } from 'lightweight-charts';
 import { smaSeries, rsiSeries, macdSeries, barsForDays } from '../indicators';
 import { toChartTime, fromChartTime } from '../charttime';
-import { groupEventsByBar, toDateStr } from '../events';
+import { eventStamp, groupEventsByBar, toDateStr } from '../events';
 import { DrawingsPrimitive } from '../drawingPrimitive';
 import { get, post, patch, del } from '../api';
 
@@ -681,17 +681,20 @@ export default function PriceChart({
               </button>
             </div>
             <div className="news-popup-scroll">
-              {pinned.items.map((n, i) => (
-                <a key={i} href={n.url} target="_blank" rel="noreferrer" className="news-item">
-                  <span className="news-meta">
-                    <span className="news-tag" style={{ color: EVENT_COLOR[n.category] }}>
-                      {EVENT_LABEL[n.category]?.toUpperCase()}
+              {pinned.items.map((n, i) => {
+                const stamp = eventStamp(n);
+                return (
+                  <a key={i} href={n.url} target="_blank" rel="noreferrer" className="news-item">
+                    <span className="news-meta">
+                      <span className="news-tag" style={{ color: EVENT_COLOR[n.category] }}>
+                        {EVENT_LABEL[n.category]?.toUpperCase()}
+                      </span>
+                      <span title={stamp.title}>{stamp.text}</span> · {n.publisher || 'news'}
                     </span>
-                    {n.date} · {n.publisher || 'news'}
-                  </span>
-                  {n.title}
-                </a>
-              ))}
+                    {n.title}
+                  </a>
+                );
+              })}
             </div>
           </div>
         )}

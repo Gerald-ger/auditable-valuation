@@ -6,7 +6,7 @@
  * invisibly — a marker three hours into the wrong session still looks like a
  * marker.
  */
-import { fromChartTime } from './charttime';
+import { DISPLAY_TZ_LABEL, fromChartTime, toChartTime } from './charttime';
 
 /** Bar time -> YYYY-MM-DD. Handles epochs, date strings and BusinessDay objects. */
 export const toDateStr = (t) => {
@@ -40,20 +40,47 @@ export const toDateStr = (t) => {
 export function groupEventsByBar(bars, events) {
   if (!bars.length) return [];
   const dates = [];
-  const timeOfDate = new Map();
-  for (const b of bars) {
-    const d = toDateStr(fromChartTime(b.time));
-    if (!timeOfDate.has(d)) {
-      timeOfDate.set(d, b.time);
+  const indexOfDate = new Map();
+  for (let i = 0; i < bars.length; i++) {
+    const d = toDateStr(fromChartTime(bars[i].time));
+    if (!indexOfDate.has(d)) {
+      indexOfDate.set(d, i);
       dates.push(d);
     }
   }
   const first = dates[0];
   const last = dates[dates.length - 1];
+  const intraday = typeof bars[0].time === 'number';
+  const span = intraday ? medianBarSpan(bars) : 0;
 
-  const byDate = new Map();
-  for (const e of events) {
-    if (!e.date || e.date < first) continue; // predates the chart window
+  /** Index of the bar an event belongs on, or null to drop it. */
+  const resolve = (e) => {
+    // A timestamped story on an intraday chart goes on the bar it happened
+    // during, which is the whole point: the reader sees the move that followed.
+    // Only news carries one — SEC filings expose a date, so they fall through.
+    if (intraday && typeof e.published_at === 'number') {
+      const t = toChartTime(e.published_at);
+      if (t < bars[0].time) return null; // predates the chart window
+      let lo = 0;
+      let hi = bars.length - 1;
+      let idx = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (bars[mid].time <= t) {
+          idx = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      // Past the end of that bar means it landed in a gap — after the close, or
+      // over a weekend — where no bar contains it. Those move to the next bar,
+      // the first session that could react, matching the date rule below.
+      const inGap = t - bars[idx].time >= span;
+      return inGap ? Math.min(idx + 1, bars.length - 1) : idx;
+    }
+
+    if (!e.date || e.date < first) return null;
     let idx = dates.length - 1;
     if (e.date <= last) {
       let lo = 0;
@@ -68,17 +95,65 @@ export function groupEventsByBar(bars, events) {
         }
       }
     }
-    const key = dates[idx];
-    if (!byDate.has(key)) byDate.set(key, []);
-    byDate.get(key).push(e);
+    return indexOfDate.get(dates[idx]);
+  };
+
+  const byIndex = new Map();
+  for (const e of events) {
+    const idx = resolve(e);
+    if (idx == null) continue;
+    if (!byIndex.has(idx)) byIndex.set(idx, []);
+    byIndex.get(idx).push(e);
   }
 
-  // emit in `dates` order — lightweight-charts requires ascending marker times
+  // ascending bar order — lightweight-charts requires ascending marker times
   const groups = [];
-  for (const d of dates) {
-    const items = byDate.get(d);
-    const time = timeOfDate.get(d);
-    if (items) groups.push({ date: toDateStr(time), time, items });
+  for (const idx of [...byIndex.keys()].sort((a, b) => a - b)) {
+    const time = bars[idx].time;
+    groups.push({ date: toDateStr(time), time, items: byIndex.get(idx) });
   }
   return groups;
+}
+
+/**
+ * How one event's timing should read in the popup.
+ *
+ * Two precisions share the chart — news carries a publish time, SEC filings a
+ * date — and the dots look identical. Saying which is which here is the whole
+ * mechanism for that, so a reader never assumes a marker at the session open
+ * means the story broke at the open.
+ *
+ * The time is the *publisher's*, not the moment the market learned: wire delay,
+ * aggregation and republication all sit in between. `title` says so rather than
+ * letting a minute-precise label imply more than the feed supports.
+ */
+export function eventStamp(e) {
+  if (typeof e.published_at !== 'number') {
+    return {
+      text: `${e.date} · day only`,
+      title: 'This source reports a date but no time, so the marker sits on the session open.',
+    };
+  }
+  const iso = new Date(toChartTime(e.published_at) * 1000).toISOString();
+  return {
+    text: `${iso.slice(0, 10)} ${iso.slice(11, 16)}`,
+    title: `Publisher timestamp, ${DISPLAY_TZ_LABEL}. When the story was filed — `
+      + 'not necessarily when the market learned.',
+  };
+}
+
+/**
+ * Typical spacing between consecutive bars, used to tell "inside this bar" from
+ * "in the gap after it".
+ *
+ * The median rather than the mean: a session contributes many intraday gaps and
+ * exactly one overnight gap, so the median is the intraday spacing while the
+ * mean would be dragged upwards by the overnight jumps and by weekends.
+ */
+function medianBarSpan(bars) {
+  if (bars.length < 2) return Infinity;
+  const spans = [];
+  for (let i = 1; i < bars.length; i++) spans.push(bars[i].time - bars[i - 1].time);
+  spans.sort((a, b) => a - b);
+  return spans[spans.length >> 1];
 }

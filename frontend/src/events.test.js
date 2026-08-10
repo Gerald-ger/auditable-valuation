@@ -6,7 +6,7 @@
  * exactly why it needs a test rather than an eyeball.
  */
 import { describe, it, expect } from 'vitest';
-import { groupEventsByBar, toDateStr } from './events';
+import { eventStamp, groupEventsByBar, toDateStr } from './events';
 import { DISPLAY_TZ_OFFSET_S } from './charttime';
 
 const utc = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh, mm) / 1000;
@@ -66,6 +66,103 @@ describe('groupEventsByBar — display date stays in chart space', () => {
   });
 });
 
+describe('groupEventsByBar — intraday placement from a timestamp', () => {
+  // US session, hourly bars opening 13:30 UTC. Bar N covers [N, N+1h).
+  const { bars, opens } = intradayBars(13, [6]);
+  const at = (h, m) => utc(2026, 8, 6, h, m);
+
+  it('places a story on the bar it happened during, not the next one', () => {
+    const [group] = groupEventsByBar(bars, [ev('2026-08-06', { published_at: at(14, 5) })]);
+
+    // 14:05 falls inside the 13:30 bar, so the reader sees the reaction that
+    // followed rather than a dot sitting after it.
+    expect(group.time).toBe(opens[6]);
+  });
+
+  it('separates two stories that fall in different bars', () => {
+    const groups = groupEventsByBar(bars, [
+      ev('2026-08-06', { published_at: at(14, 5), title: 'early' }),
+      ev('2026-08-06', { published_at: at(17, 45), title: 'late' }),
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].items[0].title).toBe('early');
+    expect(groups[1].time).toBe(opens[6] + 4 * 3600); // the 17:30 bar
+  });
+
+  it('keeps stories inside one bar clustered together', () => {
+    const groups = groupEventsByBar(bars, [
+      ev('2026-08-06', { published_at: at(14, 5) }),
+      ev('2026-08-06', { published_at: at(14, 20) }),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items).toHaveLength(2);
+  });
+
+  it('emits groups in ascending bar order regardless of input order', () => {
+    const groups = groupEventsByBar(bars, [
+      ev('2026-08-06', { published_at: at(18, 0) }),
+      ev('2026-08-06', { published_at: at(14, 5) }),
+    ]);
+
+    expect(groups.map((g) => g.time)).toEqual([...groups.map((g) => g.time)].sort((a, b) => a - b));
+  });
+
+  it('moves after-hours news to the next session rather than the previous close', () => {
+    const two = intradayBars(13, [6, 7]);
+    // 23:00 UTC on the 6th: after the 20:30 close, no bar contains it.
+    const [group] = groupEventsByBar(two.bars, [
+      ev('2026-08-06', { published_at: utc(2026, 8, 6, 23, 0) }),
+    ]);
+
+    expect(group.time).toBe(two.opens[7]);
+  });
+
+  it('moves news published shortly after the close to the next session', () => {
+    // 20:45 UTC is 1h15 past the 19:30 close — inside the mean gap between bars
+    // (~2h20, dragged up by the overnight jump) but outside the median (1h).
+    // Only the median reads this as "after the close" and moves it forward, so
+    // this is the case that distinguishes the two.
+    const two = intradayBars(13, [6, 7]);
+    const [group] = groupEventsByBar(two.bars, [
+      ev('2026-08-06', { published_at: utc(2026, 8, 6, 20, 45) }),
+    ]);
+
+    expect(group.time).toBe(two.opens[7]);
+  });
+
+  it('ignores the timestamp on daily bars, where it cannot be expressed', () => {
+    const daily = ['2026-08-06', '2026-08-07'].map((d) => ({ time: d }));
+    const [group] = groupEventsByBar(daily, [
+      ev('2026-08-07', { published_at: utc(2026, 8, 7, 17, 45) }),
+    ]);
+
+    expect(group.time).toBe('2026-08-07');
+  });
+
+  it('falls back to the date when an event carries no timestamp', () => {
+    // SEC filings never carry one — they must still land on the session open.
+    const [group] = groupEventsByBar(bars, [ev('2026-08-06')]);
+
+    expect(group.time).toBe(opens[6]);
+  });
+
+  it('drops a timestamped story that predates the chart window', () => {
+    expect(groupEventsByBar(bars, [
+      ev('2026-08-06', { published_at: utc(2026, 7, 1, 14, 0) }),
+    ])).toEqual([]);
+  });
+
+  it('clamps a timestamped story from after the last bar onto the last bar', () => {
+    const groups = groupEventsByBar(bars, [
+      ev('2026-08-06', { published_at: utc(2026, 8, 20, 14, 0) }),
+    ]);
+
+    expect(groups[0].time).toBe(bars[bars.length - 1].time);
+  });
+});
+
 describe('groupEventsByBar — existing conventions preserved', () => {
   it('snaps a non-trading-day event onto the next trading bar', () => {
     const bars = ['2026-08-07', '2026-08-10'].map((d) => ({ time: d })); // Fri, Mon
@@ -99,5 +196,27 @@ describe('groupEventsByBar — existing conventions preserved', () => {
 
   it('returns nothing when there are no bars', () => {
     expect(groupEventsByBar([], [ev('2026-08-06')])).toEqual([]);
+  });
+});
+
+describe('eventStamp — the two precisions must be distinguishable', () => {
+  it('shows the publish time, in chart timezone, for a timestamped story', () => {
+    // 14:05 UTC renders as 22:05 GMT+8, matching the axis the dot sits on.
+    const stamp = eventStamp({ date: '2026-08-06', published_at: utc(2026, 8, 6, 14, 5) });
+
+    expect(stamp.text).toBe('2026-08-06 22:05');
+    expect(stamp.title).toMatch(/not necessarily when the market learned/);
+  });
+
+  it('marks a date-only event rather than implying it broke at the open', () => {
+    const stamp = eventStamp({ date: '2026-08-06' });
+
+    expect(stamp.text).toBe('2026-08-06 · day only');
+    expect(stamp.title).toMatch(/session open/);
+  });
+
+  it('treats a null timestamp as day-only, not as epoch zero', () => {
+    expect(eventStamp({ date: '2026-08-06', published_at: null }).text)
+      .toBe('2026-08-06 · day only');
   });
 });
