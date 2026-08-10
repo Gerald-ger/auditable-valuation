@@ -297,7 +297,7 @@
  },
  "RIVN": {
   "classification": "pre_profit_growth",
-  "composite_score": 74,
+  "composite_score": 60,
   "confidence": "MEDIUM",
   "coverage_pct": 100,
   "flags": [],
@@ -313,10 +313,10 @@
    "health": {
     "insufficient": false,
     "metrics": {
-     "cash_runway_q": 100,
+     "cash_runway_q": 63,
      "debt_equity": 63
     },
-    "score": 82
+    "score": 63
    },
    "momentum": {
     "insufficient": false,
@@ -344,7 +344,7 @@
     "score": 81
    }
   },
-  "tier": "A"
+  "tier": "B"
  },
  "XOM": {
   "classification": "energy",

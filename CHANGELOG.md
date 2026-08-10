@@ -7,6 +7,68 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-10 (b) — the two decisions the review left open
+
+Both items the three-lens review deliberately did not settle alone, now decided. Backend
+**246 → 254 passing, and the 3 xfails are gone** — the calibration below fixed the
+behaviour they were pinning.
+
+### Fixed
+
+- **Cash runway ignored capital expenditure**, which for a pre-profit manufacturer is most
+  of the burn. RIVN's 2025 operating outflow is **0.78bn against 1.71bn of capex**, so
+  runway read **27.3 quarters** — past the anchor table's top rung at 20, scoring 100 —
+  where the free-cash-flow burn gives **8.5 quarters and 63**. Overstated by **3.2×**, on
+  the single metric the pre-profit Health pillar leans hardest on.
+
+  The rate now comes from `_statement_fcf`, so both legs share a period by construction.
+  The *trigger* deliberately stays operating-outflow-negative rather than moving to
+  free-cash-flow-negative, because **capex is discretionary in a way that operating burn is
+  not**: a company whose operations fund themselves can stop building and survive, and does
+  not have a runway problem to measure. Trigger and rate answer different questions on
+  purpose, and a test pins the distinction — the mutation that widens the trigger initially
+  survived every other test in the suite.
+
+- **The scoring engine failed its own written acceptance criterion.**
+  `docs/scoring-system-design.md` §5.2 specifies that a pre-profit name lands in **Tier
+  3–5** and that "no bankrupt-adjacent name outranks a mega-cap compounder". RIVN scored
+  **74 / Tier A**, ahead of AAPL 67 and MSFT 73.
+
+  Beyond the runway defect, the `pre_profit_growth` profile weighted the pillar these
+  companies fail at **15%** (quality 10 — gross margin 7.5%, operating margin −50.4%) and
+  the pillar they ace at **35%** (growth 98). For a pre-profit company "can this become
+  profitable" *is* the quality pillar's question, so burying it under growth measured the
+  wrong thing. Rebalanced to **Q 0.25 / G 0.25**.
+
+  Measured together: RIVN **74 → 60**, Tier **A → B**, health pillar 82 → 63. Only RIVN
+  moved — `cash_runway_q` appears in one profile and the weight change touches only that
+  profile, so the other six goldens are byte-identical. The final ordering puts every
+  mega-cap above the cash-burner, which is what §5.2 asked for.
+
+  **Two limitations, stated because they do not go away.** First, this re-calibrates curves
+  that have **never been validated against forward returns**; §5.2 is a plausibility
+  expectation written down in advance, not a market fact, so enforcing it substitutes one
+  judgement for another rather than adding evidence. Second — and this matters for the only
+  reason `score_history` exists — **the pre-profit series breaks here**: rows recorded
+  before today come from the old formula, rows after from the new one, and there is **no
+  backfill**. Any future calibration study must treat 2026-08-10 as a discontinuity for
+  `pre_profit_growth` and for nothing else.
+
+- **The Portfolio tab made the comparison the Screener refuses to make.** `ScreenerTab`
+  carries a prominent warning that composites from different profiles are not one
+  measurement — citing "a bank's 70 and a pre-profit growth company's 74", which were the
+  live JPM and RIVN values. `PortfolioTab` then rendered those same composites in one
+  column, adjacent rows, with no classification and no caveat.
+
+  `store.latest_scores` already returned `classification`; the endpoint was dropping it.
+  Each score now shows the profile that produced it, and the table carries the Screener's
+  caveat **in the Screener's own wording** — two tabs describing one limitation differently
+  is how it got lost in the first place. Not grouped: weights, P&L and concentration are
+  portfolio-level figures that need a single list, and the portfolio lists holdings rather
+  than ranking them.
+
+---
+
 ## 2026-08-10 — currency correctness, scoring guards, a crash, and the tests that were missing
 
 Full three-lens review (finance / engineering / UI) run against every fixture by executing

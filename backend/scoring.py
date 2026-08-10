@@ -212,9 +212,32 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     if de is None and equity is not None and equity <= 0:
         flags.append("debt_equity_skipped_negative_equity")
     m["debt_equity"] = _clamp(de, 0, 50)
-    ocf = fm._latest(cf, "Operating Cash Flow", "Cash Flow From Continuing Operating Activities")
-    if ocf is not None and ocf < 0 and total_cash:
-        m["cash_runway_q"] = _clamp(total_cash / (abs(ocf) / 4), 0, 100)
+    # Runway has to burn what the company actually burns. Dividing cash by the
+    # operating outflow alone ignored capital expenditure, which for a pre-profit
+    # manufacturer is most of the burn: RIVN's 2025 operating outflow is 0.78bn
+    # against 1.71bn of capex, so runway read **27.3 quarters** — past the top
+    # anchor at 20, scoring 100 — where the free-cash-flow burn gives **8.5
+    # quarters** and 63. Overstated by 3.2x, on the single metric the pre-profit
+    # Health pillar leans hardest on.
+    #
+    # The rate is `OCF + CapEx` from `_statement_fcf`, so both legs share a
+    # period by construction — the discipline `fcf_conversion` already inherits.
+    #
+    # Trigger and rate deliberately ask different questions, and the split is
+    # not arbitrary: **capex is discretionary in a way that operating burn is
+    # not.** A company whose operations fund themselves can stop building and
+    # survive; one whose operations do not cannot stop operating. So "is there a
+    # survival question at all" keys on operating outflow, while "how fast is
+    # cash actually leaving, at today's plans" includes the capex. Widening the
+    # trigger to free-cash-flow-negative would hand a runway to a company that
+    # is only burning because it chose to expand.
+    # Capex is never positive, so `ocf < 0` already implies the burn is negative.
+    period_ocf = fm._value_at(cf, fcf_period, "Operating Cash Flow",
+                              "Cash Flow From Continuing Operating Activities") \
+        if fcf_period else None
+    burn = statement_fcf[1] if statement_fcf else None
+    if period_ocf is not None and period_ocf < 0 and burn and total_cash:
+        m["cash_runway_q"] = _clamp(total_cash / (abs(burn) / 4), 0, 100)
     else:
         m["cash_runway_q"] = None
     m["equity_assets"] = _clamp(div(equity, assets), -1, 1)

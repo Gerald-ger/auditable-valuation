@@ -12,12 +12,13 @@ plausibility tests catch a wrong answer that never changes.** A composite that
 has been 74 since the day it was written passes every snapshot assertion in the
 suite and still violates the spec.
 
-Known-failing cases are `xfail(strict=True)` rather than plain failures. A red
-CI that is red on purpose gets ignored within a week; a strict xfail reports the
-violation in every run's summary *and* turns into an error the moment a
-calibration change fixes it, which is the signal we actually want when the
-remedy lands. Do not relax one to a bare xfail to quieten it — delete the marker
-when the behaviour is fixed.
+Known-failing cases go in as `xfail(strict=True)` rather than plain failures. A
+red CI that is red on purpose gets ignored within a week; a strict xfail reports
+the violation in every run's summary *and* turns into an error the moment a
+change fixes it, which is the signal actually wanted when a remedy lands. Do not
+relax one to a bare xfail to quieten it — delete the marker once the behaviour
+is fixed. That mechanism has already fired once: the two §5.2 tests below shipped
+xfailed on 2026-08-10 and were unmarked the same day when the calibration landed.
 """
 from __future__ import annotations
 
@@ -82,23 +83,23 @@ def test_pre_profit_valuation_rests_on_ev_sales_and_health_on_runway():
     assert "cash_runway_q" in card["pillars"]["health"]["metrics"]
 
 
-# ── the criteria it does not ─────────────────────────────────────────
+# ── the criteria it did not meet until 2026-08-10 ────────────────────
+#
+# Both of these were `xfail(strict=True)` when this file was written: RIVN
+# scored 74/Tier A, two tiers above the spec and ahead of AAPL's 67. Two causes,
+# fixed together — `cash_runway_q` divided cash by operating burn and ignored
+# capex (27.3 quarters against 8.5 on a free-cash-flow basis), and the profile
+# weighted quality 15% against growth 35%. Now 60/Tier B.
+#
+# The markers came off when the behaviour changed, which is what strict xfail is
+# for: the moment the fix landed these reported XPASS and failed the run until
+# the markers were removed.
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="A2: RIVN scores 74/A = tier 2. The pre_profit_growth profile weights "
-           "the pillar it fails at 15% (quality 10 — operating margin -50.4%) and "
-           "the one it aces at 35% (growth 98), and cash_runway_q reads 27.3 "
-           "quarters because it divides cash by operating burn and ignores capex. "
-           "Calibration remedy is a pending decision; this pins the violation.")
 def test_pre_profit_growth_lands_in_the_bottom_three_tiers():
     """§5.2: RIVN "Tier 3-5"."""
     assert tier_number("RIVN") >= 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="A2: RIVN 74 outranks AAPL 67 and MSFT 73. Same root cause as above.")
 @pytest.mark.parametrize("compounder", MEGA_CAP_COMPOUNDERS)
 def test_a_cash_burning_name_does_not_outrank_a_mega_cap_compounder(compounder):
     """§5.2 acceptance (a).

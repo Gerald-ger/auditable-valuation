@@ -205,15 +205,27 @@ export default function PortfolioTab({ onPick }) {
                                 : ` (${r.unrealized_pnl_pct >= 0 ? '+' : ''}${r.unrealized_pnl_pct.toFixed(1)}%)`
                             }`}
                       </td>
+                      {/* The profile sits beside the number, not in its own
+                          column, because the table already carries ten. Without
+                          it these composites read as one scale: RIVN's 74 lands
+                          next to AAPL's 67 and they are outputs of different
+                          formulas — the comparison ScreenerTab refuses to make. */}
                       <td>
                         {r.score !== null && r.score !== undefined ? (
-                          <span
-                            className="tier-chip"
-                            style={{ background: TIER_COLORS[r.tier] ?? 'var(--border)' }}
-                            title={`scored ${r.score_as_of}`}
-                          >
-                            {r.score}
-                          </span>
+                          <>
+                            <span
+                              className="tier-chip"
+                              style={{ background: TIER_COLORS[r.tier] ?? 'var(--border)' }}
+                              title={`scored ${r.score_as_of}`}
+                            >
+                              {r.score}
+                            </span>
+                            {r.classification && (
+                              <span className="screener-profile">
+                                {r.classification.replaceAll('_', ' ')}
+                              </span>
+                            )}
+                          </>
                         ) : (
                           '—'
                         )}
@@ -231,7 +243,13 @@ export default function PortfolioTab({ onPick }) {
             </div>
             <div className="chart-note">
               Scores come from the last time you ran the Scorecard or Screener on that ticker —
-              they are not refreshed here. Click a ticker to open it.
+              they are not refreshed here. Click a ticker to open it.{' '}
+              {/* Same wording as ScreenerTab, deliberately: two tabs must not
+                  describe the same limitation differently. */}
+              <strong>Scores are not comparable across company types</strong> — the profile
+              beside each one names the formula that produced it, and two profiles score
+              different metrics on different weights. Compare within a type; across types,
+              open the scorecards and compare pillars.
               {currencies.length > 1 && (
                 <>
                   {' '}

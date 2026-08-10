@@ -363,6 +363,61 @@ def test_a_reported_yield_raises_no_assumption_flag():
         load_fundamentals("O"))["flags"]
 
 
+# ── cash runway burns free cash flow, not operating cash flow ────────
+#
+# Dividing cash by operating outflow alone ignored capital expenditure, which
+# for a pre-profit manufacturer is most of the burn. RIVN 2025: operating
+# outflow 0.78bn against 1.71bn of capex, so runway read 27.3 quarters — past
+# the top anchor at 20, scoring 100 — where the free-cash-flow burn gives 8.5
+# quarters and 63. Overstated by 3.2x on the metric its Health pillar leans
+# hardest on, and the single largest contributor to RIVN's 74/Tier A.
+
+def _burning(ocf, capex, cash):
+    return _minimal({"totalCash": cash}) | {
+        "cash_flow": {"2025-12-31": {"Operating Cash Flow": ocf,
+                                     "Capital Expenditure": capex}}}
+
+
+def test_runway_burns_free_cash_flow_not_operating_cash_flow():
+    # cash 800, operating burn 100/yr, capex 300/yr -> free burn 400/yr = 100/q
+    m, _ = scoring.extract_metrics(_burning(-100.0, -300.0, 800.0))
+    assert m["cash_runway_q"] == pytest.approx(8.0)      # not 32, which OCF alone gives
+
+
+def test_runway_legs_come_from_one_period():
+    """A capex figure from a different year is not this year's burn rate."""
+    f = _minimal({"totalCash": 800.0}) | {"cash_flow": {
+        "2025-12-31": {"Operating Cash Flow": -100.0},        # no capex leg
+        "2024-12-31": {"Operating Cash Flow": -100.0, "Capital Expenditure": -300.0}}}
+    m, _ = scoring.extract_metrics(f)
+    assert m["cash_runway_q"] == pytest.approx(8.0)      # the 2024 pair, not a mix
+
+
+def test_a_company_burning_only_because_it_is_building_gets_no_runway():
+    """Trigger and rate ask different questions on purpose.
+
+    Capex is discretionary in a way that operating burn is not: a company whose
+    operations fund themselves can stop building and survive, so it does not
+    have a runway problem to measure. One whose operations do not fund
+    themselves cannot stop operating.
+    """
+    m, _ = scoring.extract_metrics(_burning(+50.0, -300.0, 800.0))
+    assert m["cash_runway_q"] is None
+
+
+def test_no_runway_without_a_cash_balance():
+    assert scoring.extract_metrics(_burning(-100.0, -300.0, None))[0]["cash_runway_q"] is None
+
+
+def test_rivn_runway_is_the_measured_free_cash_flow_burn():
+    f = load_fundamentals("RIVN")
+    m, _ = scoring.extract_metrics(f)
+    period, fcf = fm._statement_fcf(f["cash_flow"])
+    assert m["cash_runway_q"] == pytest.approx(
+        f["info"]["totalCash"] / (abs(fcf) / 4), rel=1e-9)
+    assert 8 < m["cash_runway_q"] < 9        # 8.5 quarters; was 27.3 on OCF alone
+
+
 # ── the DuPont ROE cap, and where it does not belong ─────────────────
 
 def test_a_bank_is_not_penalised_for_being_a_bank():

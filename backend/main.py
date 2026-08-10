@@ -538,6 +538,12 @@ def portfolio():
             **position_values(price, shares, cost),
             "score": card["composite"] if card else None,
             "tier": card["tier"] if card else None,
+            # A composite only means something against its own profile — a bank's
+            # 70 and a pre-profit company's 74 are outputs of two different
+            # formulas. score_batch groups by this for exactly that reason; the
+            # portfolio table lists holdings rather than ranking them, so it
+            # carries the label instead of splitting the table.
+            "classification": card["classification"] if card else None,
             "score_as_of": card["as_of_date"] if card else None,
             "quote_error": q.get("error"),
         })

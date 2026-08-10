@@ -113,22 +113,21 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 246 pass, 3 xfail, offline, ~2.5s
+backend\.venv\Scripts\python.exe -m pytest          # 254 tests, offline, ~2.5s
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 44 tests
 ```
 
-Of the 264 collected, 15 are `network`-marked and deselected by default. The 3
-expected failures are real: `tests/test_plausibility.py` encodes the acceptance
-criteria written in [docs/scoring-system-design.md](docs/scoring-system-design.md) §5.2
-("RIVN … Tier 3–5", "no bankrupt-adjacent name outranks a mega-cap compounder"),
-and the engine does not currently meet them — RIVN scores 74/A. They are
-`xfail(strict=True)`, so the violation is reported in every run and turns into an
-error the moment a calibration change fixes it.
+Of the 269 collected, 15 are `network`-marked and deselected by default.
 
-That file exists because **golden snapshots catch unintended change and are
-structurally blind to a wrong answer that never changes.** The golden had recorded
-RIVN at 74/A as the expected value since the day it was written.
+`tests/test_plausibility.py` encodes the acceptance criteria written in
+[docs/scoring-system-design.md](docs/scoring-system-design.md) §5.2 — "RIVN … Tier 3–5",
+"no bankrupt-adjacent name outranks a mega-cap compounder". It exists because **golden
+snapshots catch unintended change and are structurally blind to a wrong answer that never
+changes**: RIVN scored 74/Tier A against a spec of Tier 3–5, and the golden had recorded
+74/A as the *expected* value since the day it was written. Two of those tests shipped
+`xfail(strict=True)` on 2026-08-10 and were unmarked the same day when the calibration
+landed — a strict xfail reports the breach every run and errors the moment it is fixed.
 
 The suite runs entirely against seven real `get_fundamentals` payloads committed under
 `backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
@@ -313,13 +312,18 @@ start.bat   one-click cold start (backend + frontend + browser)
   against heuristic healthy ranges. It is not a prediction; validation covers
   consistency and plausibility, not forward returns (see docs/scoring-system-design.md §5).
   Score history is now recorded so this can eventually be tested — it has not been yet.
-- **Composites from different company types are not on one scale, and one open failure
-  proves it.** RIVN scores 74 ("A — Solid") against AAPL's 67, because the
-  `pre_profit_growth` profile weights the pillar it fails at 15% (quality 10: operating
-  margin −50%) and the pillar it aces at 35%. The design doc's own acceptance criteria
-  say a pre-profit name belongs in Tier 3–5; `tests/test_plausibility.py` records the
-  breach. The Screener refuses to rank across types for exactly this reason — the
-  Portfolio tab shows stored scores side by side and does not.
+- **Composites from different company types are not on one scale.** Each profile scores a
+  different metric set on different weights, so a bank's 71 and a pre-profit company's 60
+  are outputs of two formulas, not two readings. The Screener refuses to rank across types
+  for this reason, and the Portfolio tab names the profile beside every stored score.
+- **The pre-profit weights were re-tuned on 2026-08-10** (quality 0.15 → 0.25, growth
+  0.35 → 0.25) after RIVN scored 74/Tier A against a spec of Tier 3–5, together with a fix
+  to `cash_runway_q`, which had been dividing cash by operating burn while ignoring capex —
+  27.3 quarters against 8.5 on a free-cash-flow basis. RIVN now scores 60/B. Two things
+  follow: the anchors are still **not** validated against forward returns, so this enforced
+  a written expectation rather than adding evidence; and `score_history`'s pre-profit
+  series is **discontinuous at that date** — old rows come from the old formula, there is
+  no backfill, and a future calibration study has to segment across it.
 - **A DCF is not shown as an answer for company types it does not fit.** Banks have no
   `CFO − CapEx` at all, and a REIT's capex is property acquisition rather than
   maintenance, so the model still returns a number (O: −63%) that means nothing. Both the

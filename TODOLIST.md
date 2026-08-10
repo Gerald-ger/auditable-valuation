@@ -10,47 +10,22 @@ Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliber
 
 ## Now
 
-### 🔵 The engine fails its own written acceptance criterion, and the golden froze it
+### 🔵 The pre-profit calibration is now enforced, but still unvalidated
 
-`docs/scoring-system-design.md` §5.2 specifies that a `pre_profit_growth` card lands in
-**Tier 3–5** and that **"no bankrupt-adjacent name outranks a mega-cap compounder"**.
-Measured 2026-08-10: RIVN scores **74 / Tier A**, above MSFT 73, JPM 71, XOM 70 and
-AAPL 67.
+Resolved 2026-08-10 (b) below: RIVN moved 74/A → 60/B and `tests/test_plausibility.py`
+went green. What that did **not** do is make the anchors evidential. §5.2 is a
+plausibility expectation someone wrote down in advance; enforcing it substitutes one
+judgement for another. The composite still has no forward-return validation, exactly as
+`docs/scoring-system-design.md` §5.6 and the README say.
 
-The mechanism is visible in the pillar detail. The profile weights the pillar RIVN fails
-at **15%** (quality 10 — gross margin 7.5%, operating margin −50.4%) and the pillar it
-aces at **35%** (growth 98). Health scores 82 largely on `cash_runway_q` = 27.3 quarters,
-because [scoring.py](backend/scoring.py) computes runway as cash over *operating* burn and
-ignores capex — for a company building factories that is the wrong denominator.
+**Also now true:** the `pre_profit_growth` series in `score_history` is **discontinuous at
+2026-08-10**. Rows before that date come from the old weights and the old runway formula,
+rows after from the new ones, and there is no backfill. Any calibration study must treat
+that date as a break for this one profile.
 
-Now pinned by `tests/test_plausibility.py` as `xfail(strict=True)`, so it is reported in
-every run and becomes an error the moment a calibration change fixes it. Written that way
-rather than as a hard failure because a CI that is red on purpose gets ignored within a
-week.
-
-**Why nobody noticed:** `golden_scores.json` recorded `74 / A` as the *expected* value.
-Snapshot tests catch unintended change and are structurally blind to a wrong answer that
-never changes. This is the third time that limitation has bitten — the FCFF fix and the
-negative-denominator guards both hit it — so the plausibility file is the standing answer,
-not a one-off.
-
-**Decision needed.** Three defensible routes, none taken yet:
-- cap the tier for `pre_profit_growth` (blunt, honest, keeps the pillar detail);
-- reweight the profile and net capex out of `cash_runway_q` (more principled, but re-tunes
-  a curve that was never validated against returns in the first place);
-- accept it and state on the card that pre-profit composites are not comparable.
-
-### 🟡 The Portfolio tab compares scores the Screener refuses to compare
-
-[ScreenerTab.jsx:85-91](frontend/src/components/ScreenerTab.jsx#L85-L91) carries a
-prominent warning that composites from different profiles are not one measurement —
-citing, as it happens, exactly the numbers above. The Portfolio tab then renders those
-same stored composites in one column, adjacent rows, with no classification and no
-caveat.
-
-**Fix:** join `classification` onto the portfolio rows (`store.latest_scores` already has
-it) and either group or label them. **Trigger: before reading the portfolio's score column
-as a ranking.**
+**Trigger: the same ~2 quarters of data as the score-history item below.** When the
+calibration query is finally written, it has to exclude or segment pre-profit rows across
+that boundary.
 
 ### 🔵 The FCFF add-back does not net off interest income
 
@@ -268,6 +243,43 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-10 (b) — the two decisions the review left open
+
+**RIVN 74/A violated §5.2; now 60/B.** Two causes fixed together.
+
+`cash_runway_q` divided cash by *operating* burn and ignored capex — for a company
+building factories, the wrong denominator. RIVN 2025: operating outflow 0.78bn against
+1.71bn of capex, so runway read **27.3 quarters** (past the anchor's top rung at 20,
+scoring 100) where the free-cash-flow burn gives **8.5 quarters and 63**. Overstated 3.2×.
+The *trigger* deliberately stays operating-outflow-negative rather than moving to
+free-cash-flow-negative: **capex is discretionary in a way that operating burn is not**, so
+a company whose operations fund themselves can stop building and has no runway problem to
+measure. Trigger and rate answer different questions, and a test pins it — the mutation
+widening the trigger initially survived the whole suite.
+
+The profile also weighted the pillar these companies fail at **15%** and the one they ace
+at **35%**. For a pre-profit company "can this become profitable" *is* the quality
+question. Rebalanced to **Q 0.25 / G 0.25**.
+
+Measured: RIVN **74 → 60**, tier **A → B**, health 82 → 63, and every mega-cap now sits
+above the cash-burner. Only RIVN moved; the other six goldens are byte-identical, because
+`cash_runway_q` appears in one profile and the weights touch only that profile. The three
+`xfail(strict=True)` markers came off — they reported XPASS the moment the fix landed,
+which is what that mechanism is for. Mutation-tested: reverting either half fails only the
+tests that own it.
+
+Not resolved by this, and moved to Now: the anchors are still unvalidated, and
+`score_history`'s pre-profit series is now **discontinuous at this date**.
+
+**The Portfolio tab made the comparison the Screener refuses to make.** `ScreenerTab`
+warns that composites from different profiles are not one measurement — citing "a bank's
+70 and a pre-profit growth company's 74", which were the live JPM and RIVN values —
+while `PortfolioTab` rendered those same numbers in one column with no classification and
+no caveat. `store.latest_scores` already returned `classification`; the endpoint dropped
+it. Each score now shows its profile, and the table carries the Screener's caveat **in the
+Screener's own wording**. Not grouped: weights, P&L and concentration are portfolio-level
+figures needing one list, and the portfolio lists holdings rather than ranking them.
 
 ### ✅ 2026-08-10 — three-lens review: finance, engineering, UI
 

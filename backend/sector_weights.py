@@ -90,7 +90,20 @@ SECTOR_PROFILES = {
         },
     },
     "pre_profit_growth": {  # survival + path-to-profit; confidence capped MEDIUM
-        "weights": {"V": 0.15, "Q": 0.15, "H": 0.25, "G": 0.35, "M": 0.10},
+        # Q was 0.15 and G was 0.35, which weighted the pillar these companies
+        # fail at a quarter of the pillar they ace. For a pre-profit company
+        # "can this become profitable" *is* the quality pillar's question, so
+        # burying it under growth measured the wrong thing: RIVN scored quality
+        # 10 (gross margin 7.5%, operating margin -50.4%) and growth 98, and
+        # came out at 74/Tier A — above AAPL's 67, and two tiers above the
+        # "Tier 3-5" that docs/scoring-system-design.md 5.2 specifies for this
+        # path. Rebalanced to 0.25/0.25 (2026-08-10), which with the
+        # cash_runway_q fix lands RIVN at 60/Tier B.
+        #
+        # Honest limitation, recorded in CHANGELOG: these curves have never been
+        # validated against forward returns, so this is a written expectation
+        # being enforced, not a market fact.
+        "weights": {"V": 0.15, "Q": 0.25, "H": 0.25, "G": 0.25, "M": 0.10},
         "metrics": {
             "V": ["ev_sales", "analyst_upside"],
             "Q": ["gross_margin", "operating_margin"],
