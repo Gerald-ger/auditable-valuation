@@ -9,17 +9,12 @@ import {
 } from 'lightweight-charts';
 import { smaSeries, rsiSeries, macdSeries, barsForDays } from '../indicators';
 import { toChartTime, fromChartTime } from '../charttime';
+import { groupEventsByBar, toDateStr } from '../events';
 import { DrawingsPrimitive } from '../drawingPrimitive';
 import { get, post, patch, del } from '../api';
 
 // Operates on chart-space time, so the date shown on the axis, the date used to
 // group event markers and the date in the hover legend cannot disagree.
-const toDateStr = (t) => {
-  if (typeof t === 'string') return t;
-  if (typeof t === 'number') return new Date(t * 1000).toISOString().slice(0, 10);
-  return `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}`;
-};
-
 const CHART_TYPES = [
   ['candles', 'Candles'],
   ['line', 'Line'],
@@ -64,59 +59,6 @@ const fmtVol = (v) => {
   if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
   return String(Math.round(v));
 };
-
-/**
- * Attach every event to a bar, chronologically.
- *
- * Events are matched to the next trading day on or after their date, not to an
- * exact date match — a Saturday filing used to produce no dot at all because no
- * bar carried that date. Events dated after the last bar (today's news against
- * yesterday's close) clamp onto the final bar rather than vanishing.
- */
-function groupEventsByBar(bars, events) {
-  if (!bars.length) return [];
-  const dates = [];
-  const timeOfDate = new Map();
-  for (const b of bars) {
-    const d = toDateStr(b.time);
-    if (!timeOfDate.has(d)) {
-      timeOfDate.set(d, b.time);
-      dates.push(d);
-    }
-  }
-  const first = dates[0];
-  const last = dates[dates.length - 1];
-
-  const byDate = new Map();
-  for (const e of events) {
-    if (!e.date || e.date < first) continue; // predates the chart window
-    let idx = dates.length - 1;
-    if (e.date <= last) {
-      let lo = 0;
-      let hi = dates.length - 1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (dates[mid] >= e.date) {
-          idx = mid;
-          hi = mid - 1;
-        } else {
-          lo = mid + 1;
-        }
-      }
-    }
-    const key = dates[idx];
-    if (!byDate.has(key)) byDate.set(key, []);
-    byDate.get(key).push(e);
-  }
-
-  // emit in `dates` order — lightweight-charts requires ascending marker times
-  const groups = [];
-  for (const d of dates) {
-    const items = byDate.get(d);
-    if (items) groups.push({ date: d, time: timeOfDate.get(d), items });
-  }
-  return groups;
-}
 
 const dominantType = (items) =>
   EVENT_TYPES.find(([key]) => items.some((i) => i.category === key))?.[0] ?? 'company';
