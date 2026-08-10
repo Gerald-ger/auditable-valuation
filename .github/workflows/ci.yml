@@ -14,8 +14,16 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+          # Required: the pip cache globs for **/requirements.txt or
+          # **/pyproject.toml, and this repo has neither name — the dependency
+          # files are backend/requirements*.txt. Without this the action errors
+          # out before any step runs.
+          cache-dependency-path: backend/requirements-test.txt
       - name: Install test dependencies
-        run: pip install -r backend/requirements-test.txt ruff
+        # ruff is pinned to the version backend/requirements.post-openbb.txt
+        # develops against; unpinned, a new ruff release fails lint on a commit
+        # that changed nothing.
+        run: pip install -r backend/requirements-test.txt ruff==0.15.22
       - name: Lint
         run: ruff check backend/
       # Network tests are deselected by pytest.ini addopts; the suite runs
