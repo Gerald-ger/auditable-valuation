@@ -112,8 +112,20 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     m = {}
     m["earnings_yield_fwd"] = _clamp(div(eps, price), -0.5, 0.5)
     m["fcf_yield"] = _clamp(div(fcf, mcap), -0.5, 0.5)
-    m["ev_ebitda"] = _clamp(info.get("enterpriseToEbitda"), -100, 1000)
-    m["p_b"] = _clamp(info.get("priceToBook"), 0, 1000)
+    # A negative EV/EBITDA is not a cheap one. EBITDA <= 0 flips the ratio's
+    # sign and the ascending anchors would clip it to the *best* score — the
+    # same reason net_debt_ebitda below guards its denominator. Negative EV the
+    # anchors cannot express either; cheapness still reaches the pillar through
+    # earnings_yield_fwd, fcf_yield and dcf_upside_pct.
+    ev_ebitda = info.get("enterpriseToEbitda")
+    ebitda = info.get("ebitda")
+    if ev_ebitda is not None and (ev_ebitda <= 0 or (ebitda is not None and ebitda <= 0)):
+        ev_ebitda = None
+    m["ev_ebitda"] = _clamp(ev_ebitda, 0, 1000)
+    # Negative book value is a broken balance sheet, not cheapness — clamping
+    # it to 0 handed it the top anchor score.
+    pb = info.get("priceToBook")
+    m["p_b"] = _clamp(pb, 0, 1000) if pb is not None and pb > 0 else None
     m["ev_sales"] = _clamp(info.get("enterpriseToRevenue"), 0, 1000)
     m["dividend_yield"] = div(info.get("dividendYield"), 100)  # yfinance gives percent
     # NOT NAREIT FFO. Proper FFO is net income + real-estate depreciation
@@ -127,7 +139,14 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     m["ffo_yield"] = _clamp(div((net_income or 0) + (dep_amort or 0), mcap)
                             if net_income is not None else None, -0.5, 0.5)
 
-    m["roe"] = _clamp(info.get("returnOnEquity"), -2, 2)
+    # ROE is undefined on negative equity — and a negative-equity issuer with a
+    # negative net income reports a spuriously *positive* ROE. Same trigger as
+    # the debt_equity guard below, applied for the same reason.
+    roe = info.get("returnOnEquity")
+    if equity is not None and equity <= 0:
+        roe = None
+        flags.append("roe_skipped_negative_equity")
+    m["roe"] = _clamp(roe, -2, 2)
     m["roa"] = _clamp(info.get("returnOnAssets"), -1, 1)
     invested = None
     if equity is not None:
@@ -150,7 +169,7 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
         div(fcf, conversion_ni) if conversion_ni and conversion_ni > 0 else None, -5, 5)
 
     net_debt = (total_debt or 0) - (total_cash or 0)
-    ebitda = info.get("ebitda")
+    # `ebitda` resolved above alongside the ev_ebitda guard
     m["net_debt_ebitda"] = _clamp(max(net_debt, 0) / ebitda if ebitda and ebitda > 0 else None, 0, 50)
     m["interest_coverage"] = _clamp(div(ebit, interest), -50, 200)
     m["current_ratio"] = _clamp(info.get("currentRatio"), 0, 20)
@@ -208,7 +227,6 @@ def score_company(f: dict, dcf: dict | None = None) -> dict:
     if "ffo_yield" in active and raw.get("ffo_yield") is not None:
         flags.append("ffo_yield_is_proxy")
 
-    equity_multiplier = None
     ratios = fm.ratio_analysis(f)
     equity_multiplier = ratios["dupont"]["equity_multiplier"]
 

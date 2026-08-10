@@ -239,3 +239,55 @@ def test_tier_matches_composite(stem):
         return
     expected = next(t for floor, t, _ in scoring.TIERS if card["composite_score"] >= floor)
     assert card["tier"] == expected
+
+
+# ── denominator-sign guards: a broken ratio must not score as cheap ──
+#
+# The ascending anchor tables read "lower = better" for these metrics, so a
+# sign flip in the denominator clipped the ratio to the *best* anchor: a
+# negative-EBITDA company scored 100 on EV/EBITDA, a negative-book company 100
+# on P/B, a negative-equity company 100 on ROE. Measured on synthetic clones
+# 2026-08-09: valuation pillar +10, composite +3, in exactly the wrong
+# direction. The goldens cannot police this — no fixture carries a negative
+# denominator — so these tests pin the guards directly.
+
+def _minimal(info, balance=None):
+    return {"ticker": "SYN", "info": info, "estimates": {},
+            "income_statement": {}, "balance_sheet": balance or {}, "cash_flow": {}}
+
+
+def test_negative_ev_ebitda_is_excluded_not_scored_cheap():
+    m, _ = scoring.extract_metrics(_minimal({"enterpriseToEbitda": -8.0}))
+    assert m["ev_ebitda"] is None
+
+
+def test_ev_ebitda_dropped_when_reported_ebitda_is_negative():
+    """yfinance can serve a stale positive ratio next to a negative EBITDA."""
+    m, _ = scoring.extract_metrics(_minimal({"enterpriseToEbitda": 9.0,
+                                             "ebitda": -5_000_000_000}))
+    assert m["ev_ebitda"] is None
+
+
+def test_positive_ev_ebitda_still_scores():
+    m, _ = scoring.extract_metrics(_minimal({"enterpriseToEbitda": 9.0,
+                                             "ebitda": 5_000_000_000}))
+    assert m["ev_ebitda"] == 9.0
+
+
+def test_negative_price_to_book_is_excluded():
+    m, _ = scoring.extract_metrics(_minimal({"priceToBook": -2.1}))
+    assert m["p_b"] is None
+
+
+def test_roe_dropped_and_flagged_on_negative_equity():
+    balance = {"2025-12-31": {"Stockholders Equity": -10_000_000_000.0}}
+    m, flags = scoring.extract_metrics(_minimal({"returnOnEquity": 0.85}, balance))
+    assert m["roe"] is None
+    assert "roe_skipped_negative_equity" in flags
+
+
+def test_roe_kept_on_positive_equity():
+    balance = {"2025-12-31": {"Stockholders Equity": 10_000_000_000.0}}
+    m, flags = scoring.extract_metrics(_minimal({"returnOnEquity": 0.25}, balance))
+    assert m["roe"] == 0.25
+    assert "roe_skipped_negative_equity" not in flags

@@ -344,8 +344,10 @@ export default function ModelsTab({ ticker }) {
                 </div>
                 <div>
                   <span className="dcf-label">Upside</span>
+                  {/* null >= 0 is true in JS — an unavailable upside must stay
+                      neutral, not render green */}
                   <span
-                    className={`dcf-big ${dcf.upside_pct >= 0 ? 'up' : 'down'}`}
+                    className={`dcf-big ${dcf.upside_pct == null ? '' : dcf.upside_pct >= 0 ? 'up' : 'down'}`}
                   >
                     {dcf.upside_pct > 0 ? '+' : ''}
                     {num(dcf.upside_pct, 1)}%

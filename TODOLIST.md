@@ -10,6 +10,36 @@ Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliber
 
 ## Now
 
+### 🔵 The FCFF add-back does not net off interest income
+
+Resolved 2026-08-09 (b) below, with one deliberate gap. The add-back is **gross**
+interest, so wherever it fires, the interest *income* still sitting inside operating cash
+flow is valued a second time — once through the `EV − net_debt` bridge that already
+treats cash as a separately-valued asset, and once as a perpetuity.
+
+Netting it off was rejected on basis-consistency grounds: US filers disclose cash
+interest *paid* but no matching cash interest *received*, so netting would mean adding a
+cash figure and subtracting an accrual one.
+
+**Currently latent, not active.** XOM is the only fixture the add-back fires on and it
+reports no interest income. The first issuer that discloses cash interest paid *and*
+earns interest income will activate it. Measured on an accrual basis for comparison, the
+effect is worth roughly 3% of FCF on MSFT and AAPL.
+
+**Trigger: a source that discloses cash interest received**, or a decision to accept a
+mixed basis.
+
+### 🔵 Two US filers cannot be verified, so they get no FCFF adjustment
+
+AAPL's newest period and all five of MSFT's report no interest row in the cash-flow
+statement at all, so there is no evidence of which side of the statement interest sits
+on. Both are skipped and flagged `unverified_interest_classification` rather than
+guessed at. AAPL does carry `Interest Paid Supplemental Data` in 2023 and earlier — using
+it would mean pulling a figure from a different year than the FCF, which is the exact
+period-drift this codebase has already fought twice.
+
+**Trigger: a fundamentals source that reports interest paid every period.**
+
 ### 🔴 The debate, streaming and every AI reply are unverified end-to-end
 
 Ollama has never been installed on this machine, so `localhost:11434` has never
@@ -76,11 +106,6 @@ curves into a composite that has never been validated adds motion, not evidence.
 are the first candidates to add; if it does not, nothing should be added to the
 composite at all.
 
-### 🟡 Commit the pending work
-
-The 2026-08-06 changes (score history, screener, portfolio, scoring FCF fix, async AI,
-pytest suite, CI, and the valuation-accuracy set) are unreviewed by git.
-
 ---
 
 ## Next
@@ -116,17 +141,24 @@ currency is present, but the total is wrong, not merely imprecise.
 
 ### 🟡 Cosmetic
 
-- [frontend/src/components/ModelsTab.jsx:128](frontend/src/components/ModelsTab.jsx#L128) —
-  `dcf.upside_pct >= 0` is `true` when the value is `null`, so an unavailable upside renders
-  green.
-- [backend/scoring.py:176](backend/scoring.py#L176) — `equity_multiplier = None` is
-  overwritten on the next line.
-- `assumptions.fcf_source` and `assumptions.risk_free_rate` are returned by the API but not
-  surfaced in the DCF panel; showing them would make the valuation auditable at a glance.
-- `ScorecardTab` has an `exhaustive-deps` lint warning on `loadComps` (pre-existing).
+Line references re-verified 2026-08-09.
+
 - A non-existent ticker in the screener returns a row with 0% coverage rather than
   landing in `failed`, because yfinance returns an empty payload instead of raising.
-  The row is greyed and unranked, so it is honest, just not obvious.
+  The row is greyed and unranked, so it is honest, just not obvious. *(Not re-verified
+  2026-08-09.)*
+- `ScorecardTab.jsx:225` carries an unsuppressed `exhaustive-deps` lint warning on
+  `loadComps` (pre-existing, emitted by oxlint on every build). Separately,
+  [PriceChart.jsx:398](frontend/src/components/PriceChart.jsx#L398) *disables* the same
+  rule on `visibleGroups` deliberately — rebuilding the chart on a marker-filter change
+  would discard the user's zoom. (An earlier revision of this list called the
+  ScorecardTab warning miscatalogued; the linter does emit it — that claim was wrong.)
+
+**Done since:** `assumptions.fcf_source` and `assumptions.risk_free_rate` are now
+surfaced in the DCF panel alongside `beta_source`
+([ModelsTab.jsx:164-178](frontend/src/components/ModelsTab.jsx#L164-L178)). The
+null-renders-green upside chip and the dead `equity_multiplier = None` line were fixed
+2026-08-09 (c).
 
 ---
 
@@ -190,6 +222,102 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-09 (c) — negative denominators no longer score as cheap
+
+Full-calculation audit: DCF engine cross-checked against the closed-form annuity
+(agreement to 4e-13), dividend-yield `/100` convention verified as percent on all six
+paying fixtures, comps currency and positive-only-median guards verified, forensics
+directions verified. Three unguarded sign flips found in `scoring.extract_metrics` —
+each mapped distress to the **best** anchor score, because the "lower = better" tables
+clip at their left edge:
+
+- **`ev_ebitda`** — negative EBITDA (or negative EV) → ratio ≤ 4 → scored 100.
+  Synthetic loss-year energy clone: valuation pillar 50 → 60, composite 68 → 71 —
+  three points *gained* for EBITDA going negative.
+- **`p_b`** — negative book value was clamped to 0 → scored 100. REIT clone:
+  valuation pillar 76 → 82.
+- **`roe`** — negative equity with a spuriously positive vendor ROE scored 100, on the
+  same card that already carried `debt_equity_skipped_negative_equity` from the same
+  negative equity.
+
+All three are now excluded as `None`, following the file's own precedent
+(`fcf_conversion`, `net_debt_ebitda`, `debt_equity`), with `roe_skipped_negative_equity`
+flagged. Latent — no fixture carries a negative denominator, so the goldens are
+byte-identical; like the FCFF fix, the goldens structurally cannot police this, so six
+direct tests pin the guards (168 total). Weakening the ev_ebitda guard fails exactly
+the two tests that own it. Also fixed in the same pass: the DCF upside chip rendered
+green when upside was unavailable (`null >= 0` is `true` in JS), and the dead
+`equity_multiplier = None` line.
+
+### ✅ 2026-08-09 (b) — the DCF now discounts an unlevered cash flow
+
+`_statement_fcf` returns `CFO − CapEx`. Under US GAAP interest paid runs through
+operating activities, so that is a **levered** measure; discounting it at WACC and then
+bridging `EV − net_debt` charged the debt twice and understated equity value.
+
+Three findings changed the shape of the fix:
+
+- **The shared function could not be changed in place.** It has four callers and they
+  disagree: `dcf_valuation` needs FCFF, but `scoring.fcf_yield` divides by market cap and
+  `scoring.fcf_conversion` divides by net income — both equity-side, both correct
+  *levered*. `classify()` only reads the sign. So the add-back went into a new
+  `_fcff_interest_addback` used by the DCF alone, and `_statement_fcf` now documents that
+  it is levered on purpose.
+- **Classification is read from the statement, not assumed.** IFRS permits classifying
+  interest paid as financing, in which case operating cash flow is already unlevered and
+  an add-back would *overstate* FCFF. 0700.HK reports `Interest Paid Cff` in all four
+  captured periods; every US fixture reports `Interest Paid Supplemental Data`. Keying on
+  the row that exists means a new IFRS listing is handled without anyone knowing its GAAP.
+  Had the naive one-line add-back shipped, it would have moved 0700.HK's upside from
+  +30.5% to +38.2% — entirely spurious, and the largest move in the fixture set.
+- **Cash, not accrual.** The quantity being adjusted is cash, and the two diverge when
+  interest is capitalised: XOM's accrual is 603M against 1,752M paid, a factor of 2.9.
+
+Measured result — the correction fires on exactly one fixture:
+
+| fixture | basis | effect |
+|---|---|---|
+| XOM | `cash_interest_paid` | upside −53.4% → **−50.3%** |
+| 0700.HK | `not_required_interest_in_financing` | unchanged, correctly |
+| AAPL, MSFT | `unverified_interest_classification` | unchanged, flagged |
+| JPM, O | `no_statement_fcf` | unchanged |
+| RIVN | `cash_interest_paid` | still FCF ≤ 0, DCF still declines |
+
+Composite scores and tiers did not move, and **`golden_scores.json` is unchanged** — XOM's
+`dcf_upside_pct` was already clipped at the −40 anchor floor, so both values score 0. That
+means the goldens are structurally unable to police this, which is why nine direct tests
+were added instead. They were mutation-tested: breaking the financing branch fails exactly
+three of them.
+
+### ✅ 2026-08-09 (a) — CI had never run the backend job
+
+Runs #1–#4 on `openBB-testing` all failed. Two root causes, the second hidden behind
+the first.
+
+- **The runner died before doing any work.** `actions/setup-python@v5` was given
+  `cache: pip` with no `cache-dependency-path`, so it globbed for `**/requirements.txt`
+  or `**/pyproject.toml`. This repo has neither *name* — the files are
+  `backend/requirements-test.txt`, `.lock.txt` and `.post-openbb.txt` — so the action
+  errored at step 3 and *Install*, *Lint* and *Test* were all skipped. The frontend job
+  was unaffected because it already passed an explicit `cache-dependency-path`; that
+  asymmetry inside one file is what gave it away.
+- **Then the Test step ran for the first time and aborted during collection.**
+  `test_search_and_history.py` imports `main` for `PERIOD_INTERVALS` and `_bars_per_day`;
+  `main` imports `fastapi` and `pydantic` at module scope and pulls in `ai_client`, which
+  imports `aiohttp`. `requirements-test.txt` listed only pytest, yfinance and pandas.
+  Invisible locally, because the dev `.venv` carries the full runtime set.
+
+Fixes: added `cache-dependency-path: backend/requirements-test.txt`, pinned
+`ruff==0.15.22` so a future ruff release cannot fail lint on a commit that changed
+nothing, and added `fastapi` + `aiohttp` to the test requirements.
+
+Verified by building a venv from `requirements-test.txt` alone, reproducing the exact
+`ModuleNotFoundError`, then re-running there after the fix: ruff clean, 153 passed,
+8 deselected. CI run #5 green on both jobs.
+
+Also corrected the README's test count: **140 → 153**. The old figure predated
+`test_drawings.py`, which contributes exactly the missing 13.
 
 ### ✅ 2026-08-07 — comparability, beta methodology, forensic checks
 
@@ -271,7 +399,10 @@ alignment, `sharesOutstanding` vs `marketCap/price`, and the `revenue_cagr_3y` w
 - **`full_analysis()` was not guarded** — now wrapped, returns 502 with a message.
 - **Local AI blocked a threadpool worker for up to 300 s** — all AI endpoints are async
   and stream NDJSON; blocking calls go through `asyncio.to_thread`.
-- **No CI** — ruff + pytest + oxlint + vite build on push and PR.
+- **No CI** — ruff + pytest + oxlint + vite build on push and PR. *(Amended 2026-08-09:
+  the workflow was added, but its backend job never actually executed until 2026-08-09 —
+  see that entry. Only the frontend was protected in between. Recorded as it was
+  understood at the time rather than rewritten.)*
 - **No memory** — SQLite score history with the price at scoring time.
 - **No screening** — Screener tab and `POST /api/score/batch`.
 - **No portfolio layer** — Portfolio tab with weights, P&L and concentration.
@@ -301,7 +432,10 @@ FMP peers are worse than the curated list where the list exists (see above). Kee
 
 ### ⚪ HTTP-layer (TestClient) tests
 
-Starlette's `TestClient` needs `httpx`, which is not installed, and the OpenBB install
-already demonstrated that adding packages to this venv can shift `fastapi`/`uvicorn`
-versions. The endpoints are thin wrappers over tested functions; they were smoke-tested
-live instead. Revisit if the endpoint layer grows real logic.
+Starlette's `TestClient` needs `httpx`, which is still not installed, and the OpenBB
+install already demonstrated that adding packages to this venv can shift
+`fastapi`/`uvicorn` versions. The endpoints are thin wrappers over tested functions; they
+were smoke-tested live instead. Revisit if the endpoint layer grows real logic.
+
+*(2026-08-09: `fastapi` is now an explicit test requirement, but only because `main` is
+imported for two constants — it does not bring `httpx`, so the conclusion is unchanged.)*
