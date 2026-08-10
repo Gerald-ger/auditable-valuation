@@ -291,3 +291,87 @@ def test_dcf_still_falls_back_to_info_freecashflow(monkeypatch):
     d = fm.dcf_valuation(f)
     assert d["assumptions"]["fcf_source"] == "info_freecashflow"
     assert d["assumptions"]["fcf_period"] is None
+
+
+# ── FCFF: levered -> unlevered before discounting at WACC ────────────
+#
+# The golden snapshots cannot police this. XOM's dcf_upside_pct is clipped at the
+# -40 anchor floor, so moving it from -53.4% to -50.3% leaves every stored score
+# identical. These tests are the only thing standing between a silent change in
+# the add-back and a silently different valuation.
+
+def test_interest_in_financing_gets_no_addback():
+    """IFRS may classify interest paid as financing, leaving CFO already
+    unlevered. 0700.HK does; adding interest back would overstate FCFF."""
+    f = load_fundamentals("0700_HK")
+    period, _ = fm._statement_fcf(f["cash_flow"])
+    addback, basis = fm._fcff_interest_addback(f["cash_flow"], period, 0.165)
+    assert (addback, basis) == (0.0, "not_required_interest_in_financing")
+
+
+def test_us_gaap_cash_interest_is_added_back_after_tax():
+    """XOM discloses 1,752M paid in the same period its FCF comes from."""
+    f = load_fundamentals("XOM")
+    period, _ = fm._statement_fcf(f["cash_flow"])
+    addback, basis = fm._fcff_interest_addback(f["cash_flow"], period, 0.21)
+    assert basis == "cash_interest_paid"
+    assert addback == pytest.approx(1_752_000_000.0 * 0.79)
+
+
+def test_unverifiable_classification_is_left_alone():
+    """MSFT reports no interest row in any captured period. Guessing which side
+    of the cash-flow statement it sits on would be worse than not adjusting."""
+    f = load_fundamentals("MSFT")
+    period, _ = fm._statement_fcf(f["cash_flow"])
+    addback, basis = fm._fcff_interest_addback(f["cash_flow"], period, 0.21)
+    assert (addback, basis) == (0.0, "unverified_interest_classification")
+
+
+def test_no_statement_period_means_no_addback():
+    """The info["freeCashflow"] fallback has no period to pin interest to."""
+    assert fm._fcff_interest_addback({}, None, 0.21) == (0.0, "no_statement_fcf")
+
+
+def test_addback_uses_magnitude_not_sign():
+    cash_flow = {"2025-12-31": {"Interest Paid Supplemental Data": -400.0}}
+    addback, _ = fm._fcff_interest_addback(cash_flow, "2025-12-31", 0.25)
+    assert addback == pytest.approx(300.0)
+
+
+def test_financing_classification_wins_over_a_cash_interest_row():
+    """If both appear, operating cash flow is still unlevered — do not add back."""
+    cash_flow = {"2025-12-31": {"Interest Paid Cff": -400.0,
+                                "Interest Paid Supplemental Data": 400.0}}
+    assert fm._fcff_interest_addback(cash_flow, "2025-12-31", 0.21)[1] == \
+        "not_required_interest_in_financing"
+
+
+def test_statement_fcf_stays_levered_for_the_scoring_metrics():
+    """fcf_yield divides by market cap and fcf_conversion by net income, both of
+    which are after interest. Unlevering here would corrupt both."""
+    f = load_fundamentals("XOM")
+    period, fcf = fm._statement_fcf(f["cash_flow"])
+    rows = f["cash_flow"][period]
+    assert fcf == pytest.approx(rows["Operating Cash Flow"] + rows["Capital Expenditure"])
+
+
+def test_dcf_raises_fair_value_when_interest_is_added_back(monkeypatch):
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("XOM")
+    with_addback = fm.dcf_valuation(f)
+
+    stripped = copy.deepcopy(f)
+    for rows in stripped["cash_flow"].values():
+        rows.pop("Interest Paid Supplemental Data", None)
+    without = fm.dcf_valuation(stripped)
+
+    assert with_addback["assumptions"]["fcff_basis"] == "cash_interest_paid"
+    assert without["assumptions"]["fcff_basis"] == "unverified_interest_classification"
+    assert with_addback["fair_value_per_share"] > without["fair_value_per_share"]
+
+
+def test_dcf_reports_the_addback_it_applied(monkeypatch):
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    a = fm.dcf_valuation(load_fundamentals("0700_HK"))["assumptions"]
+    assert a["fcf_interest_addback"] == 0
+    assert a["fcff_basis"] == "not_required_interest_in_financing"

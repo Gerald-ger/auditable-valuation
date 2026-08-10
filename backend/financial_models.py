@@ -100,7 +100,16 @@ def _series(statement: dict, *row_names) -> list[tuple[str, float]]:
 
 
 def _statement_fcf(cash_flow: dict) -> tuple[str, float] | None:
-    """(period, FCF) from the newest period reporting both legs (CapEx is negative).
+    """(period, **levered** FCF) from the newest period reporting both legs.
+
+    CapEx is negative, so this is `CFO - CapEx`. Under US GAAP interest paid sits
+    inside operating cash flow, which makes this a levered measure — closer to
+    free cash flow to equity before net borrowing than to FCFF. That is the right
+    quantity for `scoring.fcf_yield` (divided by market cap) and
+    `scoring.fcf_conversion` (divided by net income), both of which are after
+    interest. It is **not** the right quantity to discount at WACC:
+    `dcf_valuation` adds interest back through `_fcff_interest_addback` instead.
+    Do not "fix" this function — three of its four callers want it levered.
 
     Returns the period as well as the value so callers that divide FCF by another
     statement figure can demand the same period. Mixing this year's operating
@@ -116,6 +125,51 @@ def _statement_fcf(cash_flow: dict) -> tuple[str, float] | None:
         if ocf is not None and capex is not None:
             return period, ocf + capex
     return None
+
+
+def _fcff_interest_addback(cash_flow: dict, period: str | None,
+                           tax_rate: float) -> tuple[float, str]:
+    """(after-tax interest to add back, basis) turning levered FCF into FCFF.
+
+    `_statement_fcf` is levered where interest paid runs through operating
+    activities, so discounting it at WACC *and* subtracting net debt would charge
+    the debt twice. The add-back is `Interest x (1 - Tc)`.
+
+    Whether it applies at all is **read from the statement, not assumed**. US
+    GAAP requires interest paid to be disclosed as supplemental data alongside an
+    operating-activities classification; IFRS permits classifying it in
+    financing, in which case operating cash flow is *already* unlevered and
+    adding interest back would overstate FCFF rather than correct it. Measured
+    2026-08-09 across the fixtures: 0700.HK reports `Interest Paid Cff` in all
+    four captured periods (and `Interest Received Cfi`, so its interest income is
+    outside operating too), while every US filer reports `Interest Paid
+    Supplemental Data`. Keying on the row that is actually present means a new
+    IFRS listing is handled correctly without anyone having to know its GAAP.
+
+    The cash figure is used rather than the income statement's accrual, because
+    the quantity being adjusted is cash. The two diverge when interest is
+    capitalised — XOM's accrual is 603M against 1,752M paid, a factor of 2.9.
+
+    Interest *income* is deliberately not netted off: on a cash basis US filers
+    disclose no matching "interest received" row, so netting would mean adding a
+    cash figure and subtracting an accrual one. The consequence is that cash is
+    valued twice for a net-cash issuer — once through the `EV - net_debt` bridge
+    and once through the perpetual interest it earns inside operating cash flow.
+    Measured, that is worth about +3% of FCF on MSFT and AAPL.
+
+    Returns 0.0 with a stated reason whenever the adjustment cannot be justified,
+    so an unverifiable case is left alone rather than guessed at.
+    """
+    if period is None:
+        return 0.0, "no_statement_fcf"
+    rows = cash_flow.get(period) or {}
+    if rows.get("Interest Paid Cff") is not None:
+        return 0.0, "not_required_interest_in_financing"
+    cash_interest = rows.get("Interest Paid Supplemental Data")
+    if cash_interest is not None:
+        # Disclosed as an outflow; sign convention varies, magnitude does not.
+        return abs(cash_interest) * (1 - tax_rate), "cash_interest_paid"
+    return 0.0, "unverified_interest_classification"
 
 
 def tax_rate_for(info: dict) -> float:
@@ -308,6 +362,12 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     fcf = statement[1] if statement else None
     if fcf is None:
         fcf, fcf_source = info.get("freeCashflow"), "info_freecashflow"
+    # Levered -> unlevered. Gate on the adjusted figure, since that is what gets
+    # discounted; a company only positive before the add-back is still a DCF.
+    interest_addback, fcff_basis = _fcff_interest_addback(
+        f["cash_flow"], statement[0] if statement else None, tax_rate)
+    if fcf is not None:
+        fcf += interest_addback
     if not fcf or fcf <= 0:
         return {"error": "No positive free cash flow available — DCF not applicable "
                          "(see reference doc: use relative valuation instead)."}
@@ -377,6 +437,10 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "base_fcf": fcf,
             "fcf_source": fcf_source,
             "fcf_period": statement[0] if statement else None,
+            # 0.0 with a basis of anything but "cash_interest_paid" means the
+            # figure above is still levered — see _fcff_interest_addback.
+            "fcf_interest_addback": round(interest_addback),
+            "fcff_basis": fcff_basis,
             "growth_rate_year1": round(growth_rate, 4),
             "growth_source": growth_source,
             "terminal_growth": terminal_growth,
