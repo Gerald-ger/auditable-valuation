@@ -9,47 +9,71 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 ```
 React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yfinance — quotes, history,
       │                            │                     │    news, fundamentals (15-min cache)
-      │  Tab 1: Tracker            │                     ├─►  OpenBB — US 10Y treasury yield
-      │  Tab 2: Financial Models   │                     │
-      │  Tab 3: Scorecard          ├─►  SQLite (backend/data/app.db)
-      │  Tab 4: Screener           │      score history · watchlist · positions
-      │  Tab 5: Portfolio          │
+      │  Tab 1: Tracker            │                     ├─►  OpenBB — 10Y treasury yield,
+      │  Tab 2: Financial Models   │                     │    SEC filings, SEC symbol list,
+      │  Tab 3: Scorecard          │                     │    FMP peer sets
+      │  Tab 4: Screener           │
+      │  Tab 5: Portfolio          ├─►  SQLite (backend/data/app.db)
+      │                            │      score history · watchlist · positions · drawings
+      │                            │
       │                            └──►  Ollama (localhost:11434) — local AI, optional,
       │                                   streamed as newline-delimited JSON
 ```
 
 - **Header — search**: type a ticker *or* a company name and pick from the list;
   typos resolve (`microsft` → MSFT, `tencnt` → 0700.HK) so a slip cannot produce an
-  empty chart. Backed by a local cache of SEC's 10,398 US symbols (free, no key,
-  2–3 ms) merged with live Yahoo search, which is what reaches HK and other non-US
-  listings. Watchlist, holdings and recently viewed tickers sit below as one-click chips.
+  empty chart. Backed by a local cache of SEC's 10,398 US symbols (fetched once through
+  OpenBB, free, no key, 2–3 ms) merged with live Yahoo search, which is what reaches HK
+  and other non-US listings. Watchlist, holdings and recently viewed tickers sit below as
+  one-click chips.
 - **Tab 1 — Tracker**: price chart for US + HK tickers (`AAPL`, `0700.HK`, …) with:
-  - bars sized to the period — **2-min** for 1d, **5-min** for 5d, 30-min for 1mo,
-    **hourly** for 3mo–2y, daily beyond. 5y and max cannot go finer: Yahoo caps
-    sub-hourly data at 60 days and hourly at 730;
+  - bars sized to the period — **1-min** for 1d, **5-min** for 5d, 30-min for 1mo,
+    **hourly** for 3mo–2y, daily for 5y, weekly for max. 5y and max cannot go finer:
+    Yahoo caps sub-hourly data at 60 days and hourly at 730;
+  - intraday bars are drawn on a **GMT+8 clock**, one timeline for both markets: HK reads
+    naturally and a US session reads 21:30–03:58, which is when a Hong Kong reader is
+    actually watching it. The cost is inherent — a US trading day straddles midnight and
+    so spans two calendar dates on the chart. Daily and weekly bars are dates and pass
+    through untouched;
   - **indicator windows measured in trading days, not bars**, so MA50 means 50 days
     on every period (350 bars on an hourly chart). A window longer than the period
     holds is not drawn — one session cannot produce a 50-day average — and the chart
     says so;
   - chart types: **Candles / Line / OHLC**;
-  - toggleable technical indicators, computed locally in
-    [frontend/src/indicators.js](frontend/src/indicators.js): **MA10/20/50** overlays,
-    **volume** histogram, **RSI(14)** pane with 30/70 bands, **MACD(12,26,9)** pane;
+  - toggleable technical indicators, computed locally — **MA10/20/50** overlays,
+    **volume** histogram, **RSI(14)** pane with 30/70 bands, **MACD(12,26,9)** pane. The
+    maths lives in [frontend/src/indicators.js](frontend/src/indicators.js); the window
+    set and the volume histogram are assembled in
+    [frontend/src/components/PriceChart.jsx](frontend/src/components/PriceChart.jsx);
   - interaction: scroll to zoom, drag to pan, double-click (or **Reset**) to fit,
     zoom ±, **Lin / Log / %** price-scale modes, and a magnet crosshair that snaps to
     OHLC;
+  - **drawing tools**: trendlines and horizontal levels, with select, drag, delete and
+    clear-all. Drawings are stored per ticker in SQLite as true UTC epochs, so they
+    survive a reload and stay put when the period changes. They are also read by the AI —
+    [backend/drawings.py](backend/drawings.py) computes where the line sits today, its
+    slope per day, how far price is from it and how many bars actually touched it
+    (within 0.5%), and hands the model those figures tagged `drawn_by: "user"`. A drawing
+    is a reader's assertion, not a measurement, and the context says so explicitly;
   - event markers: coloured dots mark dates with news **or SEC filings**. Hovering
     previews them, **clicking opens a panel** with links (the preview is deliberately
     click-through so it cannot flicker under the cursor). Filter chips toggle each
     category — Earnings, 8-K event, Company news, Macro news, Insider — with live
-    counts; insider filings start off because they dominate the feed. Events falling on
-    non-trading days snap to the next bar, so nothing is silently dropped. The feed
+    counts; insider filings start off because they dominate the feed. Markers land where
+    the event did: a story carrying a publication time sits on the bar it was published
+    during, and only events that are date-only, or that fall in a gap — after the close,
+    over a weekend, on a holiday — snap forward to the next bar, the first session that
+    could react. Nothing is silently dropped, and the popup says which precision it has,
+    so a marker on the session open is never mistaken for a timestamp. The feed
     blends **company** news with **macro/policy** headlines (Fed, inflation, elections)
     from the ticker's home-market index (S&P 500 for US, Hang Seng for HK), plus SEC
     filings for US listings; a "News behind the chart" list below shows the headlines;
   - "AI outlook" generates a past/present/future analysis; the chat box talks to your
-    local AI, grounded in the financial-models reference document plus live data for
-    the loaded ticker.
+    local AI, grounded in the financial-models reference document, live data for the
+    loaded ticker, and any lines you have drawn. Note the grounding is partial: the
+    reference document is truncated to the first 16,000 characters to fit a 7–8B model's
+    context ([backend/ai_client.py](backend/ai_client.py)), so roughly its opening 40%
+    reaches the model and the later sections never do.
 - **Tab 2 — Financial Models**: pulls the company's financial reports automatically and runs
   a two-stage FCFF DCF — 5 explicit years at the starting growth rate, then a 5-year fade
   to terminal growth — with editable growth / terminal growth / WACC and a sensitivity
@@ -97,7 +121,7 @@ All AI features degrade gracefully: until Ollama is installed the site shows an
 
 ### Why scores are stored
 
-The 0–100 score is built from ~40 hand-set anchor curves in
+The 0–100 score is built from 28 hand-set anchor curves in
 [backend/scoring.py](backend/scoring.py). Those are grounded in the methodology
 reference, but they have never been calibrated against forward returns — and
 [docs/scoring-system-design.md](docs/scoring-system-design.md) §5 says so explicitly.
@@ -113,24 +137,30 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 254 tests, offline, ~2.5s
+backend\.venv\Scripts\python.exe -m pytest          # 254 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 44 tests
 ```
 
 Of the 269 collected, 15 are `network`-marked and deselected by default.
 
+CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
+than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
+`npm run build` on the frontend. Run those two lint commands before pushing or a green
+local suite will still fail CI.
+
 `tests/test_plausibility.py` encodes the acceptance criteria written in
 [docs/scoring-system-design.md](docs/scoring-system-design.md) §5.2 — "RIVN … Tier 3–5",
 "no bankrupt-adjacent name outranks a mega-cap compounder". It exists because **golden
 snapshots catch unintended change and are structurally blind to a wrong answer that never
 changes**: RIVN scored 74/Tier A against a spec of Tier 3–5, and the golden had recorded
-74/A as the *expected* value since the day it was written. Two of those tests shipped
-`xfail(strict=True)` on 2026-08-10 and were unmarked the same day when the calibration
-landed — a strict xfail reports the breach every run and errors the moment it is fixed.
+74/A as the *expected* value since the day it was written. Two of those tests (three cases,
+one being parametrised) shipped `xfail(strict=True)` on 2026-08-10 and were unmarked the
+same day when the calibration landed — a strict xfail reports the breach every run and
+errors the moment it is fixed.
 
 The suite runs entirely against seven real `get_fundamentals` payloads committed under
-`backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
+`backend/tests/fixtures/` (264 KB), covering the technology, bank, REIT, energy,
 pre-profit and HK classification paths. Golden snapshots of every scorecard are checked
 in; after a deliberate methodology change regenerate them and **review the diff — that
 diff is the record of what your change did to every score**:
@@ -163,7 +193,7 @@ Then open http://localhost:5173.
 
 ## Install guidance
 
-Your machine: **15.6 GB RAM, Intel Iris Xe (no dedicated GPU), i7-1355U, 747 GB free disk.**
+Your machine: **15.6 GB RAM, Intel Iris Xe (no dedicated GPU), i7-1355U.**
 Disk is not a constraint; RAM and CPU-only inference are what size the choices below.
 
 ### 1. Local AI — Ollama *(not installed yet)*
@@ -191,12 +221,21 @@ activate automatically (green dot in the chat panel). To use a different model, 
 |---|---|
 | Install | `backend\.venv\Scripts\python.exe -m pip install openbb` — 41 MB / 66 wheels into the existing venv. pandas & numpy are already present, so the download is small and needs no C compiler. **Stop the servers first** or Windows file locks break the install. |
 | Side effect | Downgrades `fastapi` 0.141.1 → 0.136.3 and `uvicorn` 0.52.0 → 0.40.0. Verified harmless here. Roll back with `backend\requirements.lock.txt`; the post-install state is `backend\requirements.post-openbb.txt`. |
-| Import cost | `from openbb import obb` takes ~4 s. Never import it at module scope in the request path — [backend/data_provider.py](backend/data_provider.py) defers it into the function that needs it. |
+| Import cost | `from openbb import obb` takes ~4–5 s. Never import it at module scope in the request path — every call site defers it into the function that needs it, and the symbol index is cached to disk so a warm start never pays it at all. |
 | Credentials | `C:\Users\<user>\.openbb_platform\user_settings.json` (outside the repo, never committed). There is **no** `obb.account.save()` in 4.7.2 — edit that JSON directly. |
 
-**What OpenBB is actually used for today:** the US 10-year treasury yield that feeds
-CAPM in `_wacc()`, via `obb.fixedincome.government.treasury_rates(provider="federal_reserve")`
-— free, no API key, cached once per calendar day, falls back to a constant when offline.
+**What OpenBB is actually used for today** — four calls, all on the free tier, all with a
+fallback when the fetch fails:
+
+| call | what it feeds | where |
+|---|---|---|
+| `fixedincome.government.treasury_rates` (`federal_reserve`) | US 10Y yield → CAPM in `_wacc()`; cached once per calendar day, falls back to a constant offline | [backend/data_provider.py](backend/data_provider.py) |
+| `equity.fundamental.filings` (`sec`) | the SEC filing markers on the chart | [backend/data_provider.py](backend/data_provider.py) |
+| `equity.search` (`sec`) | the 10,398-symbol index behind typo-tolerant search; fetched once, cached to disk for 30 days | [backend/search.py](backend/search.py) |
+| `equity.compare.peers` (`fmp`) | the peer set behind peer comps and the re-levered beta | [backend/comps.py](backend/comps.py) |
+
+So OpenBB is not an optional extra: without it you lose SEC chart depth, typo tolerance
+and peer betas as well as the live risk-free rate.
 
 **Free-tier reality check** (measured 2026-08-02 with valid Tiingo + FMP free keys, verified
 by raw HTTP against both vendors):
@@ -204,8 +243,9 @@ by raw HTTP against both vendors):
 | Endpoint | Free tier | Note |
 |---|---|---|
 | `fixedincome.government.treasury_rates` (`federal_reserve`) | ✅ no key | **wired in** |
-| `equity.compare.peers` (`fmp`) | ✅ | works for HK too; quality is inconsistent |
-| `equity.fundamental.filings` (`sec`) | ✅ no key | 2.5 y of dated 8-K/10-Q events, US only |
+| `equity.search` (`sec`) | ✅ no key | **wired in** — the local symbol index |
+| `equity.compare.peers` (`fmp`) | ✅ | **wired in**; works for HK too, quality is inconsistent |
+| `equity.fundamental.filings` (`sec`) | ✅ no key | **wired in** — ~5 y of dated 8-K/10-Q events, US only |
 | `equity.estimates.consensus`, `fundamental.metrics` (`fmp`) | ✅ | yfinance already covers these |
 | `equity.price.historical` (`tiingo`) | ✅ | negligible gain over yfinance |
 | **`news.company` / `news.world`** | ❌ | Tiingo `403 no permission`; FMP `402 restricted` |
@@ -214,10 +254,11 @@ by raw HTTP against both vendors):
 Historical news needs a paid plan — and paying may still not solve it: Tiingo's news API
 backfills only ~7 months, and FMP Starter is US-only. **Neither covers HK news at all.**
 
-To swap the whole data layer later: implement `OpenBBProvider` with the same five methods as
+To swap the whole data layer later: implement `OpenBBProvider` with the same six methods as
 `YFinanceProvider` in [backend/data_provider.py](backend/data_provider.py) — `get_quote`,
-`get_history`, `get_news`, `get_peer_snapshot`, `get_fundamentals` — and swap the
-last line (`provider = ...`). Nothing else in the app changes. The endpoint mapping for
+`get_history`, `get_news`, `get_peer_snapshot`, `get_filings`, `get_fundamentals` — and swap
+the last line (`provider = ...`). Nothing else in the app changes. Miss `get_filings` and
+the app still runs, but every SEC marker disappears from the chart. The endpoint mapping for
 every model input is documented in
 [docs/financial-models-reference.md](docs/financial-models-reference.md) (Section 6); note
 that its "free provider" column predates the measurements above.
@@ -230,8 +271,11 @@ that its "free provider" column predates the measurements above.
 backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models,
             peer comps, deterministic scoring engine + sector weight library,
             async streaming Ollama client
-            store.py                  SQLite: score history, watchlist, positions
+            store.py                  SQLite: score history, watchlist, positions, drawings
+            search.py                 ticker search: local fuzzy index + Yahoo fallback
+            drawings.py               geometry of user-drawn lines, for the AI context
             data/app.db               your data — gitignored
+            data/ticker_index.json    cached SEC symbol list — gitignored
             tests/                    pytest suite + committed fixtures + goldens
             requirements.lock.txt     pre-OpenBB state — the rollback target
             requirements.post-openbb.txt   runtime state
@@ -239,18 +283,20 @@ backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models
 frontend/   React (Vite) UI: Tracker, Financial Models, Scorecard, Screener, Portfolio
 docs/       financial-models-reference.md (the AI's methodology playbook)
             scoring-system-design.md (scoring architecture & rationale)
+            quant-review-2026-08-06.md (methodology review that drove the 08-07 fixes)
+.github/workflows/ci.yml   CI on every push: ruff + pytest, oxlint + vitest + vite build
 CHANGELOG.md   what changed, with measured before/after
 TODOLIST.md    open work, ranked, with the trigger for each deferred item
 pytest.ini     test config; network tests deselected by default
-start.bat   one-click cold start (backend + frontend + browser)
+start.bat / start.ps1   one-click cold start (backend + frontend + browser)
 ```
 
 ## Notes & limitations
 
 - **News is still ~10 stories per feed**, spanning only a few days — measured
   2026-08-06, AAPL's 20 news items covered **3 distinct dates**. Chart depth now comes
-  from **SEC filings** instead (free, no key, ~5 years: AAPL has 278 events over 140
-  dates). Both `obb.news.company` and `obb.news.world` remain paywalled, and no paid
+  from **SEC filings** instead (free, no key, ~5 years of history). Both
+  `obb.news.company` and `obb.news.world` remain paywalled, and no paid
   plan in that list covers HK news.
   **SEC filings are US-only** — EDGAR has no CIK for `0700.HK`, so HK charts show news
   markers only (~10 dates) and the chart says so. HK event depth needs a non-OpenBB
@@ -264,6 +310,15 @@ start.bat   one-click cold start (backend + frontend + browser)
   legs from the same period); `info["freeCashflow"]` is only a fallback because yfinance
   reports it annually for some issuers and quarterly for others. `assumptions.fcf_source`
   records which one was used.
+- **That statement figure is levered, and the DCF un-levers it.** Under US GAAP interest
+  paid sits inside operating cash flow, so `OCF + CapEx` is closer to free cash flow to
+  equity than to FCFF — discounting it at WACC *and* subtracting net debt would charge the
+  debt twice. The model adds back `interest × (1 − tax)` to reach FCFF. The same figure
+  stays levered for the two FCF scoring metrics, which divide by market cap and net income
+  and are correctly after interest. `assumptions.fcff_basis` names which case applied:
+  interest recovered from the statements, not required (IFRS filers such as 0700.HK put
+  interest in financing already), or an unverified classification where no adjustment is
+  made.
 - The DCF risk-free rate is the live US 10Y treasury yield, refreshed once per day, with a
   4.3% fallback when OpenBB or the Fed feed is unreachable. HK issuers use the same USD
   rate — the HKD peg makes it an acceptable proxy, not a correct one.
@@ -294,7 +349,7 @@ start.bat   one-click cold start (backend + frontend + browser)
 - **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
   Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each
   with its published threshold. They stay out of the score because the composite already
-  blends ~40 anchor curves with no forward-return validation; adding four more would move
+  blends 28 anchor curves with no forward-return validation; adding four more would move
   every score without adding evidence. Z reports `n/a` with a reason for banks, insurers,
   REITs and utilities rather than mislabelling an asset-heavy balance sheet as distress.
 - Cost of debt is the risk-free rate plus a synthetic credit spread keyed on interest
@@ -302,7 +357,7 @@ start.bat   one-click cold start (backend + frontend + browser)
   for every market and period.
 - Corporate tax defaults to the statutory rate for the listing currency (HKD 16.5%,
   USD 21%, otherwise 21%) and is overridable per request.
-- Terminal value is 51–66% of enterprise value on the sample fixtures. Above 75% the UI
+- Terminal value is 53–66% of enterprise value on the sample fixtures. Above 75% the UI
   flags it: at that point the perpetuity assumption, not the explicit forecast, is
   producing the answer. Cross-check with the implied exit multiple — a DCF that only works
   by exiting far below today's trading multiple is assuming compression, which is a stance
