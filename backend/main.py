@@ -25,6 +25,7 @@ import financial_models
 import forensics
 import scoring
 import search
+import sector_weights
 import store
 from data_provider import provider
 
@@ -227,7 +228,11 @@ def analysis(ticker: str):
 
 class DcfAssumptions(BaseModel):
     growth_rate: float | None = None
-    terminal_growth: float = financial_models.TERMINAL_GROWTH
+    # None => the platform's policy rate, which is TERMINAL_GROWTH held under
+    # the GDP and risk-free ceilings. Sending a number overrides both, which is
+    # what a what-if is for. Defaulting this to TERMINAL_GROWTH would have made
+    # every request look like a deliberate override and silenced the ceilings.
+    terminal_growth: float | None = None
     wacc_override: float | None = None
     # None => statutory rate for the listing's jurisdiction (HKD 16.5%, USD 21%)
     tax_rate: float | None = None
@@ -258,9 +263,52 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
         or comps.suggest_peers(ticker)
     f = _guard(provider.get_fundamentals, ticker)
     result = comps.comps_analysis(f, tickers)
-    dcf = financial_models.dcf_valuation(f, peers=_peer_beta_inputs(f))
-    result["football_field"] = comps.football_field(f, dcf, result)
+    peer_betas = _peer_beta_inputs(f)
+    dcf = financial_models.dcf_valuation(f, peers=peer_betas)
+    # The football field refuses to draw a DCF bar for a company type the model
+    # does not fit, so the classification has to be resolved here — the same
+    # statement-verified FCF the scorer uses, for the same reason (see
+    # sector_weights.classify's docstring on info["freeCashflow"]).
+    statement_fcf = financial_models._statement_fcf(f["cash_flow"])
+    classification = sector_weights.classify(
+        f["info"], statement_fcf[1] if statement_fcf else None)
+    result["classification"] = classification
+    result["dcf_applicable"] = sector_weights.dcf_applies(classification)
+    # Resolved before the triangulation rather than after it: the gap bridge
+    # below measures against this price, so it has to exist by then.
     result["current_price"] = f["info"].get("currentPrice") or f["info"].get("regularMarketPrice")
+    result["football_field"] = comps.football_field(f, dcf, result, classification)
+    result["triangulation"] = comps.triangulate(result["football_field"])
+    # Why the DCF and the price differ, named. Only where a DCF applies at all —
+    # for a bank or a REIT there is no gap to explain, there is no model.
+    if result["dcf_applicable"]:
+        result["triangulation"]["price_reconciliation"] = \
+            financial_models.reconcile_to_price(f, dcf, peer_betas)
+        # The same question as arithmetic rather than as a verdict: what our
+        # number is, what the one justifiable adjustment does to it, and how
+        # much distance is left over. Shown ahead of the conviction grade,
+        # which came out LOW on every name tested and so said nothing.
+        result["triangulation"]["price_gap_bridge"] = \
+            comps.price_gap_bridge(dcf, result["current_price"])
+    # When the anchors diverge the reference doc forbids averaging them and asks
+    # for the assumption that separates them instead. Only computed on the
+    # divergent path, since each back-solve runs a handful of extra DCFs.
+    tri = result["triangulation"]
+    if tri["diverged"] and result["dcf_applicable"] and not dcf.get("error"):
+        core = next((r for r in result["football_field"]
+                     if r["method"].startswith("Peer multiples")), None)
+        tri["reconciling_growth"] = comps.reconciling_growth(
+            f, core["mid"], peer_betas) if core else None
+        tri["growth_used"] = dcf.get("assumptions", {}).get("growth_rate_year1")
+        tri["growth_source"] = dcf.get("assumptions", {}).get("growth_source")
+        # The other half of the explanation: the two anchors disagree partly
+        # because a 2.5% perpetuity cannot express what today's multiple already
+        # assumes. Carried here because the Scorecard has no other route to the
+        # DCF's diagnostics.
+        diag = dcf.get("diagnostics", {})
+        tri["market_implied_terminal_growth"] = diag.get("market_implied_terminal_growth")
+        tri["market_implied_growth_high"] = diag.get("market_implied_growth_high")
+        tri["nominal_gdp_growth"] = diag.get("nominal_gdp_growth")
     return result
 
 

@@ -428,6 +428,15 @@ nav button.active {
   display: inline-block;
 }
 
+/* Names the unit the MA numbers count, since MA50 is 50 minutes on the 1d
+   chart and 50 days on the 5y one. */
+.ma-basis {
+  opacity: 0.65;
+  font-size: 11px;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+
 .chart-wrap {
   position: relative;
 }
@@ -1198,6 +1207,95 @@ nav button.active {
   font-weight: 600;
 }
 
+/* Price-gap bridge — leads the football field's notes, so it is set as a block
+   rather than as another chart-note paragraph. */
+.gap-bridge {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.gap-bridge-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.gap-bridge-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.gap-bridge-table td {
+  padding: 3px 0;
+  color: var(--muted);
+}
+
+.gap-bridge-table td:last-child {
+  text-align: right;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.gap-bridge-table .gap-adj td {
+  font-style: italic;
+}
+
+.gap-bridge-table .gap-subtotal td {
+  border-top: 1px solid var(--border);
+}
+
+.gap-bridge-table .gap-residual td {
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Base-year history: the newest row is the one the DCF actually anchors on,
+   so it is marked rather than left for the reader to count down to. */
+.base-year-latest td {
+  background: rgba(120, 140, 160, 0.10);
+}
+
+.base-year-mean td {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* Analyst target — sits with the pillars but is deliberately not one of them,
+   so it is set apart by a dashed rule rather than styled as another bar. */
+.analyst-context {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.analyst-context-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.analyst-context-value {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.analyst-context-note {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .ff-chart {
   display: flex;
   flex-direction: column;
@@ -1268,6 +1366,140 @@ nav button.active {
   bottom: 4px;
   background: var(--accent);
   border-radius: 4px;
+  opacity: 0.85;
+}
+
+/* The method's full spread, behind its core. Faint on purpose: it is context
+   for how far the individual estimates scatter, not the band the verdict is
+   read from — one multiple that does not transfer used to set this width and
+   the verdict with it. */
+.ff-envelope {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  background: var(--accent);
+  border-radius: 3px;
+  opacity: 0.22;
+}
+
+/* A bar cut off by the axis keeps a squared, dotted edge so the reader can see
+   the range continues past the plot — the axis is scaled to the methods that
+   carry a verdict, and a context row may run beyond it. */
+.ff-bar.clip-left,
+.ff-envelope.clip-left {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 2px dotted var(--text);
+}
+
+.ff-bar.clip-right,
+.ff-envelope.clip-right {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 2px dotted var(--text);
+}
+
+/* Held open at the minimum width to stay visible, which makes it wider than its
+   own data. Outlined so that exaggeration is visible rather than silent. */
+.ff-bar-exaggerated {
+  outline: 1px dashed var(--gold);
+  outline-offset: 1px;
+}
+
+/* Where every scored method's range intersects — the spec's "defensible
+   fair-value band". Spans the plot behind the rows, so it reads as the zone
+   the bars land in rather than as another bar. */
+.ff-overlap {
+  position: absolute;
+  top: 16px;
+  bottom: 20px;
+  background: rgba(46, 189, 133, 0.14);
+  border-left: 1px dashed rgba(46, 189, 133, 0.55);
+  border-right: 1px dashed rgba(46, 189, 133, 0.55);
+  pointer-events: none;
+}
+
+/* Analyst targets are display-only per the reference doc, so the row is present
+   but must not compete. Lightening a filled bar was not enough: measured
+   2026-08-12 the target range spans 93.8% of the plot on 0700.HK and 93.0% on
+   9988.HK, so the widest, most eye-catching object on most charts was the one
+   row excluded from the verdict. Rescaling cannot fix that — the range really
+   is that wide — so a context row is drawn as a whisker with end caps rather
+   than a block. It still shows exactly where the range starts and ends. */
+.ff-row-context .ff-label { opacity: 0.75; }
+
+.ff-row-context .ff-bar {
+  top: 50%;
+  bottom: auto;
+  height: 2px;
+  margin-top: -1px;
+  opacity: 0.55;
+  border-radius: 0;
+}
+
+.ff-row-context .ff-bar::before,
+.ff-row-context .ff-bar::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  height: 10px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.ff-row-context .ff-bar::before { left: 0; }
+.ff-row-context .ff-bar::after { right: 0; }
+
+/* A clipped end has no cap — the range continues past the axis, so drawing a
+   terminator there would claim an endpoint the plot cannot show. */
+.ff-row-context .ff-bar.clip-left,
+.ff-row-context .ff-bar.clip-right { border: none; }
+.ff-row-context .ff-bar.clip-left::before { display: none; }
+.ff-row-context .ff-bar.clip-right::after { display: none; }
+
+.ff-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: help;
+}
+
+.ff-conviction {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ff-conviction.high { color: var(--up); }
+.ff-conviction.medium { color: var(--gold); }
+.ff-conviction.low { color: var(--down); }
+
+.ff-divergence {
+  border-left: 2px solid var(--gold);
+  padding-left: 10px;
+}
+
+/* A substituted input means the model is not running on a figure its primary
+   source published, so it is flagged red — what is on screen is not a forecast
+   for this company. An irreconcilable gap is amber: real, but a statement about
+   the market rather than a fault. */
+.ff-recon-input_substituted { border-left-color: var(--down); }
+.ff-recon-reconcilable { border-left-color: var(--up); }
+
+/* Forecaster disagreement, on its own scale — tight is not "good" and wide is
+   not "bad", they are different amounts of information. */
+.ff-tag.disp-tight { color: var(--up); border-color: rgba(46, 189, 133, 0.4); }
+.ff-tag.disp-moderate { color: var(--muted); }
+.ff-tag.disp-wide { color: var(--gold); border-color: rgba(240, 185, 11, 0.4); }
+
+.ff-skipped {
   opacity: 0.85;
 }
 

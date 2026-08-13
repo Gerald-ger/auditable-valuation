@@ -351,7 +351,9 @@ def test_a_single_currency_issuer_is_untouched_by_any_of_this(monkeypatch):
     monkeypatch.setattr(fm, "fx_rate", explode)
     dcf = fm.dcf_valuation(load_fundamentals("AAPL"))
     assert dcf["assumptions"]["fx_basis"] == "single_currency"
-    assert dcf["fair_value_per_share"] == pytest.approx(143.99, rel=1e-3)
+    # 143.99 under the old 5-year growth plateau; 129.29 now that the explicit
+    # stage matches the one-year horizon of the consensus that feeds it
+    assert dcf["fair_value_per_share"] == pytest.approx(129.29, rel=1e-3)
 
 
 def test_peer_leverage_is_put_on_one_basis_before_unlevering():
@@ -431,6 +433,277 @@ def test_implied_exit_multiple_is_absent_without_ebitda(monkeypatch):
     f = load_fundamentals("AAPL")
     f["info"]["ebitda"] = None
     assert fm.dcf_valuation(f)["diagnostics"]["implied_exit_ev_ebitda"] is None
+
+
+@pytest.mark.parametrize("stem", ["AAPL", "MSFT", "XOM", "0700_HK", "O"])
+def test_market_implied_growth_reproduces_the_traded_multiple(stem, monkeypatch):
+    """The exit-multiple check run backwards, and the direction that answers a
+    question: what perpetual growth does today's price already assume?
+
+    It has to invert the forward diagnostic exactly, or the number is a
+    decoration. Feeding the solved rate back through
+    `conv x (1+g)/(WACC-g)` must land on the traded multiple.
+    """
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals(stem)
+    d = fm.dcf_valuation(f)
+    diag, a = d["diagnostics"], d["assumptions"]
+
+    g = diag["market_implied_terminal_growth"]
+    conversion = a["base_fcf"] / f["info"]["ebitda"]
+    round_trip = conversion * (1 + g) / (a["wacc"] - g)
+
+    assert round_trip == pytest.approx(diag["current_ev_ebitda"], rel=0.01)
+    assert g < a["wacc"]
+
+
+def test_market_implied_growth_is_flagged_against_nominal_gdp(monkeypatch):
+    """Measured 2026-08-12: AAPL's price needs 7.30% perpetual free-cash-flow
+    growth, above the ~4% an economy grows; 0700.HK needs 3.23% and does not.
+    That difference is the whole point of the flag — it separates 'the market is
+    pricing supernormal growth' from 'the DCF disagrees about the forecast'."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    aapl = fm.dcf_valuation(load_fundamentals("AAPL"))["diagnostics"]
+    tencent = fm.dcf_valuation(load_fundamentals("0700_HK"))["diagnostics"]
+
+    assert aapl["market_implied_terminal_growth"] > fm.NOMINAL_GDP_GROWTH
+    assert aapl["market_implied_growth_high"] is True
+    assert tencent["market_implied_terminal_growth"] < fm.NOMINAL_GDP_GROWTH
+    assert tencent["market_implied_growth_high"] is False
+    assert aapl["nominal_gdp_growth"] == fm.NOMINAL_GDP_GROWTH
+
+
+def test_a_negative_consensus_is_used_rather_than_floored_at_zero(monkeypatch):
+    """A company forecast to shrink must be modelled as shrinking.
+
+    XOM's consensus is **-1.9%**. Flooring that to 0% grew a declining company at
+    zero and inflated its fair value by 15.7% (75.30 against 66.65 on this
+    fixture) — an *overstatement*, which is the dangerous direction for a
+    valuation tool. The ceiling stays, because erring there produces
+    conservatism; the floor is now only a data-validity bound.
+    """
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("XOM")
+    d = fm.dcf_valuation(f)
+    a = d["assumptions"]
+
+    assert a["growth_rate_published"] < 0
+    assert a["growth_rate_year1"] == a["growth_rate_published"]   # used, not floored
+    assert fm.reconcile_to_price(f, d)["growth_input_substituted"] is False
+
+
+def test_an_implausible_consensus_is_rejected_not_truncated(monkeypatch):
+    """The distinction the whole design turns on.
+
+    Truncation substitutes a number no source produced (25%) and the reader
+    cannot trace. Rejection discards the bad figure, falls back to the next
+    source, and says so — provenance survives. A consensus of 900% is corrupt
+    data; one of 42.6% from 55 analysts is not, and the model must tell them
+    apart rather than capping both.
+    """
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    f["estimates"] = {"revenue_growth_fwd": 9.0}
+    f["info"]["revenueGrowth"] = 0.08
+    a = fm.dcf_valuation(f)["assumptions"]
+
+    assert a["growth_source"] == "consensus_rejected_implausible"
+    assert a["growth_rate_year1"] == pytest.approx(0.08)   # fell back, not capped
+    assert a["growth_rate_published"] == 9.0               # and the rejected figure survives
+
+
+def test_a_high_but_credible_consensus_is_used_as_published(monkeypatch):
+    """NVDA's 42.6% from 55 analysts and AMD's 72.1% are observations, not noise.
+    The old 25% ceiling truncated both, which produced the whole of NVDA's
+    -58.7% verdict."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    f["estimates"] = {"revenue_growth_fwd": 0.7212}
+    a = fm.dcf_valuation(f)["assumptions"]
+
+    assert a["growth_source"] == "analyst_consensus_fwd"
+    assert a["growth_rate_year1"] == pytest.approx(0.7212)
+
+
+def test_the_explicit_stage_matches_the_horizon_of_its_input(monkeypatch):
+    """The consensus forecasts one year, so it is applied for one year. Holding
+    it flat for five invented four years nobody forecast — on AMD's 72.1% that
+    compounded free cash flow 15.1x before any fade began."""
+    assert fm.STAGE1_YEARS == 1
+    assert fm.STAGE1_YEARS + fm.STAGE2_YEARS == fm.PROJECTION_YEARS == 10
+    path = fm._growth_path(0.4257, 0.025)
+    assert path[0] == pytest.approx(0.4257)      # year 1 as forecast
+    assert path[1] < path[0]                     # and decaying from year 2
+    assert path[-1] == pytest.approx(0.025)
+
+
+def test_a_synthesised_default_growth_is_not_reported_as_measured(monkeypatch):
+    """With no consensus and no trailing figure the model falls back to 5%. That
+    number was previously labelled `trailing_revenue_growth` — indistinguishable
+    downstream from a figure somebody actually measured, which is the silent
+    assumption the platform is meant not to make."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    f["estimates"] = {}
+    f["info"]["revenueGrowth"] = None
+    a = fm.dcf_valuation(f)["assumptions"]
+
+    assert a["growth_rate_year1"] == fm.DEFAULT_GROWTH_RATE
+    assert a["growth_source"] == "default_assumed"
+
+
+def test_each_growth_provenance_gets_its_own_label(monkeypatch):
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    f["estimates"] = {"revenue_growth_fwd": 0.11}
+    assert fm.dcf_valuation(f)["assumptions"]["growth_source"] == "analyst_consensus_fwd"
+
+    f["estimates"] = {}
+    f["info"]["revenueGrowth"] = 0.07
+    assert fm.dcf_valuation(f)["assumptions"]["growth_source"] == "trailing_revenue_growth"
+
+
+def test_a_reconcilable_gap_names_the_assumption_that_closes_it(monkeypatch):
+    """0700.HK's DCF sits above the price, but only on the terminal assumption —
+    it meets the market at a terminal rate below what an economy grows. That is
+    a forecast disagreement, and saying so is different from saying the market
+    is wrong."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("0700_HK")
+    r = fm.reconcile_to_price(f, fm.dcf_valuation(f))
+    assert r["verdict"] == "reconcilable"
+    assert r["required_terminal_growth"] <= fm.NOMINAL_GDP_GROWTH
+
+
+@pytest.mark.parametrize("stem", ["AAPL", "MSFT"])
+def test_an_irreconcilable_gap_says_so_rather_than_blaming_the_company(stem, monkeypatch):
+    """Measured 2026-08-13 at a 4.3% risk-free rate: AAPL needs 6.87% terminal
+    growth or 24.06% near-term to meet its price — the first above what an
+    economy grows, the second two and a half times its own 9.74% consensus.
+    Neither is defensible, so the honest reading is that a perpetuity cannot
+    express what the market is pricing, not that the stock is expensive.
+
+    Note the second leg is *reachable* (it sits inside the model's 0-25% band)
+    and still not *plausible*. Testing reachability alone flipped this verdict on
+    a 42bp move in the risk-free rate; testing it against consensus holds it
+    steady from 4.0% to 5.2%.
+    """
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals(stem)
+    d = fm.dcf_valuation(f)
+    r = fm.reconcile_to_price(f, d)
+
+    assert r["verdict"] == "irreconcilable"
+    assert r["required_terminal_growth"] > fm.NOMINAL_GDP_GROWTH
+    g1 = r["required_growth_rate"]
+    consensus = d["assumptions"]["growth_rate_year1"]
+    assert g1 is None or g1 > consensus * fm.GROWTH_PLAUSIBILITY_FACTOR
+
+
+def test_the_verdict_does_not_flip_on_a_small_move_in_the_risk_free_rate(monkeypatch):
+    """A classification that changes when the 10Y moves 40bp is not a
+    classification. Judging the near-term leg against the model's guardrail did
+    exactly that on AAPL; judging it against consensus does not."""
+    f = load_fundamentals("AAPL")
+    verdicts = set()
+    for rate in (0.040, 0.043, 0.0472, 0.052):
+        monkeypatch.setattr(fm, "risk_free_rate", lambda fb, v=rate: v)
+        verdicts.add(fm.reconcile_to_price(f, fm.dcf_valuation(f))["verdict"])
+    assert verdicts == {"irreconcilable"}
+
+
+def test_a_small_gap_is_left_alone(monkeypatch):
+    """Within 10% there is no binding assumption to name, and naming one would
+    be reading noise."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    d = fm.dcf_valuation(f)
+    d["current_price"] = d["fair_value_per_share"] * 1.04
+    r = fm.reconcile_to_price(f, d)
+    assert r["verdict"] == "aligned"
+    assert r["required_terminal_growth"] is None
+
+
+def test_the_back_solver_returns_none_outside_its_reachable_band(monkeypatch):
+    """The generalised solver underneath both back-solves. 'No rate in this band
+    gets you there' is the result that makes a gap irreconcilable."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    assert fm.solve_for_fair_value(f, 1e9, "growth_rate", 0.0, 0.25) is None
+    hit = fm.solve_for_fair_value(
+        f, fm.dcf_valuation(f, growth_rate=0.12)["fair_value_per_share"],
+        "growth_rate", 0.0, 0.25)
+    assert hit == pytest.approx(0.12, abs=0.002)
+
+
+def test_the_base_fcf_bridge_is_auditable_and_sums(monkeypatch):
+    """Every row is a filed line item, and they must add up to the figure shown.
+
+    The bridge is built instead of a median of past free cash flows on purpose:
+    a median is a statistical smear the reader cannot decompose, while each term
+    here can be looked up in the filing. Under a no-hidden-adjustments rule the
+    more transparent construction wins even though it looks more aggressive.
+    """
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    q = fm.dcf_valuation(load_fundamentals("MSFT"))["diagnostics"]["base_fcf_quality"]
+
+    assert q["anomalous"] is True
+    assert sum(r["value"] for r in q["bridge"]) == pytest.approx(q["normalised_fcf"], abs=2)
+
+
+def test_a_normalised_base_never_replaces_the_reported_one(monkeypatch):
+    """The platform can detect an anomaly but cannot read the notes to identify
+    its cause, so the adjustment stays an alternative shown beside the headline.
+    Substituting it would be exactly the silent correction the design forbids."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("MSFT")
+    d = fm.dcf_valuation(f)
+    reported = fm._statement_fcf(f["cash_flow"])[1]
+    q = d["diagnostics"]["base_fcf_quality"]
+
+    assert q["normalised_fcf"] != reported          # an alternative exists
+    assert d["assumptions"]["base_fcf"] >= reported  # ...and the DCF did not use it
+    assert d["assumptions"]["base_fcf"] - reported == d["assumptions"]["fcf_interest_addback"]
+
+
+def test_growth_alone_does_not_trip_the_base_anomaly_detector(monkeypatch):
+    """Cash conversion is the trigger, not the level of free cash flow. Measured
+    2026-08-13, an FCF-vs-own-median test fired on NVDA (+120%) and AMD (+144%)
+    where nothing was wrong; both sit inside 8% on conversion."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    # triple the newest year's cash flow and earnings together: the business got
+    # bigger, its conversion did not change, so nothing should be flagged
+    newest = sorted(f["cash_flow"])[-1]
+    for row in ("Operating Cash Flow", "Capital Expenditure"):
+        if f["cash_flow"][newest].get(row) is not None:
+            f["cash_flow"][newest][row] *= 3
+    if f["income_statement"].get(newest, {}).get("Net Income") is not None:
+        f["income_statement"][newest]["Net Income"] *= 3
+
+    assert fm.base_fcf_quality(f, newest)["anomalous"] is False
+
+
+def test_a_base_anomaly_needs_at_least_two_comparison_years(monkeypatch):
+    """One prior year is not a history, and a reference drawn from it would be
+    an opinion rather than a measurement."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("MSFT")
+    periods = sorted(f["cash_flow"], reverse=True)
+    f["cash_flow"] = {p: f["cash_flow"][p] for p in periods[:2]}
+    q = fm.base_fcf_quality(f, periods[0])
+    assert q["anomalous"] is False and q["deviation"] is None
+
+
+def test_market_implied_growth_is_absent_without_a_traded_multiple(monkeypatch):
+    """No multiple, no question to ask — and a fabricated one would be worse
+    than silence, the same rule the exit multiple above follows."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("AAPL")
+    f["info"]["enterpriseToEbitda"] = None
+    diag = fm.dcf_valuation(f)["diagnostics"]
+    assert diag["market_implied_terminal_growth"] is None
+    assert diag["market_implied_growth_high"] is False
 
 
 # ── jurisdiction tax (item 8) ────────────────────────────────────────
@@ -574,3 +847,252 @@ def test_dcf_reports_the_addback_it_applied(monkeypatch):
     a = fm.dcf_valuation(load_fundamentals("0700_HK"))["assumptions"]
     assert a["fcf_interest_addback"] == 0
     assert a["fcff_basis"] == "not_required_interest_in_financing"
+
+
+# ── terminal growth: a policy with visible ceilings ──────────────────
+
+def test_the_terminal_rate_is_the_anchor_when_both_ceilings_are_slack():
+    a = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
+    assert a["terminal_growth"] == fm.TERMINAL_GROWTH
+    assert a["terminal_growth_source"] == "platform_default"
+
+
+def test_both_ceilings_are_reported_even_when_neither_binds():
+    """A limit the reader cannot see is a limit the reader cannot check."""
+    a = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
+    assert a["terminal_growth_ceilings"] == {
+        "nominal_gdp_growth": fm.NOMINAL_GDP_GROWTH,
+        "risk_free_rate": a["risk_free_rate"],
+    }
+    assert a["terminal_growth_anchor"] == fm.TERMINAL_GROWTH
+
+
+def test_a_low_rate_regime_pulls_the_terminal_rate_down(monkeypatch):
+    """The case the cap exists for: a 0.60% ten-year, as in 2020.
+
+    A fixed 2.5% there assumes perpetual growth four times what the bond market
+    prices. This is the only branch that changes a valuation, so it is the one
+    worth pinning.
+    """
+    monkeypatch.setattr(fm, "RISK_FREE_RATE", 0.006)
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: 0.006)
+    a = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
+    assert a["terminal_growth"] == 0.006
+    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
+
+
+def test_an_explicit_rate_overrides_both_ceilings():
+    """Guards the reconciliation.
+
+    `solve_for_fair_value` sweeps terminal growth far past the ceilings on
+    purpose. Capping it there would report the most useful sentence the
+    reconciliation produces — "closing this gap needs 7% perpetual growth" — as
+    an unreachable target, i.e. as None.
+    """
+    a = fm.dcf_valuation(load_fundamentals("AAPL"), terminal_growth=0.07)["assumptions"]
+    assert a["terminal_growth"] == 0.07
+    assert a["terminal_growth_source"] == "user"
+
+
+def test_the_ceiling_does_not_break_the_back_solve():
+    f = load_fundamentals("AAPL")
+    dcf = fm.dcf_valuation(f)
+    rec = fm.reconcile_to_price(f, dcf)
+    required = rec["required_terminal_growth"]
+    assert required is not None, "the ceiling has swallowed the reconciliation"
+    assert required > fm.NOMINAL_GDP_GROWTH, (
+        "AAPL's gap needs perpetual growth above what an economy grows — that "
+        "is the finding, and it must survive the cap")
+
+
+# ── base year: representative, or a bias? ────────────────────────────
+
+@pytest.mark.parametrize("stem", ["AAPL", "MSFT", "XOM", "0700_HK"])
+def test_the_margin_decomposition_is_exact(stem):
+    """FCF/revenue = CFO/revenue - capex/revenue, with no residual.
+
+    This is what lets the panel say "spending more" rather than "earning less"
+    without assuming anything. If the two legs stopped summing to the whole, the
+    attribution would be a guess wearing arithmetic's clothes.
+    """
+    f = load_fundamentals(stem)
+    ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
+    assert ctx["history"], f"{stem} produced no history"
+    for h in ctx["history"]:
+        assert h["fcf_margin"] == pytest.approx(
+            h["operating_margin_cash"] - h["capex_to_revenue"], abs=2e-4), h["period"]
+
+
+def test_normalisation_moves_names_in_opposite_directions():
+    """The anti-tuning property, and the reason this change is defensible.
+
+    A correction that narrowed every gap to price would be a price tracker.
+    0700.HK's newest year is *above* its own mean, so normalising moves it down
+    while moving MSFT and XOM up. Pinning both directions means a future change
+    that quietly made this one-way would fail here.
+    """
+    def band(stem):
+        d = fm.dcf_valuation(load_fundamentals(stem))
+        b = d["diagnostics"]["base_year"]
+        return d["fair_value_per_share"], b["fair_value_normalised"]
+
+    reported_hk, normalised_hk = band("0700_HK")
+    assert normalised_hk < reported_hk, "0700.HK's base year is above its own mean"
+
+    for stem in ("MSFT", "XOM", "AAPL"):
+        reported, normalised = band(stem)
+        assert normalised > reported, f"{stem}'s base year is below its own mean"
+
+
+def test_the_band_is_linear_in_the_base_year():
+    """Fair value is homogeneous of degree one in base free cash flow, which is
+    why a depressed base is a permanent level error rather than a damped one.
+
+    Stated as a test because the whole case for showing the band rests on it.
+    """
+    f = load_fundamentals("MSFT")
+    d = fm.dcf_valuation(f)
+    b = d["diagnostics"]["base_year"]
+    scale = b["mean_fcf_margin"] / b["latest_fcf_margin"]
+
+    # equity value, not fair value: the net-debt bridge is a constant, so only
+    # the enterprise leg scales
+    ev_reported = d["enterprise_value"]
+    ev_normalised = (b["fair_value_normalised"] * f["info"]["sharesOutstanding"]
+                     + d["net_debt"])
+    assert ev_normalised / ev_reported == pytest.approx(scale, rel=0.02)
+
+
+def test_the_driver_separates_spending_more_from_earning_less():
+    """MSFT's capex ran 13.3% -> 34.9% of revenue while operating cash held up.
+    AAPL's capex barely moved. The label must tell those apart."""
+    def driver(stem):
+        f = load_fundamentals(stem)
+        return fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])["driver"]
+
+    assert driver("MSFT") == "capital_spending"
+    assert driver("XOM") == "capital_spending"
+    assert driver("AAPL") == "operating_cash"
+
+
+def test_a_representative_year_names_no_driver():
+    """There is nothing to explain when the base year is already normal, and
+    naming a driver anyway would invent a story out of rounding."""
+    f = load_fundamentals("AAPL")
+    period = fm._statement_fcf(f["cash_flow"])[0]
+    inc = f["income_statement"]
+    # force the newest year onto the mean by rebuilding it from the others
+    ctx = fm.base_year_context(f, period)
+    others = [h["fcf_margin"] for h in ctx["history"][:-1]]
+    target = sum(others) / len(others)
+    revenue = inc[period]["Total Revenue"]
+    capex = f["cash_flow"][period]["Capital Expenditure"]
+    f["cash_flow"][period]["Operating Cash Flow"] = target * revenue - capex
+
+    assert fm.base_year_context(f, period)["driver"] is None
+
+
+def test_two_periods_offer_no_band():
+    """Two observations cannot establish what is normal."""
+    f = load_fundamentals("AAPL")
+    keep = sorted(f["cash_flow"])[-2:]
+    f["cash_flow"] = {k: v for k, v in f["cash_flow"].items() if k in keep}
+    ctx = fm.base_year_context(f, keep[-1])
+    assert ctx["history"] == []
+    assert ctx["normalised_statement_fcf"] is None
+
+
+def test_the_reported_year_stays_the_headline():
+    """The band is shown beside the answer, never substituted for it."""
+    f = load_fundamentals("MSFT")
+    d = fm.dcf_valuation(f)
+    statement_fcf = fm._statement_fcf(f["cash_flow"])[1]
+    assert d["assumptions"]["base_fcf"] == statement_fcf + d["assumptions"]["fcf_interest_addback"]
+    assert d["diagnostics"]["base_year"]["fair_value_normalised"] != d["fair_value_per_share"]
+
+
+def test_the_decomposition_reconciles_against_the_average_on_screen():
+    """One baseline, not two.
+
+    The panel shows a table of years, an average, a ratio, and two legs. All
+    four have to be computable from each other or the reader cannot check any of
+    them: latest margin minus the stated average must equal the operating leg
+    minus the capital leg, exactly.
+    """
+    for stem in ("MSFT", "XOM", "AAPL", "0700_HK"):
+        f = load_fundamentals(stem)
+        ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
+        gap = ctx["latest_fcf_margin"] - ctx["mean_fcf_margin"]
+        # The identity is exact on the underlying figures. Four of them are
+        # rounded to 4dp for display, so the reconciliation of the *published*
+        # numbers carries up to 2e-4 — a hundredth of a percentage point, below
+        # anything the panel prints.
+        assert gap == pytest.approx(ctx["operating_delta"] - ctx["capex_delta"],
+                                    abs=2.5e-4), stem
+
+
+# The six ways the two legs can combine. Only three occur in the fixtures, and
+# an earlier draft derived this from `driver` alone — which rendered 0700.HK as
+# "operating cash is the larger leg" followed by "a business spending more", a
+# sentence contradicting itself. Each branch is constructed here so none can
+# regress unseen.
+
+def _synthetic(margins):
+    """Fundamentals carrying an exact (ocf, capex) history at constant revenue.
+
+    `margins` is [(ocf_margin, capex_intensity), ...] oldest-first.
+    """
+    revenue = 1_000.0
+    cf, inc = {}, {}
+    for i, (ocf_m, capex_i) in enumerate(margins):
+        period = f"202{i}-12-31"
+        cf[period] = {"Operating Cash Flow": ocf_m * revenue,
+                      "Capital Expenditure": -capex_i * revenue}
+        inc[period] = {"Total Revenue": revenue}
+    return {"cash_flow": cf, "income_statement": inc}, sorted(cf)[-1]
+
+
+@pytest.mark.parametrize("margins,driver,note", [
+    # capex driven, operating cash rose -> spending more, not earning less
+    ([(0.40, 0.10), (0.40, 0.10), (0.45, 0.30)],
+     "capital_spending", "spending_more_not_earning_less"),
+    # capex driven, operating cash fell -> both legs hurt
+    ([(0.40, 0.10), (0.40, 0.10), (0.36, 0.30)],
+     "capital_spending", "both_adverse"),
+    # capex driven downward, operating cash fell slightly -> net better
+    ([(0.40, 0.30), (0.40, 0.30), (0.38, 0.10)],
+     "capital_spending", "spending_less_offset_weaker_earnings"),
+    # operating driven, both rose -> earned more despite spending more
+    ([(0.40, 0.10), (0.40, 0.10), (0.60, 0.12)],
+     "operating_cash", "earning_more_despite_spending_more"),
+    # operating driven down, capex also down -> earning less, not spending more
+    ([(0.40, 0.10), (0.40, 0.10), (0.25, 0.09)],
+     "operating_cash", "earning_less_not_spending_more"),
+    # operating up, capex down -> everything in free cash flow's favour
+    ([(0.40, 0.10), (0.40, 0.10), (0.55, 0.08)],
+     "operating_cash", "both_favourable"),
+])
+def test_every_driver_combination_is_named_correctly(margins, driver, note):
+    f, period = _synthetic(margins)
+    ctx = fm.base_year_context(f, period)
+    assert ctx["driver"] == driver
+    assert ctx["driver_note"] == note
+
+
+def test_a_representative_year_names_neither_driver_nor_note():
+    f, period = _synthetic([(0.40, 0.10), (0.40, 0.10), (0.40, 0.10)])
+    ctx = fm.base_year_context(f, period)
+    assert ctx["driver"] is None
+    assert ctx["driver_note"] is None
+
+
+def test_the_note_never_contradicts_the_driver_on_real_data():
+    """0700.HK is the case: operating-cash-driven with both legs up. A note
+    claiming "spending more" there would contradict the leg named beside it."""
+    spending_notes = {"spending_more_not_earning_less",
+                      "spending_less_offset_weaker_earnings"}
+    for stem in ("MSFT", "XOM", "AAPL", "0700_HK"):
+        f = load_fundamentals(stem)
+        ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
+        if ctx["driver"] == "operating_cash":
+            assert ctx["driver_note"] not in spending_notes, stem

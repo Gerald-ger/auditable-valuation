@@ -47,6 +47,13 @@ METRIC_ANCHORS = {
     "price_vs_200dma":    [(-0.30, 5), (-0.10, 30), (0.0, 55), (0.10, 80), (0.25, 100), (0.60, 85)],
     "range_52w_pos":      [(0.0, 10), (0.3, 35), (0.5, 55), (0.8, 85), (1.0, 100)],
     "rel_52w_change":     [(-0.40, 5), (-0.15, 30), (0.0, 55), (0.15, 80), (0.40, 100)],
+    # Reachable by no profile — `analyst_upside` is computed and displayed but
+    # scored nowhere (see sector_weights.BASE_METRICS). Kept rather than deleted
+    # for two reasons: the note recording *why* it was dropped cites this curve's
+    # neutral point of 45 as its evidence, and `extract_metrics` still produces
+    # the metric, so scoring it again — as target *revisions* in momentum, the
+    # one form with documented information content — would need a curve, not a
+    # rewrite. Do not read its presence as "this counts".
     "analyst_upside":     [(-0.20, 10), (0.0, 45), (0.10, 65), (0.25, 85), (0.50, 100)],
 }
 
@@ -346,18 +353,30 @@ def score_company(f: dict, dcf: dict | None = None) -> dict:
         "classification": classification,
         # Whether a discounted-cash-flow valuation means anything for this
         # company type, decided by the profile rather than by whether the model
-        # happened to return a number. A REIT produces a complete DCF from
-        # `CFO - CapEx` and it is meaningless — capex *is* a REIT's acquisitions
-        # — so the valuation pillar already drops `dcf_upside_pct`. Exported so
-        # the Financial Models tab can say so instead of showing O a -63% upside
-        # with the same weight as a valid one.
-        "dcf_applicable": "dcf_upside_pct" in active,
+        # happened to return a number. Read from `sector_weights.dcf_applies`
+        # rather than restated here, because the Scorecard's football field asks
+        # the same question and the two tabs must not be able to answer it
+        # differently for one company.
+        "dcf_applicable": sector_weights.dcf_applies(classification),
         "composite_score": composite,
         "tier": tier,
         "tier_label": tier_label,
         "confidence": confidence,
         "coverage_pct": coverage,
         "pillars": pillars,
+        # Shown, never scored — see the note above sector_weights.BASE_METRICS.
+        # A target price is a twelve-month forecast of where a stock will trade,
+        # not an estimate of what the business is worth, and published targets
+        # sit above price on average. It stays on screen because a reader wants
+        # to see it; it stays out of every pillar because it must not quietly
+        # move a grade. `upside` is None below four analysts, the same gate
+        # `extract_metrics` applies and the same one the football field uses.
+        "analyst_context": {
+            "target_mean": info.get("targetMeanPrice"),
+            "analysts": info.get("numberOfAnalystOpinions"),
+            "upside": raw.get("analyst_upside"),
+            "recommendation": info.get("recommendationKey"),
+        },
         "flags": flags,
         "missing_metrics": missing,
         "caveat": CAVEAT,

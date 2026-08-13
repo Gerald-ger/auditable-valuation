@@ -23,13 +23,66 @@ EQUITY_RISK_PREMIUM = 0.05
 TERMINAL_GROWTH = 0.025
 DEFAULT_TAX_RATE = 0.21
 
-# Two-stage projection: an explicit high-growth stage, then a linear fade to the
-# terminal rate. A single 5-year fade compressed the whole growth phase of a
-# durable compounder into five years and drove structurally large negative
-# upside on mega-caps; the fade stage now carries that transition instead.
-STAGE1_YEARS = 5            # explicit forecast at the starting growth rate
-STAGE2_YEARS = 5            # linear fade from the starting rate to terminal
+# Long-run nominal GDP growth (~2% real + ~2% inflation), the line the
+# market-implied terminal growth is read against — reference doc §1.1.4: the
+# growth implied by an exit multiple should be below GDP growth, because nothing
+# outgrows the economy forever. A fixed constant in the same spirit as the
+# equity risk premium above, and the same approximation: one number for the US
+# and Hong Kong both. It never enters a valuation; it only decides whether a
+# diagnostic is flagged.
+NOMINAL_GDP_GROWTH = 0.04
+
+# Two-stage projection: an explicit stage at the forecast rate, then a linear
+# fade to the terminal rate. The explicit stage matches the horizon of the input
+# that feeds it.
+#
+# The growth figure is a **one-year** consensus — yfinance's `+1y` row is next
+# fiscal year against the current one. Holding it flat for five years invented
+# four years nobody forecast, and for a fast grower that is not a rounding
+# error: measured 2026-08-13, AMD's 72.1% consensus compounded over five flat
+# years multiplies free cash flow **15.1x** before any fade begins, which is why
+# its fair value ran from -81.4% (capped at 25%) to +33.6% (uncapped). One year
+# at the forecast rate then a linear fade gives 7.2x on NVDA against 13.5x for
+# the old plateau — most of the conservatism the cap was reaching for, without
+# discarding a single basis point of observed data.
+#
+# This is what let the 25% ceiling go. The ceiling existed to survive the
+# plateau, not to express a view about growth.
+STAGE1_YEARS = 1            # the one year the consensus actually forecasts
+STAGE2_YEARS = 9            # linear fade from that rate to terminal
 PROJECTION_YEARS = STAGE1_YEARS + STAGE2_YEARS
+
+# Bounds that reject corrupt vendor data. NOT an opinion about growth.
+#
+# The old band was (0%, 25%) and both ends were economic judgements. The floor
+# grew shrinking companies at zero — fourteen analysts put XOM at -2.3%, and
+# flooring that inflated its fair value 15.7%. The ceiling truncated genuine,
+# well-supported consensus: NVDA's 42.6% from 55 analysts became 25%, which
+# produced the whole of its -58.7% "overvalued" verdict.
+#
+# Neither survives. What remains is wide enough that only a corrupt field trips
+# it, and a value outside is **rejected** — the model falls back to the next
+# source and labels it — rather than truncated to the bound. That distinction is
+# the whole point: truncation substitutes a number no source produced and the
+# reader cannot trace; rejection keeps provenance.
+GROWTH_VALIDITY_RANGE = (-0.50, 2.00)
+
+# Used only when neither a consensus nor a trailing figure exists. Named, so it
+# can be reported as the assumption it is rather than passed off as measured.
+DEFAULT_GROWTH_RATE = 0.05
+
+# How far the stress test ranges, which is a different job from validating an
+# input and so is *not* bounded by the range above. Measured 2026-08-12, holding
+# the sweep inside the old input band made it one-sided at both ends: a company
+# at 0% growth got upside and no downside, one at 25% the reverse, while the
+# label claimed a symmetric sweep either way. A business whose cash flow shrinks
+# is a real case, and a sensitivity that cannot express it cannot stress the
+# downside.
+GROWTH_SENSITIVITY_STEPS = (-0.04, -0.02, 0.0, 0.02, 0.04)
+# Only to keep a pathological caller-supplied override from driving cash flow
+# through zero — the base rate is bounded by GROWTH_VALIDITY_RANGE in every path
+# the app itself takes, so this never binds in practice.
+GROWTH_SENSITIVITY_FLOOR = -0.5
 
 # Statutory profits/corporate tax by listing currency. yfinance does not forward
 # a country field through get_fundamentals' whitelist, and currency is a reliable
@@ -441,7 +494,7 @@ def _growth_path(growth_rate: float, terminal_growth: float) -> list[float]:
 
 
 def dcf_valuation(f: dict, growth_rate: float | None = None,
-                  terminal_growth: float = TERMINAL_GROWTH,
+                  terminal_growth: float | None = None,
                   wacc_override: float | None = None,
                   tax_rate: float | None = None,
                   peers: list[dict] | None = None) -> dict:
@@ -467,32 +520,93 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
                          "(see reference doc: use relative valuation instead)."}
 
     growth_source = "user"
+    # What the primary source published, retained so a rejection stays visible:
+    # if a consensus was discarded as implausible, the reader can see both the
+    # figure that was rejected and the one used instead.
+    growth_rate_published = None
     if growth_rate is None:
         # prefer analyst forward consensus over trailing growth
+        # Four distinct provenances, four distinct labels. Nothing here is
+        # truncated: a figure either passes the validity range and is used as
+        # published, or fails it and is rejected in favour of the next source.
+        # The label always says which, so no number on screen is untraceable.
         fwd = (f.get("estimates") or {}).get("revenue_growth_fwd")
-        rg = fwd if fwd is not None else info.get("revenueGrowth")
-        growth_source = "analyst_consensus_fwd" if fwd is not None else "trailing_revenue_growth"
-        growth_rate = max(min(rg if rg is not None else 0.05, 0.25), 0.0)
+        trailing = info.get("revenueGrowth")
+        def valid(x):
+            return x is not None and \
+                GROWTH_VALIDITY_RANGE[0] <= x <= GROWTH_VALIDITY_RANGE[1]
+
+        if valid(fwd):
+            growth_rate, growth_source = fwd, "analyst_consensus_fwd"
+        elif fwd is not None and valid(trailing):
+            growth_rate, growth_source = trailing, "consensus_rejected_implausible"
+        elif valid(trailing):
+            growth_rate, growth_source = trailing, "trailing_revenue_growth"
+        else:
+            growth_rate, growth_source = DEFAULT_GROWTH_RATE, "default_assumed"
+        # what the primary source published, kept so a rejection is visible
+        growth_rate_published = fwd if fwd is not None else trailing
 
     wacc_parts = _wacc(f, tax_rate, peers)
     wacc = wacc_override if wacc_override is not None else wacc_parts["wacc"]
+
+    # Terminal growth: the platform's policy, or exactly what the caller asked
+    # for. The two must stay distinguishable, which is why the parameter
+    # defaults to None rather than to TERMINAL_GROWTH.
+    #
+    # The policy is 2.5% held under two ceilings. Neither is a view about the
+    # company; both are arithmetic limits on what a perpetuity may claim:
+    #
+    #   nominal GDP    nothing outgrows its economy forever, so a rate above
+    #                  NOMINAL_GDP_GROWTH says the company eventually becomes
+    #                  the economy.
+    #   risk-free rate Damodaran's cap — the risk-free rate is itself roughly
+    #                  expected inflation plus expected real growth, so it is a
+    #                  market-implied read of long-run nominal growth. It binds
+    #                  only in a low-rate regime (at a 4.30% ten-year it does
+    #                  not); a 2020-style 0.6% ten-year is exactly the case it
+    #                  exists for, where a fixed 2.5% would quietly assume
+    #                  perpetual growth above what the bond market prices.
+    #
+    # Applied **only** to the default. A caller naming a rate gets that rate:
+    # `solve_for_fair_value` sweeps terminal growth well past both ceilings on
+    # purpose, and capping it there would turn "this gap needs 7.01% perpetual
+    # growth to close" — the most useful sentence the reconciliation produces —
+    # into an unreachable target reported as None.
+    terminal_growth_source = "user"
+    if terminal_growth is None:
+        rf_cap = wacc_parts["risk_free_rate"]
+        terminal_growth = min(TERMINAL_GROWTH, rf_cap)
+        terminal_growth_source = ("platform_default" if terminal_growth == TERMINAL_GROWTH
+                                  else "capped_at_risk_free_rate")
+
     if wacc <= terminal_growth:
         return {"error": f"WACC ({wacc:.2%}) must exceed terminal growth ({terminal_growth:.2%})."}
 
-    def project(w: float, g_term: float) -> tuple[float, float, float]:
-        """(PV of explicit years, PV of terminal value, final-year growth factor)."""
+    def project(w: float, g_term: float, g_start: float | None = None,
+                base: float | None = None) -> tuple[float, float, float]:
+        """(PV of explicit years, PV of terminal value, final-year growth factor).
+
+        `g_start` overrides the base growth rate so the same projection can be
+        swept for the growth sensitivity below; None means the base case.
+        `base` overrides the starting free cash flow the same way, for the
+        base-year band — the model is homogeneous of degree one in it, so the
+        override scales the result exactly and nothing damps it.
+        """
         pv = 0.0
-        cash_flow = fcf
+        cash_flow = fcf if base is None else base
         compounded = 1.0
-        for year, g in enumerate(_growth_path(growth_rate, g_term), start=1):
+        path = _growth_path(growth_rate if g_start is None else g_start, g_term)
+        for year, g in enumerate(path, start=1):
             cash_flow *= (1 + g)
             compounded *= (1 + g)
             pv += cash_flow / (1 + w) ** year
         terminal = cash_flow * (1 + g_term) / (w - g_term)
         return pv, terminal / (1 + w) ** PROJECTION_YEARS, compounded
 
-    def enterprise_value(w: float, g_term: float) -> float:
-        pv, terminal_pv, _ = project(w, g_term)
+    def enterprise_value(w: float, g_term: float, g_start: float | None = None,
+                         base: float | None = None) -> float:
+        pv, terminal_pv, _ = project(w, g_term, g_start, base)
         return pv + terminal_pv
 
     explicit_pv, terminal_pv, growth_factor = project(wacc, terminal_growth)
@@ -535,6 +649,34 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
         terminal_ev_undiscounted = terminal_pv * (1 + wacc) ** PROJECTION_YEARS
         implied_exit_multiple = round(terminal_ev_undiscounted / (ebitda * growth_factor), 1)
 
+    # And the same cross-check run backwards, which is the more useful direction.
+    #
+    # The exit multiple above reduces to `(FCF/EBITDA) x (1+g)/(WACC-g)` — the
+    # growth factor cancels — so with the terminal rate pinned at 2.5% for every
+    # company the perpetuity factor is ~14-22x for all of them, and the implied
+    # exit lands near 5-13x against 10-27x actually traded. Reading that as "the
+    # DCF says expensive" is the wrong conclusion: it is a statement about what a
+    # Gordon perpetuity can express, not about the company.
+    #
+    # Solving instead for the terminal growth that *today's own traded multiple*
+    # requires turns it into a question the reader can settle. Measured
+    # 2026-08-12: AAPL 7.30%, MSFT 7.63%, 0700.HK 3.23% — so Tencent's price
+    # needs nothing unusual, while Apple's needs free cash flow compounding above
+    # nominal GDP in perpetuity. Both legs are unit-free ratios, so no FX
+    # conversion applies (see the boundary note above).
+    #
+    #   traded = conv x (1+g)/(WACC-g),  conv = FCF/EBITDA,  k = traded/conv
+    #   =>  g = (k*WACC - 1) / (1 + k)
+    #
+    # g is always below WACC for any finite k, so the solve cannot blow up.
+    market_implied_growth = None
+    current_multiple = info.get("enterpriseToEbitda")
+    if ebitda and ebitda > 0 and current_multiple and current_multiple > 0:
+        conversion = fcf / ebitda
+        if conversion > 0:
+            k = current_multiple / conversion
+            market_implied_growth = round((k * wacc - 1) / (1 + k), 4)
+
     sensitivity = []
     for dw in (-0.01, -0.005, 0.0, 0.005, 0.01):
         row = {"wacc": round(wacc + dw, 4), "values": []}
@@ -547,7 +689,47 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
                     round((enterprise_value(w, g) - net_debt) * conv / shares, 2))
         sensitivity.append(row)
 
+    # The grid above sweeps WACC and terminal growth — the two second-order
+    # assumptions — and holds the first-order one fixed, so a reader watching it
+    # sees a band that is narrow for the wrong reason. Measured 2026-08-12 on
+    # 0700.HK the grid spans 543.96-922.81 around a 682.40 base, while moving the
+    # starting rate alone from 9.38% to 4% gives 502.96: the growth assumption
+    # crosses the gap to the peer-multiple read, and nothing on screen said so.
+    # Deliberately *not* held inside GROWTH_VALIDITY_RANGE — see its comment: the
+    # clamp bounds what the model accepts as an input, not how far a stress test
+    # is allowed to look.
+    growth_rates = [round(max(growth_rate + d, GROWTH_SENSITIVITY_FLOOR), 4)
+                    for d in GROWTH_SENSITIVITY_STEPS]
+    growth_values = [
+        round((enterprise_value(wacc, terminal_growth, g) - net_debt) * conv / shares, 2)
+        if shares else None
+        for g in growth_rates
+    ]
+
     terminal_share = round(terminal_pv / ev, 4) if ev else None
+
+    # The base-year band. The headline above stays the reported year — it ticks
+    # to a filing, and that property is worth keeping. This is the same model on
+    # the same company with the base year set to what its own history says is
+    # normal, shown beside it so the reader can see the size of that choice
+    # rather than inherit it.
+    #
+    # Direction is the point. Normalisation moves 0700.HK *down* (+29.8% ->
+    # +22.9% upside) while moving MSFT and XOM up, so it is a correction rather
+    # than a nudge toward the market price — a change that narrowed every gap
+    # would be a price tracker, not a model.
+    #
+    # The interest add-back is re-applied on top: the normalisation acts on the
+    # statement quantity `CFO - CapEx`, and the unlevering that turns it into
+    # FCFF is a separate step that must not be normalised away.
+    base_year = base_year_context(f, statement[0] if statement else None)
+    fair_value_normalised = None
+    normalised = base_year.get("normalised_statement_fcf")
+    if normalised and normalised > 0 and shares:
+        normalised_fcff = normalised + interest_addback
+        fair_value_normalised = round(
+            (enterprise_value(wacc, terminal_growth, base=normalised_fcff) - net_debt)
+            * conv / shares, 2)
 
     return {
         "assumptions": {
@@ -559,8 +741,23 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "fcf_interest_addback": round(interest_addback),
             "fcff_basis": fcff_basis,
             "growth_rate_year1": round(growth_rate, 4),
+            # None when the caller supplied the rate; differs from the above only
+            # when the published figure was rejected as implausible
+            "growth_rate_published": (round(growth_rate_published, 4)
+                                      if growth_rate_published is not None else None),
             "growth_source": growth_source,
             "terminal_growth": terminal_growth,
+            # Where 2.5% comes from, so it stops being a bare constant on
+            # screen. Both ceilings are shown whether or not they bind — a
+            # reader cannot tell that a limit was respected unless the limit
+            # is visible. "user" means the caller named the rate and neither
+            # ceiling was applied.
+            "terminal_growth_source": terminal_growth_source,
+            "terminal_growth_anchor": TERMINAL_GROWTH,
+            "terminal_growth_ceilings": {
+                "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
+                "risk_free_rate": wacc_parts["risk_free_rate"],
+            },
             "tax_rate": tax_rate,
             "projection_years": PROJECTION_YEARS,
             "stage1_years": STAGE1_YEARS,
@@ -593,15 +790,433 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "terminal_value_high": terminal_share is not None and terminal_share > 0.75,
             "implied_exit_ev_ebitda": implied_exit_multiple,
             "current_ev_ebitda": info.get("enterpriseToEbitda"),
+            # what perpetual growth today's price already assumes, and whether
+            # that is more than an economy grows
+            "market_implied_terminal_growth": market_implied_growth,
+            "market_implied_growth_high": (market_implied_growth is not None
+                                           and market_implied_growth > NOMINAL_GDP_GROWTH),
+            "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
             # empty is the healthy case: both legs of the bridge were reported
             "net_debt_assumed_zero": net_debt_assumed,
+            # whether the base year is a run-rate, with an auditable alternative
+            # where it is not. Reported stays the headline — this is shown
+            # beside it, never substituted for it.
+            "base_fcf_quality": base_fcf_quality(f, statement[0] if statement else None),
+            # The company's own margin history, the exact operating/capital
+            # decomposition of the base year, and what the valuation becomes on
+            # a normalised base. `fair_value_normalised` is the *other end of a
+            # band*, never a replacement for the headline above.
+            "base_year": {**base_year, "fair_value_normalised": fair_value_normalised,
+                          "fair_value_normalised_upside_pct":
+                              round((fair_value_normalised / price - 1) * 100, 1)
+                              if fair_value_normalised and price
+                              and fx_basis != "rate_unavailable" else None},
         },
         "sensitivity": {
             "terminal_growth_cols": [round(terminal_growth + d, 4)
                                      for d in (-0.005, -0.0025, 0.0, 0.0025, 0.005)],
             "rows": sensitivity,
         },
+        # WACC and terminal growth held at base; only the starting rate moves,
+        # so this is readable as "what the answer costs per point of growth".
+        "growth_sensitivity": {
+            "growth_rates": growth_rates,
+            "values": growth_values,
+        },
     }
+
+
+# How far this year's cash conversion may sit from the company's own history
+# before the base year stops being a run-rate.
+#
+# Deliberately keyed on FCF/net income rather than on FCF against its own median.
+# Measured across nine large caps 2026-08-13, an FCF-vs-median test fired on
+# five of seven and was mostly wrong: NVDA +120% and AMD +144% are growth, not
+# anomalies. Cash conversion separates them — those two sit inside 8% while KO,
+# whose earnings rose as its cash flow halved, breaks by 34%.
+CASH_CONVERSION_BREAK = 0.25
+
+
+def base_fcf_quality(f: dict, period: str | None) -> dict:
+    """Whether the base year's free cash flow is a run-rate, and what it would
+    be if the working-capital movement were normal.
+
+    A DCF anchored on a contaminated year propagates that contamination through
+    every projected year *and* the terminal value, and free cash flow enters
+    linearly — so a 30% base error is a 30% valuation error, permanently.
+    Measured on KO: net income rose 9.54 -> 13.11bn while operating cash flow
+    fell 11.02 -> 7.41bn, because the working-capital line swung from -0.60 to
+    -7.21bn. That is cash leaving for something the income statement never
+    expensed.
+
+    The alternative is built as a **bridge of filed line items**, not as a
+    median of past free cash flows. That is the more transparent construction
+    even though it looks like the more aggressive one: every term below can be
+    looked up in the filing, whereas a median is a statistical smear over data
+    the reader cannot decompose. A platform reading structured vendor data
+    cannot read the notes, so it can *detect* an anomaly but never *identify*
+    the cause — which is exactly why this returns an alternative to show
+    alongside the reported figure and never replaces it.
+    """
+    out = {"anomalous": False, "conversion": None, "reference": None,
+           "deviation": None, "normalised_fcf": None, "bridge": None}
+    cf, inc = f.get("cash_flow") or {}, f.get("income_statement") or {}
+    if not period or period not in cf:
+        return out
+
+    def conversion(p: str):
+        ocf = _value_at(cf, p, "Operating Cash Flow",
+                        "Cash Flow From Continuing Operating Activities")
+        capex = _value_at(cf, p, "Capital Expenditure")
+        net_income = _value_at(inc, p, "Net Income")
+        if ocf is None or capex is None or not net_income or net_income <= 0:
+            return None
+        return (ocf + capex) / net_income
+
+    base = conversion(period)
+    # Compared against the *other* years, not against a median that includes the
+    # year under test — on KO two of four periods are contaminated, so a median
+    # of all four is dragged by the very anomaly it is meant to measure.
+    others = [c for p in cf if p != period and (c := conversion(p)) is not None]
+    if base is None or len(others) < 2:
+        return out
+
+    reference = median(others)
+    if not reference:
+        return out
+    out.update(conversion=round(base, 4), reference=round(reference, 4),
+               deviation=round(base / reference - 1, 4))
+    if abs(out["deviation"]) <= CASH_CONVERSION_BREAK:
+        return out
+
+    ocf = _value_at(cf, period, "Operating Cash Flow",
+                    "Cash Flow From Continuing Operating Activities")
+    capex = _value_at(cf, period, "Capital Expenditure")
+    wc = _value_at(cf, period, "Change In Working Capital")
+    normal_wc = median([w for p in cf if p != period
+                        and (w := _value_at(cf, p, "Change In Working Capital")) is not None]
+                       or [0.0])
+    if ocf is None or capex is None or wc is None:
+        # the break is real but cannot be decomposed into filed lines, so it is
+        # reported without an alternative rather than with a guessed one
+        out["anomalous"] = True
+        return out
+
+    out["anomalous"] = True
+    out["normalised_fcf"] = round(ocf - wc + normal_wc + capex)
+    out["bridge"] = [
+        {"label": "Operating cash flow, as reported", "value": round(ocf)},
+        {"label": "Less the reported working-capital movement", "value": round(-wc)},
+        {"label": "Plus a normal working-capital movement (median of other years)",
+         "value": round(normal_wc)},
+        {"label": "Less capital expenditure", "value": round(capex)},
+    ]
+    return out
+
+
+def base_year_context(f: dict, period: str | None) -> dict:
+    """Is the base year representative, and what does the company's own history say?
+
+    The DCF anchors on one cash-flow period and free cash flow enters the
+    valuation linearly, so a base year 22% below normal is a valuation 22% below
+    normal — permanently, through every projected year and the terminal value.
+    Measured across the fixtures 2026-08-13, the newest reported year sits below
+    that company's own mean FCF margin for three of the four profitable names:
+    AAPL 0.90x, MSFT 0.78x, XOM 0.71x, with 0700.HK the exception at 1.06x.
+    Taking whatever period the vendor reported last is therefore not a neutral
+    choice. It is a one-directional bias, and unlike the terminal-growth band it
+    does not wash out across names — it penalises whoever is mid-investment or
+    mid-cycle, which corrupts exactly the cross-name ranking a screener is for.
+
+    Nothing here is a forecast. Every figure is arithmetic on filed statements:
+
+      FCF/revenue  =  CFO/revenue  -  capex/revenue          (capex is negative)
+
+    so the movement in the base year's FCF margin decomposes **exactly** into an
+    operating leg and a capital leg with no residual and no assumption. That
+    decomposition is what separates a business earning less from a business
+    spending more, and it is the first thing an analyst checks. MSFT is the case
+    it exists for: capex ran 13.3% -> 18.1% -> 22.9% -> 34.9% of revenue over
+    four years while operating cash *rose* 41.3% -> 55.1%, so its depressed free
+    cash flow is a build phase, not deterioration.
+
+    The two legs will not always tell that clean a story, and the caller must not
+    assume they do. XOM's capex rose 4.6% -> 8.8% of revenue *and* its operating
+    cash fell 19.3% -> 16.0%: both moved against free cash flow, and `driver`
+    names only which of them moved further.
+
+    What the platform will **not** do is decide whether that build phase ends.
+    That needs a view on AI compute demand and on the returns this capex earns —
+    questions whose answers are not in the accounts. Any mechanical rule
+    ("capex above 1.5x D&A reverts within three years") would be a macro
+    forecast wearing accounting clothes. So this returns both endpoints and
+    lets the reader choose, which is the honest shape of the answer.
+
+    The lookback is every period the statements carry rather than a chosen
+    number of years, so no window was picked to suit an outcome.
+    """
+    out = {"history": [], "periods": 0, "latest_fcf_margin": None,
+           "mean_fcf_margin": None, "ratio_to_mean": None,
+           "normalised_statement_fcf": None, "latest_revenue": None,
+           "driver": None, "driver_note": None,
+           "capex_delta": None, "operating_delta": None}
+    cf, inc = f.get("cash_flow") or {}, f.get("income_statement") or {}
+    if not period or period not in cf:
+        return out
+
+    # Held unrounded, and rounded once on the way out. Every statistic below is
+    # a mean over these, so rounding first would let a display artefact compound
+    # across periods and then show up as a panel whose columns do not add up.
+    raw = []   # (period, fcf margin, operating cash margin, capex intensity)
+    for p in sorted(cf):
+        revenue = _value_at(inc, p, "Total Revenue", "Operating Revenue")
+        ocf = _value_at(cf, p, "Operating Cash Flow",
+                        "Cash Flow From Continuing Operating Activities")
+        capex = _value_at(cf, p, "Capital Expenditure")
+        if not revenue or ocf is None or capex is None:
+            continue
+        # capex is reported negative; carried as the positive intensity a reader
+        # expects, which is why the identity below subtracts it
+        raw.append((p, (ocf + capex) / revenue, ocf / revenue, -capex / revenue))
+
+    # Two periods cannot establish what is normal, so no band is offered rather
+    # than one built on a single comparison.
+    if len(raw) < 3 or raw[-1][0] != period:
+        return out
+
+    out["history"] = [{"period": p, "fcf_margin": round(fcf_m, 4),
+                       "operating_margin_cash": round(ocf_m, 4),
+                       "capex_to_revenue": round(capex_i, 4)}
+                      for p, fcf_m, ocf_m, capex_i in raw]
+
+    margins = [r[1] for r in raw]
+    latest, mean_margin = margins[-1], sum(margins) / len(margins)
+    out.update(periods=len(margins),
+               latest_fcf_margin=round(latest, 4),
+               mean_fcf_margin=round(mean_margin, 4),
+               ratio_to_mean=round(latest / mean_margin, 3) if mean_margin else None)
+
+    # Scale by the latest revenue, not by an averaged one. Revenue is the least
+    # volatile and most audited line on the statement, so normalising the ratio
+    # while holding the company's current size fixed changes one thing. Averaging
+    # absolute past free cash flow instead would anchor to a smaller company and
+    # is wrong for any grower — measured, it moves MSFT only 1.06x against the
+    # 1.29x its own margin history supports.
+    revenue = _value_at(inc, period, "Total Revenue", "Operating Revenue")
+    out["latest_revenue"] = revenue
+    if revenue:
+        out["normalised_statement_fcf"] = round(mean_margin * revenue)
+
+    # Which leg moved, measured against **the same average the band uses**.
+    #
+    # These were compared against the mean of the *other* years, which is the
+    # right instinct — `base_fcf_quality` excludes the year under test for good
+    # reason — but wrong here, because the panel puts both figures in one
+    # paragraph. On MSFT it read "0.777x its 4-year average" beside legs summing
+    # to -7.7pp, while latest minus that same 4-year average is -5.8pp, so a
+    # reader recomputing from the table on screen got a different answer than
+    # the sentence beneath it. Two baselines in one story is exactly the
+    # un-auditable arithmetic this panel exists to remove.
+    #
+    # Nothing is lost by switching. Moving the baseline from the other years to
+    # all of them scales **both** legs by exactly (n-1)/n — the year under test
+    # is one of n, so it dilutes each mean identically — which leaves the ratio
+    # between the legs, and therefore every `driver` label, unchanged.
+    mean_capex = sum(r[3] for r in raw) / len(raw)
+    mean_ocf = sum(r[2] for r in raw) / len(raw)
+    capex_delta = raw[-1][3] - mean_capex
+    ocf_delta = raw[-1][2] - mean_ocf
+    out["capex_delta"] = round(capex_delta, 4)
+    out["operating_delta"] = round(ocf_delta, 4)
+    # Only named when the year is actually off its own average; on a
+    # representative year there is no driver to name.
+    if out["ratio_to_mean"] is not None and abs(out["ratio_to_mean"] - 1) > 0.05:
+        capex_driven = abs(capex_delta) > abs(ocf_delta)
+        out["driver"] = "capital_spending" if capex_driven else "operating_cash"
+        # `driver` alone is not a story, and reading one off it is how a panel
+        # ends up contradicting itself: 0700.HK is operating-cash-driven with
+        # *both* legs up, which an earlier draft rendered as "operating cash is
+        # the larger of the two" immediately followed by "this is a business
+        # spending more". Which leg is larger and which way each leg pushed are
+        # two different facts, so the six reachable combinations are resolved
+        # here — where they can be tested — rather than in JSX.
+        #
+        # More capital spending lowers free cash flow, so a rise in `capex_delta`
+        # is adverse while a rise in `ocf_delta` is favourable.
+        oper_helps, capex_helps = ocf_delta >= 0, capex_delta <= 0
+        if oper_helps and capex_helps:
+            out["driver_note"] = "both_favourable"
+        elif not oper_helps and not capex_helps:
+            out["driver_note"] = "both_adverse"
+        elif capex_driven:
+            out["driver_note"] = ("spending_more_not_earning_less" if oper_helps
+                                  else "spending_less_offset_weaker_earnings")
+        else:
+            out["driver_note"] = ("earning_more_despite_spending_more" if oper_helps
+                                  else "earning_less_not_spending_more")
+    return out
+
+
+def solve_for_fair_value(f: dict, target_value: float, param: str,
+                         lo: float, hi: float, peers: list[dict] | None = None,
+                         rising: bool = True) -> float | None:
+    """The value of `param` at which the DCF's fair value equals `target_value`.
+
+    Fair value is monotone in each of the three assumptions the model exposes —
+    rising in growth and terminal growth, falling in WACC — so a bisection is
+    exact enough and needs no derivative. `rising` says which.
+
+    Returns None when the target lies outside what `param` can reach inside
+    `[lo, hi]`. That is a result, not a failure: "no rate in this band gets you
+    there" is exactly what makes a gap irreconcilable rather than merely large.
+    """
+    def fair_value(x: float):
+        out = dcf_valuation(f, peers=peers, **{param: x})
+        return None if out.get("error") else out.get("fair_value_per_share")
+
+    f_lo, f_hi = fair_value(lo), fair_value(hi)
+    if f_lo is None or f_hi is None:
+        return None
+    if not min(f_lo, f_hi) <= target_value <= max(f_lo, f_hi):
+        return None
+    for _ in range(30):
+        if hi - lo < 1e-5:
+            break
+        mid = (lo + hi) / 2
+        value = fair_value(mid)
+        if value is None:
+            return None
+        lo, hi = (mid, hi) if (value < target_value) == rising else (lo, mid)
+    return round((lo + hi) / 2, 4)
+
+
+# A gap this small is not worth explaining — the methods already agree closely
+# enough that naming a "binding assumption" would be reading noise.
+RECONCILED_UPSIDE_TOLERANCE = 0.10
+
+# How far above its own consensus a company's near-term growth may be pushed
+# before "this rate would close the gap" stops being a defensible claim.
+#
+# The [0, 25%] guardrail is the wrong test here: it bounds what the *model*
+# accepts, not what a *company* plausibly does. Measured 2026-08-13 on the AAPL
+# fixture, closing its gap needs 24.06% near-term growth against a 9.74%
+# consensus — inside the guardrail and still two and a half times what anyone
+# forecasts. Judging against the guardrail alone made the verdict flip from
+# irreconcilable to reconcilable on a 42bp move in the risk-free rate, which is
+# far too fragile for a classification. A judgement, like the EV/Revenue margin
+# tolerance, and stated in the reason so a reader can disagree with it.
+GROWTH_PLAUSIBILITY_FACTOR = 1.5
+
+
+def reconcile_to_price(f: dict, dcf: dict, peers: list[dict] | None = None) -> dict:
+    """Which single assumption, moved alone, would make the DCF equal the price.
+
+    Measured across eighteen large caps 2026-08-13, a DCF far below the market
+    is **not** a general defect: nine of the eighteen came out within 10% of the
+    price or above it. Of the nine that did not, every one needed a perpetual
+    growth rate above the risk-free rate to close, and several needed one no
+    business sustains. So "the DCF is too low" is sometimes a fixable
+    assumption and sometimes a real statement about the price, and the two look
+    identical on the chart unless something separates them.
+
+    Back-solving does. Measured on the fixtures: 0700.HK reconciles at -0.21%
+    terminal growth or 4.30% near-term growth — both ordinary, so its gap is a
+    forecast disagreement. AAPL needs 7.36% terminal growth or 25.37% near-term,
+    the first above what an economy grows and the second past the input
+    guardrail — so no defensible assumption reconciles it, and the gap is the
+    market pricing something a perpetuity cannot express.
+
+    WACC is deliberately not among the candidates. It is the least legible of
+    the three to a reader, and where it is the culprit the beta source already
+    says so in the audit row.
+    """
+    out = {"required_terminal_growth": None, "required_growth_rate": None,
+           "growth_input_substituted": False, "verdict": None, "reason": None}
+    if not dcf or dcf.get("error"):
+        return out
+    price, fair = dcf.get("current_price"), dcf.get("fair_value_per_share")
+    if not price or not fair:
+        return out
+
+    a = dcf["assumptions"]
+    # Substituted means the model is not reporting the figure its primary source
+    # published — either that figure failed the validity range and was rejected,
+    # or none existed and a default stood in. Nothing is truncated any more, so
+    # this is a question about provenance rather than about a bound.
+    published, used = a.get("growth_rate_published"), a.get("growth_rate_year1")
+    out["growth_input_substituted"] = a.get("growth_source") in (
+        "consensus_rejected_implausible", "default_assumed")
+
+    # A substituted input is a statement about provenance, not about the size of
+    # the gap, so it outranks "aligned": a fair value that lands near the price
+    # while running on a stand-in number is a coincidence, not agreement, and
+    # reporting it as agreement would hide the one thing the reader needs.
+    if abs(fair / price - 1) <= RECONCILED_UPSIDE_TOLERANCE \
+            and not out["growth_input_substituted"]:
+        out["verdict"] = "aligned"
+        out["reason"] = "The DCF and the market are within 10% of each other."
+        return out
+
+    wacc = a["wacc_used"]
+    out["required_terminal_growth"] = solve_for_fair_value(
+        f, price, "terminal_growth", -0.02, wacc - 0.005, peers, rising=True)
+    out["required_growth_rate"] = solve_for_fair_value(
+        f, price, "growth_rate", GROWTH_VALIDITY_RANGE[0], GROWTH_VALIDITY_RANGE[1],
+        peers, rising=True)
+
+    tg, g1 = out["required_terminal_growth"], out["required_growth_rate"]
+    raw = used
+    direction = "below" if fair < price else "above"
+    if out["growth_input_substituted"]:
+        rejected = a.get("growth_source") == "consensus_rejected_implausible"
+        out["verdict"] = "input_substituted"
+        out["reason"] = (
+            (f"The published consensus of {published:.1%} fell outside the range this model "
+             f"will accept as data, so it was rejected and {used:.1%} used instead. "
+             if rejected else
+             f"Neither a consensus nor a trailing figure was available, so an assumed "
+             f"{used:.1%} was used. ")
+            + "This DCF is not running on a forecast for this company; read the fair value as "
+              "indicative only.")
+    elif tg is not None and tg <= NOMINAL_GDP_GROWTH:
+        out["verdict"] = "reconcilable"
+        out["reason"] = (
+            f"The DCF sits {direction} the price, but only on the terminal assumption: at "
+            f"{tg:.2%} terminal growth — below the {NOMINAL_GDP_GROWTH:.0%} an economy grows — "
+            f"the two agree. This is a disagreement about the forecast, not about the price.")
+    elif g1 is not None and _growth_is_plausible(g1, raw):
+        out["verdict"] = "reconcilable"
+        against = (f", against a {raw:.1%} consensus" if raw is not None else "")
+        out["reason"] = (
+            f"The DCF sits {direction} the price, but {g1:.2%} near-term growth closes it"
+            f"{against}. The gap is about how fast this company grows, which is researchable.")
+    else:
+        need_tg = f"{tg:.2%} terminal growth" if tg is not None else "no reachable terminal growth"
+        need_g1 = (f"{g1:.2%} near-term growth against a {raw:.1%} consensus"
+                   if g1 is not None and raw is not None
+                   else "no near-term growth rate this model will accept")
+        out["verdict"] = "irreconcilable"
+        out["reason"] = (
+            f"Nothing defensible closes this gap: it would take {need_tg} — against the "
+            f"{NOMINAL_GDP_GROWTH:.0%} an economy grows — or {need_g1}. The market is pricing "
+            f"something a perpetuity cannot express, so the DCF and the multiples will not "
+            f"agree here and neither is simply wrong.")
+    return out
+
+
+def _growth_is_plausible(required: float, consensus: float | None) -> bool:
+    """Whether a required near-term rate is close enough to consensus to claim.
+
+    With no consensus to compare against — a caller-supplied rate — the model's
+    own guardrail is the only bound available, and `solve_for_fair_value` has
+    already enforced it by returning None outside the band.
+    """
+    if consensus is None:
+        return True
+    if consensus <= 0:
+        # a company forecast to shrink cannot be talked into growth by arithmetic
+        return required <= 0
+    return required <= consensus * GROWTH_PLAUSIBILITY_FACTOR
 
 
 def revenue_trend(f: dict) -> list[dict]:

@@ -196,6 +196,41 @@ function DcfAudit({ dcf }) {
         </span>
       </div>
 
+      {/* 2.5% was a bare constant on screen for as long as it existed, which
+          made the single most levered assumption in the model the only one with
+          no visible derivation. Both ceilings are shown whether or not they
+          bind: a reader cannot tell a limit was respected unless it is there. */}
+      {a.terminal_growth_ceilings && (
+        <div className="dcf-audit-row">
+          <span className="dcf-label">Terminal growth</span>
+          <span>
+            <b>{pct(a.terminal_growth)}</b>
+            {a.terminal_growth_source === 'user' ? (
+              <span className="muted-note"> — set by you, ceilings not applied</span>
+            ) : (
+              <>
+                <span className="muted-note">
+                  {' '}· anchor <b>{pct(a.terminal_growth_anchor)}</b>, held under
+                  long-run nominal GDP{' '}
+                  <b>{pct(a.terminal_growth_ceilings.nominal_gdp_growth)}</b> (nothing
+                  outgrows its economy forever) and the risk-free rate{' '}
+                  <b>{pct(a.terminal_growth_ceilings.risk_free_rate)}</b> (Damodaran&rsquo;s
+                  cap — the ten-year is itself a market read of long-run nominal growth)
+                </span>
+                {a.terminal_growth_source === 'capped_at_risk_free_rate' && (
+                  <>
+                    {' '}
+                    <span className="warn-chip">
+                      cut to the risk-free rate — a low-rate regime
+                    </span>
+                  </>
+                )}
+              </>
+            )}
+          </span>
+        </div>
+      )}
+
       <div className="dcf-audit-row">
         <span className="dcf-label">Trust checks</span>
         <span>
@@ -247,9 +282,174 @@ function DcfAudit({ dcf }) {
               )}
             </>
           )}
+          {/* The same check run backwards, and the more useful direction:
+              "assumes compression of 70%" invites the reader to conclude the
+              stock is expensive, when the exit multiple is really a statement
+              about what a 2.5% perpetuity can express. Solving for the growth
+              today's price already assumes turns it into a question about the
+              business instead. Reference doc §1.1.4. */}
+          {d.market_implied_terminal_growth !== null
+            && d.market_implied_terminal_growth !== undefined && (
+            <>
+              {' '}
+              <span className={d.market_implied_growth_high ? 'warn-chip' : 'ok-chip'}>
+                today&rsquo;s price implies {pct(d.market_implied_terminal_growth)} perpetual growth
+              </span>
+              <span className="muted-note">
+                {' '}
+                {d.market_implied_growth_high
+                  ? `— above ${pct(d.nominal_gdp_growth)} long-run nominal GDP, so the market is
+                     pricing growth above the economy forever`
+                  : `— below ${pct(d.nominal_gdp_growth)} long-run nominal GDP, so the price needs
+                     nothing unusual`}
+              </span>
+            </>
+          )}
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * The base year, and the size of choosing it.
+ *
+ * Free cash flow enters the valuation linearly, so a base year 22% below normal
+ * is a valuation 22% below normal — permanently. This shows the company's own
+ * margin history, the exact operating/capital decomposition of the newest year,
+ * and what the same model returns on a normalised base.
+ *
+ * It deliberately does not choose. Whether MSFT's capex wave ends is a forecast
+ * about the world, not a fact in the accounts, and a platform that picked for
+ * the reader would be hiding the largest assumption in the model behind a
+ * single number.
+ */
+/**
+ * `base_year.driver_note` in words. The six cases are resolved in
+ * financial_models.base_year_context, where they are tested — which leg is
+ * larger and which way each leg pushed are separate facts, and deriving the
+ * second from the first in JSX is how the panel once told 0700.HK it was
+ * "spending more" in the same breath as naming operating cash the larger leg.
+ */
+const DRIVER_NOTES = {
+  both_adverse: 'Both legs moved against free cash flow here.',
+  both_favourable: 'Both legs moved in free cash flow’s favour.',
+  spending_more_not_earning_less:
+    'Operating cash moved the other way, so this is a business spending more rather than earning less.',
+  spending_less_offset_weaker_earnings:
+    'Lower capital spending more than offset the weaker operating cash.',
+  earning_more_despite_spending_more:
+    'Capital spending rose as well, but the extra operating cash outweighed it.',
+  earning_less_not_spending_more:
+    'Capital spending did not add to it, so the movement is in what the business earned.',
+};
+
+/** A signed movement in percentage points — the sign is the whole message. */
+function signedPp(v) {
+  if (v === null || v === undefined) return '—';
+  return `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}pp`;
+}
+
+function BaseYearPanel({ dcf }) {
+  const b = dcf.diagnostics?.base_year;
+  if (!b?.history?.length) return null;
+  // A null ratio means the average margin was zero and nothing can be said
+  // about representativeness — which is not the same as "it is representative",
+  // so neither branch of the sentence below may run.
+  const known = b.ratio_to_mean !== null && b.ratio_to_mean !== undefined;
+  const off = known && Math.abs(b.ratio_to_mean - 1) > 0.05;
+  const ccy = dcf.assumptions?.currency;
+
+  return (
+    <>
+      <div className="sens-title">
+        Base year — is {dcf.assumptions.fcf_period} representative?
+      </div>
+      <table className="sens-table base-year-table">
+        <thead>
+          <tr>
+            <th>Year</th>
+            <th>Operating cash / revenue</th>
+            <th>Capex / revenue</th>
+            <th>FCF / revenue</th>
+          </tr>
+        </thead>
+        <tbody>
+          {b.history.map((h, i) => (
+            <tr key={h.period} className={i === b.history.length - 1 ? 'base-year-latest' : ''}>
+              <td style={{ textAlign: 'left' }}>{h.period.slice(0, 10)}</td>
+              <td>{pct(h.operating_margin_cash)}</td>
+              <td>{pct(h.capex_to_revenue)}</td>
+              <td><b>{pct(h.fcf_margin)}</b></td>
+            </tr>
+          ))}
+          <tr className="base-year-mean">
+            <td style={{ textAlign: 'left' }}>{b.periods}-year average</td>
+            <td />
+            <td />
+            <td><b>{pct(b.mean_fcf_margin)}</b></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="chart-note">
+        {known && (
+          <>The newest year is <b>{num(b.ratio_to_mean, 2)}×</b> its own {b.periods}-year
+            average margin.{' '}</>
+        )}
+        {known && off ? (
+          <>
+            Against that average, operating cash moved{' '}
+            <b>{signedPp(b.operating_delta)}</b> of revenue and capital spending{' '}
+            <b>{signedPp(b.capex_delta)}</b> — and more capital spending lowers free
+            cash flow.{' '}
+            <b>
+              {b.driver === 'capital_spending' ? 'Capital spending' : 'Operating cash'}
+            </b>{' '}
+            is the larger of the two.{' '}
+            {DRIVER_NOTES[b.driver_note]}
+            {' '}The two legs sum exactly to the change — nothing is assumed to
+            attribute it.
+          </>
+        ) : (
+          known && 'It is close to its own average, so this choice moves the valuation little.'
+        )}
+      </div>
+
+      {b.fair_value_normalised !== null && (
+        <>
+          <table className="sens-table">
+            <tbody>
+              <tr>
+                <td style={{ textAlign: 'left' }}>
+                  On the reported year — <b>the headline above</b>, ticks to a filing
+                </td>
+                <td><b>{num(dcf.fair_value_per_share)}</b> {ccy}</td>
+                <td>{dcf.upside_pct > 0 ? '+' : ''}{num(dcf.upside_pct, 1)}%</td>
+              </tr>
+              <tr>
+                <td style={{ textAlign: 'left' }}>
+                  On this company&rsquo;s {b.periods}-year average margin, at today&rsquo;s revenue
+                </td>
+                <td><b>{num(b.fair_value_normalised)}</b> {ccy}</td>
+                <td>
+                  {b.fair_value_normalised_upside_pct > 0 ? '+' : ''}
+                  {num(b.fair_value_normalised_upside_pct, 1)}%
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="chart-note">
+            We do not choose between these. Which is right depends on whether the
+            movement above persists — a judgement about the future, not a figure in
+            the accounts, so the platform declines to make it for you. Note the
+            adjustment is not one-way: it lowers companies whose newest year ran
+            <i> above</i> their own average and raises those below, which is what
+            separates a correction from a nudge toward the market price.
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -260,7 +460,9 @@ export default function ModelsTab({ ticker }) {
   const [loading, setLoading] = useState(false);
   // DCF assumption overrides (percent units in the UI)
   const [growth, setGrowth] = useState('');
-  const [termGrowth, setTermGrowth] = useState('2.5');
+  // Empty like the other two: the placeholder shows the resolved rate, so the
+  // box says what the model used without claiming the reader chose it.
+  const [termGrowth, setTermGrowth] = useState('');
   const [wacc, setWacc] = useState('');
   const [dcf, setDcf] = useState(null);
   const [dcfBusy, setDcfBusy] = useState(false);
@@ -303,7 +505,11 @@ export default function ModelsTab({ ticker }) {
     try {
       const res = await post(`/stock/${ticker}/dcf`, {
         growth_rate: growth === '' ? null : Number(growth) / 100,
-        terminal_growth: Number(termGrowth) / 100,
+        // Empty means "use the platform's policy rate", which is the anchor
+        // held under the GDP and risk-free ceilings — the same convention the
+        // other two inputs already use. Sending 2.5% unconditionally made every
+        // recalculation look like a deliberate override and hid the ceilings.
+        terminal_growth: termGrowth === '' ? null : Number(termGrowth) / 100,
         wacc_override: wacc === '' ? null : Number(wacc) / 100,
       });
       setDcf(res);
@@ -373,7 +579,13 @@ export default function ModelsTab({ ticker }) {
           </label>
           <label>
             Terminal growth %
-            <input value={termGrowth} onChange={(e) => setTermGrowth(e.target.value)} />
+            <input
+              value={termGrowth}
+              placeholder={dcf?.assumptions
+                ? (dcf.assumptions.terminal_growth * 100).toFixed(2)
+                : ''}
+              onChange={(e) => setTermGrowth(e.target.value)}
+            />
           </label>
           <label>
             WACC %
@@ -452,6 +664,99 @@ export default function ModelsTab({ ticker }) {
                   ))}
                 </tbody>
               </table>
+
+              {/* The grid above moves WACC and terminal growth — the two
+                  second-order assumptions — and holds the starting growth rate
+                  fixed. That rate is the first-order driver, and the Scorecard's
+                  DCF bar is built from this sweep as well as the grid, so it has
+                  to be visible here or that bar cannot be audited. */}
+              {/* The base year anchors every projected year and the terminal
+                  value, and FCF enters linearly — so a contaminated base is a
+                  permanent proportional error. Reported stays the headline; the
+                  alternative is shown beside it, decomposed into filed lines, so
+                  the reader can judge the adjustment rather than trust it. The
+                  wording stays neutral about the cause: the bridge shows whether
+                  working capital or capital expenditure moved. */}
+              <BaseYearPanel dcf={dcf} />
+
+              {dcf.diagnostics.base_fcf_quality?.anomalous && (
+                <>
+                  <div className="sens-title">
+                    Base year — cash conversion has broken from this company&rsquo;s own history
+                  </div>
+                  <div className="chart-note">
+                    Free cash flow was{' '}
+                    <b>{pct(dcf.diagnostics.base_fcf_quality.conversion)}</b> of net income in{' '}
+                    {dcf.assumptions.fcf_period}, against{' '}
+                    <b>{pct(dcf.diagnostics.base_fcf_quality.reference)}</b> across the other
+                    filed years — a {pct(Math.abs(dcf.diagnostics.base_fcf_quality.deviation))} break.
+                    The DCF above uses the <b>reported</b> figure. The bridge below shows what a
+                    normal working-capital movement would give instead; if the two are close, the
+                    break is not working capital and the capital-expenditure line is where to look.
+                  </div>
+                  {dcf.diagnostics.base_fcf_quality.bridge && (
+                    <table className="sens-table">
+                      <tbody>
+                        {dcf.diagnostics.base_fcf_quality.bridge.map((r) => (
+                          <tr key={r.label}>
+                            <td style={{ textAlign: 'left' }}>{r.label}</td>
+                            <td>{big(r.value)}</td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td style={{ textAlign: 'left' }}><b>Normalised free cash flow</b></td>
+                          <td><b>{big(dcf.diagnostics.base_fcf_quality.normalised_fcf)}</b></td>
+                        </tr>
+                        <tr>
+                          <td style={{ textAlign: 'left' }}>Reported, and used above</td>
+                          <td>{big(dcf.assumptions.base_fcf)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+
+              {dcf.growth_sensitivity && (
+                <>
+                  <div className="sens-title">
+                    Sensitivity — fair value across the starting growth rate
+                    (the grid above holds it at{' '}
+                    {(dcf.assumptions.growth_rate_year1 * 100).toFixed(2)}%)
+                  </div>
+                  <table className="sens-table">
+                    <thead>
+                      <tr>
+                        <th>Growth</th>
+                        {dcf.growth_sensitivity.growth_rates.map((g, i) => (
+                          <th key={i}>{(g * 100).toFixed(2)}%</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Fair value</td>
+                        {dcf.growth_sensitivity.values.map((v, i) => (
+                          <td
+                            key={i}
+                            className={
+                              v === null ? '' : v >= dcf.current_price ? 'cell-up' : 'cell-down'
+                            }
+                          >
+                            {v === null ? '—' : num(v)}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="chart-note">
+                    This sweep deliberately ranges outside the 0–25% band the growth
+                    <em> input</em> is clamped to. That clamp filters a noisy vendor field;
+                    bounding a stress test by it made the band one-sided — a company at 0%
+                    growth got upside and no downside, and one at 25% the reverse.
+                  </div>
+                </>
+              )}
             </>
           )
         )}

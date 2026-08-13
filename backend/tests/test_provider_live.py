@@ -182,3 +182,26 @@ def test_fx_rate_round_trips():
 def test_fx_rate_is_none_for_a_pair_that_does_not_exist():
     """None, not a fallback constant: callers suppress the comparison instead."""
     assert fx_rate("CNY", "NOTACURRENCY") is None
+
+
+def test_hk_analyst_targets_arrive_in_the_trading_currency():
+    """The one number on the football field that gets no FX conversion.
+
+    Every other figure on that chart is converted out of the reporting currency
+    — 9988.HK reports CNY and trades HKD — but `comps.football_field` passes
+    `targetLowPrice`/`targetHighPrice` through untouched. Nothing in yfinance
+    documents which currency those arrive in, so this pins it the same way the
+    statement/trading split above is pinned: by measurement.
+
+    Self-calibrating against the US ADR, which sidesteps both the ADR ratio and
+    the FX rate. If each line quotes its targets in its own trading currency,
+    the target ratio equals the price ratio. A CNY-denominated HK target would
+    show up as a ~1.10x discrepancy — the exact error this guards against.
+    """
+    hk = provider.get_fundamentals("9988.HK")["info"]
+    adr = provider.get_fundamentals("BABA")["info"]
+    assert hk["financialCurrency"] == "CNY" and hk["currency"] == "HKD"
+
+    price_ratio = hk["currentPrice"] / adr["currentPrice"]
+    target_ratio = hk["targetMeanPrice"] / adr["targetMeanPrice"]
+    assert target_ratio / price_ratio == pytest.approx(1.0, rel=0.08)

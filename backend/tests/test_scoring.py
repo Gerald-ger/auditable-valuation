@@ -465,3 +465,60 @@ def test_dcf_applicability_matches_the_profile(stem, applicable):
     active = {m for p in card["pillars"].values() for m in p["metrics"]}
     active |= set(card["missing_metrics"])
     assert ("dcf_upside_pct" in active) is applicable
+
+
+# ── analyst opinion is shown, never scored ───────────────────────────
+#
+# The football field treats analyst targets as context and excludes them from
+# voting. These pin the scoring side to the same answer, so the two cannot drift
+# apart again — the drift is what made the platform answer one question two ways.
+
+@pytest.mark.parametrize("stem", sorted(FIXTURES))
+def test_analyst_upside_is_scored_in_no_pillar(stem):
+    """Not "not in V" — not in *any* pillar, for *any* company type.
+
+    Asserting only against the valuation pillar would pass if the metric were
+    quietly moved back into momentum, which is the arrangement that produced the
+    sign conflict recorded above sector_weights.BASE_METRICS.
+    """
+    card = scoring.score_company(load_fundamentals(stem))
+    for name, pillar in card["pillars"].items():
+        assert "analyst_upside" not in pillar.get("metrics", {}), (
+            f"{stem}: analyst_upside is being scored inside the {name} pillar")
+
+
+@pytest.mark.parametrize("stem", sorted(FIXTURES))
+def test_analyst_opinion_survives_as_context(stem):
+    """Removed from scoring is not removed from the page."""
+    ctx = scoring.score_company(load_fundamentals(stem))["analyst_context"]
+    info = load_fundamentals(stem)["info"]
+    assert ctx["target_mean"] == info.get("targetMeanPrice")
+    assert ctx["analysts"] == info.get("numberOfAnalystOpinions")
+
+
+def test_the_analyst_target_cannot_move_a_grade():
+    """The whole point, stated as a test: doubling the consensus target changes
+    nothing about the score.
+
+    Before this change, a target 2x today's price scored 100 on a metric worth a
+    fifth of the valuation pillar. The composite is now invariant to it.
+    """
+    f = load_fundamentals("AAPL")
+    base = scoring.score_company(f)
+
+    doubled = load_fundamentals("AAPL")
+    doubled["info"]["targetMeanPrice"] = doubled["info"]["currentPrice"] * 2
+    moved = scoring.score_company(doubled)
+
+    assert moved["composite_score"] == base["composite_score"]
+    assert moved["pillars"]["valuation"]["score"] == base["pillars"]["valuation"]["score"]
+    # but it must still be visible, and visibly different
+    assert moved["analyst_context"]["upside"] != base["analyst_context"]["upside"]
+
+
+def test_the_four_analyst_gate_still_applies_to_the_context_figure():
+    f = load_fundamentals("AAPL")
+    f["info"]["numberOfAnalystOpinions"] = 3
+    ctx = scoring.score_company(f)["analyst_context"]
+    assert ctx["upside"] is None, "a 'range' from three analysts is not a range"
+    assert ctx["analysts"] == 3, "the count itself must stay on screen"

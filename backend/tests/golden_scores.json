@@ -1,7 +1,7 @@
 {
  "0700_HK": {
   "classification": "communication_svcs",
-  "composite_score": 75,
+  "composite_score": 73,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -49,20 +49,19 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 96,
-     "dcf_upside_pct": 91,
+     "dcf_upside_pct": 82,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 43,
      "fcf_yield": 68
     },
-    "score": 77
+    "score": 69
    }
   },
   "tier": "A"
  },
  "AAPL": {
   "classification": "technology",
-  "composite_score": 67,
+  "composite_score": 65,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [
@@ -112,20 +111,19 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 53,
      "dcf_upside_pct": 0,
      "earnings_yield_fwd": 41,
      "ev_ebitda": 7,
      "fcf_yield": 42
     },
-    "score": 29
+    "score": 22
    }
   },
   "tier": "A"
  },
  "JPM": {
   "classification": "financials_bank",
-  "composite_score": 71,
+  "composite_score": 72,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -166,19 +164,18 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 52,
      "dividend_yield": 51,
      "earnings_yield_fwd": 76,
      "p_b": 52
     },
-    "score": 58
+    "score": 60
    }
   },
   "tier": "A"
  },
  "MSFT": {
   "classification": "technology",
-  "composite_score": 73,
+  "composite_score": 71,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -226,20 +223,19 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 72,
-     "dcf_upside_pct": 7,
+     "dcf_upside_pct": 0,
      "earnings_yield_fwd": 58,
      "ev_ebitda": 30,
      "fcf_yield": 38
     },
-    "score": 41
+    "score": 31
    }
   },
   "tier": "A"
  },
  "O": {
   "classification": "real_estate_reit",
-  "composite_score": 63,
+  "composite_score": 64,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [
@@ -285,12 +281,11 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 62,
      "dividend_yield": 94,
      "ffo_yield": 71,
      "p_b": 75
     },
-    "score": 76
+    "score": 80
    }
   },
   "tier": "B"
@@ -338,10 +333,9 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 83,
      "ev_sales": 78
     },
-    "score": 81
+    "score": 78
    }
   },
   "tier": "B"
@@ -396,13 +390,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "analyst_upside": 65,
      "dcf_upside_pct": 0,
      "earnings_yield_fwd": 76,
      "ev_ebitda": 72,
      "fcf_yield": 58
     },
-    "score": 54
+    "score": 51
    }
   },
   "tier": "A"

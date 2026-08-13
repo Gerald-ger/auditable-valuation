@@ -8,16 +8,50 @@ from __future__ import annotations
 
 # Base metric set per pillar (profiles override with add/remove)
 #
-# `analyst_upside` (target price / price - 1) sits in V, not M. It is a
-# valuation signal — "price is below someone's fair value" — and inside the
-# momentum pillar it actively opposed the other three, which all reward price
-# going up: a rally raised price_vs_200dma, range_52w_pos and rel_52w_change
-# while lowering analyst_upside, so the four partly cancelled. Measured on the
-# fixtures, moving it shifts the momentum pillar by up to 18 points (0700.HK
-# 42 -> 24) and the composite by -3 to +1.
+# `analyst_upside` (target price / price - 1) is **not scored in any pillar**.
+# It is still computed and still shown — `scoring.extract_metrics` returns it
+# and the card carries it as `analyst_context` — but it no longer moves a grade.
+#
+# It used to sit in M, where it opposed the other three: a rally raised
+# price_vs_200dma, range_52w_pos and rel_52w_change while lowering
+# analyst_upside, so the four partly cancelled. It was moved to V to fix that.
+# The diagnosis was right and the destination was wrong. The test applied was
+# "does this move opposite to price?", but every ratio with price in the
+# denominator does — earnings yield, FCF yield, inverted EV/EBITDA all do. That
+# identifies the denominator. What separates the metrics is the *numerator*:
+# every other V metric divides a reported figure or this platform's own model
+# by price, while this one divides **someone's forecast of price** by price.
+#
+# Three things settled it, each measured rather than argued:
+#
+#   1. Double counting. `dcf_valuation` takes its growth rate from analyst
+#      consensus, so an optimistic sell-side view raises `dcf_upside_pct` *and*
+#      `analyst_upside` — two of five V metrics, one source, correlated errors
+#      of the same sign.
+#   2. An undeclared level bias. The curve in scoring.METRIC_ANCHORS scores 0%
+#      upside at 45, i.e. near-neutral, but published targets sit above price
+#      structurally. When it was last scored, the seven fixtures came out at
+#      96/53/52/72/62/83/65 — mean **69** against a centred 50. Seven names do
+#      not settle the size of the bias, but they are consistent with a curve
+#      whose neutral point is set well below where published targets actually
+#      sit, which handed points to the median company for no informational
+#      reason. (Those scores are no longer in golden_scores.json; removing the
+#      metric removed them, which is the change this note records.)
+#   3. The football field already excludes analyst targets from voting, on
+#      exactly these grounds. Excluding them from the valuation *chart* while
+#      scoring them in the valuation *pillar* is one platform answering the
+#      same question two ways.
+#
+# Measured cost of removal on the fixtures: composite moves -3 to +1, and no
+# fixture changes tier (AAPL lands on the A floor at 65). Moving it back to M
+# instead would drop AAPL to B and restore the sign conflict, so removal is
+# the only option that resolves the contradiction without creating another.
+#
+# The DCF still consumes analyst consensus growth. That is opinion counted
+# once, through a channel that needs *some* forecast and labels its provenance
+# — not opinion counted twice, silently, in a pillar named Valuation.
 BASE_METRICS = {
-    "V": ["earnings_yield_fwd", "fcf_yield", "ev_ebitda", "dcf_upside_pct",
-          "analyst_upside"],
+    "V": ["earnings_yield_fwd", "fcf_yield", "ev_ebitda", "dcf_upside_pct"],
     "Q": ["roe", "roic", "operating_margin", "gross_margin", "fcf_conversion"],
     "H": ["net_debt_ebitda", "interest_coverage", "current_ratio", "debt_equity"],
     "G": ["revenue_growth", "revenue_cagr_3y", "earnings_growth", "pe_gap"],
@@ -61,7 +95,7 @@ SECTOR_PROFILES = {
     "real_estate_reit": {  # P/E & standard EV/EBITDA logic invalid; FFO + yield focus
         "weights": {"V": 0.30, "Q": 0.20, "H": 0.25, "G": 0.10, "M": 0.15},
         "metrics": {
-            "V": ["dividend_yield", "p_b", "ffo_yield", "analyst_upside"],
+            "V": ["dividend_yield", "p_b", "ffo_yield"],
             "Q": ["roe", "operating_margin"],
             "H": ["net_debt_ebitda", "interest_coverage", "debt_equity"],
             "G": ["revenue_growth", "revenue_cagr_3y", "earnings_growth"],
@@ -72,7 +106,7 @@ SECTOR_PROFILES = {
     "financials_bank": {  # EV-, FCF- and working-capital metrics invalid
         "weights": {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10},
         "metrics": {
-            "V": ["earnings_yield_fwd", "p_b", "dividend_yield", "analyst_upside"],
+            "V": ["earnings_yield_fwd", "p_b", "dividend_yield"],
             "Q": ["roe", "roa"],
             "H": ["equity_assets"],
             "G": ["revenue_growth", "earnings_growth", "pe_gap"],
@@ -82,7 +116,7 @@ SECTOR_PROFILES = {
     "financials_insurance": {
         "weights": {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10},
         "metrics": {
-            "V": ["earnings_yield_fwd", "p_b", "dividend_yield", "analyst_upside"],
+            "V": ["earnings_yield_fwd", "p_b", "dividend_yield"],
             "Q": ["roe", "roa"],
             "H": ["equity_assets"],
             "G": ["revenue_growth", "earnings_growth", "pe_gap"],
@@ -105,7 +139,10 @@ SECTOR_PROFILES = {
         # being enforced, not a market fact.
         "weights": {"V": 0.15, "Q": 0.25, "H": 0.25, "G": 0.25, "M": 0.10},
         "metrics": {
-            "V": ["ev_sales", "analyst_upside"],
+            # Single-metric pillar. `ev_sales` is the only price-to-fundamentals
+            # ratio that means anything before profits exist, and V is weighted
+            # 0.15 here for that reason.
+            "V": ["ev_sales"],
             "Q": ["gross_margin", "operating_margin"],
             "H": ["cash_runway_q", "debt_equity"],
             "G": ["revenue_growth", "revenue_cagr_3y"],
@@ -199,3 +236,17 @@ def get_profile(classification: str) -> dict:
         "anchor_overrides": p.get("anchor_overrides", {}),
         "confidence_cap": p.get("confidence_cap"),
     }
+
+
+def dcf_applies(classification: str) -> bool:
+    """Whether a discounted-cash-flow valuation means anything for this type.
+
+    Decided by the profile, never by whether the model happened to return a
+    number: a REIT produces a complete DCF from `CFO - CapEx` and it is
+    meaningless, because capex *is* a REIT's acquisitions. `scoring.py` exports
+    this as `dcf_applicable` and `comps.football_field` refuses to draw a DCF
+    bar without it — one rule, read from one place, so the Scorecard and the
+    Financial Models tab cannot disagree about the same company.
+    """
+    return any("dcf_upside_pct" in metrics
+               for metrics in get_profile(classification)["metrics"].values())
