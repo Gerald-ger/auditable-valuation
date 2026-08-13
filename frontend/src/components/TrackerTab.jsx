@@ -90,7 +90,7 @@ export default function TrackerTab({ ticker, aiOnline }) {
             <div className="quote-stats">
               <span>Mkt cap {big(quote.market_cap)}</span>
               <span>P/E {num(quote.pe_trailing, 1)}</span>
-              <span>52w {num(quote.fifty_two_week_low)}–{num(quote.fifty_two_week_high)}</span>
+              <span>52w {num(quote.fifty_two_week_low)}-{num(quote.fifty_two_week_high)}</span>
             </div>
           </div>
         )}
@@ -124,7 +124,7 @@ export default function TrackerTab({ ticker, aiOnline }) {
           <div className="chart-note">
             {bars.length.toLocaleString()} bars at {interval} · times in {DISPLAY_TZ_LABEL}
             {interval.endsWith('m') || interval.endsWith('h')
-              ? ' (a US session runs 21:30–04:00 and so spans two dates)'
+              ? ' (a US session runs 21:30-04:00 and so spans two dates)'
               : ''}{' '}
             · scroll to zoom · drag to pan · double-click to fit · hover a dot to preview,
             click to open its stories
@@ -160,7 +160,7 @@ export default function TrackerTab({ ticker, aiOnline }) {
           </div>
           {!aiOnline && (
             <div className="ai-offline-note">
-              Requires the local AI — install Ollama to enable (see README).
+              Requires the local AI. Install Ollama to enable (see README).
             </div>
           )}
           {outlook !== null && (

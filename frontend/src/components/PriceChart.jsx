@@ -34,7 +34,7 @@ const MACD_SIGNAL = 9;
 // lightweight-charts PriceScaleMode: 0 normal, 1 logarithmic, 2 percentage
 const SCALE_MODES = [
   ['Lin', 0, 'Linear price scale'],
-  ['Log', 1, 'Logarithmic — equal % moves get equal vertical distance'],
+  ['Log', 1, 'Logarithmic: equal % moves get equal vertical distance'],
   ['%', 2, 'Percentage change from the first visible bar'],
 ];
 
@@ -574,8 +574,8 @@ export default function PriceChart({
       {unavailable.length > 0 && (
         <div className="chart-note">
           {unavailable.join(', ')} need{unavailable.length === 1 ? 's' : ''} more bars than this
-          chart holds ({bars.length}). Windows are measured in bars, so a longer period — or a
-          finer interval — fills them.
+          chart holds ({bars.length}). Windows are measured in bars, so a longer period, or a
+          finer interval, fills them.
         </div>
       )}
 
@@ -662,7 +662,7 @@ export default function PriceChart({
           >
             <div className="news-popup-date">
               {hoverEvents.items.length} event{hoverEvents.items.length === 1 ? '' : 's'} ·{' '}
-              {hoverEvents.date} — click to open
+              {hoverEvents.date} (click to open)
             </div>
             {hoverEvents.items.slice(0, 3).map((n, i) => (
               <div key={i} className="news-preview-row">

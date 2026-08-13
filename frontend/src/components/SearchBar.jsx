@@ -105,7 +105,7 @@ export default function SearchBar({ value, onSelect, saved = [] }) {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Search ticker or company — AAPL, Tencent, 0700.HK"
+          placeholder="Search ticker or company: AAPL, Tencent, 0700.HK"
           aria-label="Search for a stock by ticker or company name"
           autoComplete="off"
         />

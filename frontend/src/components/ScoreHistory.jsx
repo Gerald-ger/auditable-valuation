@@ -22,7 +22,7 @@ export default function ScoreHistory({ history }) {
     return (
       <div className="chart-note">
         1 snapshot so far ({history[0].as_of_date}: score {history[0].composite}, price{' '}
-        {num(history[0].price)}). A trend needs at least two — come back after the next
+        {num(history[0].price)}). A trend needs at least two. Come back after the next
         scoring day.
       </div>
     );
@@ -117,7 +117,7 @@ export default function ScoreHistory({ history }) {
         </tbody>
       </table>
       <div className="chart-note">
-        Scores are a snapshot, not a forecast — this chart shows what happened, it does
+        Scores are a snapshot, not a forecast. This chart shows what happened; it does
         not validate the method. {history.length} snapshot{history.length === 1 ? '' : 's'} stored.
       </div>
     </div>

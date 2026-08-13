@@ -47,12 +47,12 @@ export default function ScreenerTab({ onPick }) {
   return (
     <div>
       <div className="panel">
-        <div className="panel-title">Screener — score and rank a list</div>
+        <div className="panel-title">Screener: score and rank a list</div>
         <textarea
           className="screener-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Tickers separated by commas or spaces — e.g. AAPL, MSFT, 0700.HK"
+          placeholder="Tickers separated by commas or spaces, e.g. AAPL, MSFT, 0700.HK"
           rows={3}
         />
         <div className="screener-actions">
@@ -60,7 +60,7 @@ export default function ScreenerTab({ onPick }) {
             {busy ? 'Scoring…' : 'Score all'}
           </button>
           <span className="chart-note">
-            Max 50 tickers. Each is fetched, scored and stored to history — first run on a
+            Max 50 tickers. Each is fetched, scored and stored to history. First run on a
             cold cache takes a few seconds per name.
           </span>
         </div>
@@ -72,7 +72,7 @@ export default function ScreenerTab({ onPick }) {
       {data && (
         <div className="panel">
           <div className="panel-title">
-            Ranking — within company type only
+            Ranking: within company type only
             <span className="chart-note">
               {data.ranked} ranked in {data.groups.length}{' '}
               {data.groups.length === 1 ? 'group' : 'groups'}
@@ -85,7 +85,7 @@ export default function ScreenerTab({ onPick }) {
           <div className="chart-note screener-why">
             Scores are <strong>not compared across company types</strong>. Each profile
             scores a different metric set, weights the pillars differently, and uses
-            different anchor curves for some shared metrics — so a bank's 70 and a
+            different anchor curves for some shared metrics, so a bank's 70 and a
             pre-profit growth company's 74 are outputs of two different formulas, not two
             readings on one scale. Compare within a group; across groups, compare pillars.
           </div>
@@ -97,7 +97,7 @@ export default function ScreenerTab({ onPick }) {
                 <span className="chart-note">
                   {g.comparable
                     ? `${g.ranked} comparable`
-                    : 'only one company of this type — listed, not ranked'}
+                    : 'only one company of this type: listed, not ranked'}
                 </span>
               </div>
               <div style={{ overflowX: 'auto' }}>
@@ -158,7 +158,7 @@ export default function ScreenerTab({ onPick }) {
 
           <div className="chart-note">
             * pillar excluded from its composite (under 40% of metrics available). Rows below
-            60% coverage are not ranked — per the scoring design, a thin card must not take a
+            60% coverage are not ranked: per the scoring design, a thin card must not take a
             place in a ranking it cannot support. Click a row to open it in the Scorecard tab.
           </div>
           {data.failed.length > 0 && (

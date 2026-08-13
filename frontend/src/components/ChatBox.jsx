@@ -46,14 +46,14 @@ export default function ChatBox({ ticker, aiOnline }) {
       </div>
       {!aiOnline && (
         <div className="ai-offline-note">
-          Local AI is offline. Install and start Ollama (see README) — the chat will
+          Local AI is offline. Install and start Ollama (see README). The chat will
           activate automatically.
         </div>
       )}
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="chat-hint">
-            Ask about {ticker || 'a stock'} — e.g. “Is the current P/E justified?” or
+            Ask about {ticker || 'a stock'}, e.g. “Is the current P/E justified?” or
             “Which valuation model fits this company?”
           </div>
         )}

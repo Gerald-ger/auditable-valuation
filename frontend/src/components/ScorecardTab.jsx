@@ -28,10 +28,10 @@ function verdict(card) {
         `${worstName} the weakest (${worst.score}).`,
     );
   } else {
-    parts.push(`The five pillars are closely balanced (${worst.score}–${best.score}).`);
+    parts.push(`The five pillars are closely balanced (${worst.score}-${best.score}).`);
   }
   if (card.confidence !== 'HIGH') {
-    parts.push(`Confidence is ${card.confidence} — only ${card.coverage_pct}% of metrics available.`);
+    parts.push(`Confidence is ${card.confidence}: only ${card.coverage_pct}% of metrics available.`);
   }
   const excluded = Object.entries(card.pillars).filter(([, p]) => p.insufficient);
   if (excluded.length) {
@@ -61,8 +61,8 @@ function PillarBar({ name, data }) {
         </div>
         <span className="pillar-missing">
           {data.score === null
-            ? 'no metrics available — weight redistributed'
-            : `only ${(data.available_fraction * 100).toFixed(0)}% of metrics available — `
+            ? 'no metrics available, weight redistributed'
+            : `only ${(data.available_fraction * 100).toFixed(0)}% of metrics available, `
               + 'excluded from the composite, weight redistributed'}
         </span>
       </div>
@@ -142,7 +142,7 @@ function PriceGapBridge({ bridge }) {
         </tbody>
       </table>
       <div className="chart-note">
-        This gap is not a rounding error in the model — it is a disagreement.{' '}
+        This gap is not a rounding error in the model. It is a disagreement.{' '}
         {above ? (
           <>To pay today&rsquo;s price you have to believe at least one of: the
             company&rsquo;s advantage runs well beyond our ten-year window, the right
@@ -185,7 +185,7 @@ function AnalystContext({ data }) {
         {data.recommendation && ` · ${data.recommendation}`}
         {data.upside == null && data.analysts != null && data.analysts < 4
           && ' · too few for a range'}
-        {' — '}
+        {'. '}
         <b>not included in any score.</b> A target price is a twelve-month
         forecast of where the stock will trade, not an estimate of what the
         business is worth, and published targets sit above price on average.
@@ -300,7 +300,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
           return (
             <div key={r.method} className={`ff-row ${r.context_only ? 'ff-row-context' : ''}`}>
               <span className="ff-label" title={r.context_only
-                ? 'Context only — a target is a forecast of the price, not a valuation of the business. Excluded from the agreement zone.'
+                ? 'Context only: a target is a forecast of the price, not a valuation of the business. Excluded from the agreement zone.'
                 : undefined}
               >
                 {r.method}
@@ -312,7 +312,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
                 {r.dispersion_band && (
                   <span
                     className={`ff-tag disp-${r.dispersion_band}`}
-                    title={`${r.analysts} analysts span ${(r.dispersion * 100).toFixed(0)}% of the mean target — ${r.dispersion_band} agreement. Measured across 20 large caps this ranges from 15% to 106%.`}
+                    title={`${r.analysts} analysts span ${(r.dispersion * 100).toFixed(0)}% of the mean target, ${r.dispersion_band} agreement. Measured across 20 large caps this ranges from 15% to 106%.`}
                   >
                     {r.dispersion_band} ±{(r.dispersion * 100).toFixed(0)}%
                   </span>
@@ -338,7 +338,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
                     <div
                       className={`ff-envelope ${e.clipLeft ? 'clip-left' : ''} ${e.clipRight ? 'clip-right' : ''}`}
                       style={{ left: `${e.left}%`, width: `${e.width}%` }}
-                      title={`Full spread ${num(r.envelope_low)} – ${num(r.envelope_high)} across ${r.multiples_used} multiples`}
+                      title={`Full spread ${num(r.envelope_low)}-${num(r.envelope_high)} across ${r.multiples_used} multiples`}
                     />
                   );
                 })()}
@@ -349,7 +349,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
                       className={`ff-bar ${b.clipLeft ? 'clip-left' : ''} ${b.clipRight ? 'clip-right' : ''} ${b.exaggerated ? 'ff-bar-exaggerated' : ''}`}
                       style={{ left: `${b.left}%`, width: `${b.width}%` }}
                       title={b.exaggerated
-                        ? `Held open to stay visible — the actual range is ${num(r.low)} – ${num(r.high)}${r.degenerate ? ', a single estimate with no width at all' : ''}`
+                        ? `Held open to stay visible: the actual range is ${num(r.low)} to ${num(r.high)}${r.degenerate ? ', a single estimate with no width at all' : ''}`
                         : undefined}
                     />
                   );
@@ -359,7 +359,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
                 )}
               </div>
               <span className="ff-range">
-                {num(r.low)} – {num(r.high)}
+                {num(r.low)}-{num(r.high)}
                 {v && <span className={`ff-verdict ${v[1]}`}>{v[0]}</span>}
               </span>
             </div>
@@ -404,12 +404,12 @@ function FootballField({ ranges, currentPrice, triangulation }) {
           ) : (
             <><b>The methods do not overlap at all.</b> No price is considered fair by both{' '}
               {t.anchors?.low_method} and {t.anchors?.high_method}, so this chart cannot give
-              you a fair value — only what the disagreement is about.</>
+              you a fair value, only what the disagreement is about.</>
           )}
           {t.midpoint_spread != null && (
             <> Midpoints sit <b>{(t.midpoint_spread * 100).toFixed(0)}%</b> apart
               ({t.anchors?.low_method} {num(t.anchors?.low_mid)} vs {t.anchors?.high_method}{' '}
-              {num(t.anchors?.high_mid)}) —{' '}
+              {num(t.anchors?.high_mid)}),{' '}
               <span className={`ff-conviction ${t.conviction.toLowerCase()}`}>
                 {t.conviction} conviction
               </span>.</>
@@ -425,7 +425,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
               agree, this says whether the forecasters do. */}
           {t.analyst_dispersion_band && (
             <> Separately, {t.analysts} analysts span{' '}
-              <b>{(t.analyst_dispersion * 100).toFixed(0)}%</b> of their own mean —{' '}
+              <b>{(t.analyst_dispersion * 100).toFixed(0)}%</b> of their own mean,{' '}
               <b>{t.analyst_dispersion_band}</b> agreement on the outlook
               {t.analyst_dispersion_band === 'wide'
                 && ', so the forecast itself is contested, not just the valuation method'}.</>
@@ -450,7 +450,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
           <b>{(t.growth_used * 100).toFixed(1)}%</b>
           {t.growth_source === 'analyst_consensus_fwd' && ' taken from analyst consensus'}.
           {' '}It agrees with the peer multiples at <b>{(t.reconciling_growth * 100).toFixed(1)}%</b>.
-          {' '}So the question is not which bar to believe — it is whether this company grows
+          {' '}So the question is not which bar to believe. It is whether this company grows
           faster than {(t.reconciling_growth * 100).toFixed(1)}% a year. Decide that, and the
           chart resolves itself.
         </div>
@@ -466,11 +466,11 @@ function FootballField({ ranges, currentPrice, triangulation }) {
           cash flow has to compound at{' '}
           <b>{(t.market_implied_terminal_growth * 100).toFixed(2)}%</b> forever
           {t.market_implied_growth_high ? (
-            <> — above the {(t.nominal_gdp_growth * 100).toFixed(0)}% an economy grows long-run.
+            <>, above the {(t.nominal_gdp_growth * 100).toFixed(0)}% an economy grows long-run.
               The market is pricing growth above the economy in perpetuity; the DCF cannot express
               that, which is most of why the two bars disagree.</>
           ) : (
-            <> — below the {(t.nominal_gdp_growth * 100).toFixed(0)}% an economy grows long-run,
+            <>, below the {(t.nominal_gdp_growth * 100).toFixed(0)}% an economy grows long-run,
               so the price needs nothing unusual to hold. Here the gap between the bars is about
               the forecast, not the terminal assumption.</>
           )}
@@ -481,7 +481,7 @@ function FootballField({ ranges, currentPrice, triangulation }) {
         <div className="chart-note">
           Bars are the fair-value range each method produces; the tick inside a bar is its
           midpoint, and the faint outer bar is the method&rsquo;s full spread where it has one.
-          The vertical rule is today&rsquo;s price ({num(currentPrice)}) — a bar sitting
+          The vertical rule is today&rsquo;s price ({num(currentPrice)}). A bar sitting
           entirely to its right means that method sees the stock as cheap.
         </div>
       )}
@@ -743,7 +743,7 @@ export default function ScorecardTab({ ticker, aiOnline }) {
           </div>
         ) : (
           <div className="chart-note">
-            No peer suggestions for this ticker — type peer tickers above and Apply.
+            No peer suggestions for this ticker. Type peer tickers above and Apply.
           </div>
         )}
       </div>

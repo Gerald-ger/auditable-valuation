@@ -137,7 +137,7 @@ export function eventStamp(e) {
   const iso = new Date(toChartTime(e.published_at) * 1000).toISOString();
   return {
     text: `${iso.slice(0, 10)} ${iso.slice(11, 16)}`,
-    title: `Publisher timestamp, ${DISPLAY_TZ_LABEL}. When the story was filed — `
+    title: `Publisher timestamp, ${DISPLAY_TZ_LABEL}. When the story was filed, `
       + 'not necessarily when the market learned.',
   };
 }

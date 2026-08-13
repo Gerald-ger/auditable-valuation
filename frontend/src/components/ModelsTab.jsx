@@ -129,7 +129,7 @@ function RevenueTrend({ trend }) {
         </tbody>
       </table>
       <div className="chart-note">
-        Line: revenue level (axis starts near the range, not zero — read its shape, not its
+        Line: revenue level (axis starts near the range, not zero; read its shape, not its
         height). Bars: year-on-year change, centred on zero.
       </div>
     </div>
@@ -163,7 +163,7 @@ function DcfAudit({ dcf }) {
           beta <b>{num(a.beta, 2)}</b>
           <span className={`src-tag ${a.beta_source}`}>{a.beta_source.replace('_', ' ')}</span>
           {a.beta_source !== 'reported' && a.beta_reported !== null && (
-            <span className="muted-note"> (reported {num(a.beta_reported, 2)} — not credible)</span>
+            <span className="muted-note"> (reported {num(a.beta_reported, 2)}, not credible)</span>
           )}
           {' · '}WACC <b>{pct(a.wacc_used)}</b>
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>
@@ -181,7 +181,7 @@ function DcfAudit({ dcf }) {
           {' · '}FCF <b>{big(a.base_fcf)}</b>
           <span className="muted-note">
             {' '}
-            ({a.fcf_source === 'cash_flow_statement' ? a.fcf_period : 'info — period unverified'})
+            ({a.fcf_source === 'cash_flow_statement' ? a.fcf_period : 'info, period unverified'})
           </span>
           {' · '}forecast <b>{a.stage1_years}+{a.stage2_years}y</b>
           {/* Only shown when the two currencies actually differ, which is the
@@ -206,7 +206,7 @@ function DcfAudit({ dcf }) {
           <span>
             <b>{pct(a.terminal_growth)}</b>
             {a.terminal_growth_source === 'user' ? (
-              <span className="muted-note"> — set by you, ceilings not applied</span>
+              <span className="muted-note"> (set by you, ceilings not applied)</span>
             ) : (
               <>
                 <span className="muted-note">
@@ -215,13 +215,13 @@ function DcfAudit({ dcf }) {
                   <b>{pct(a.terminal_growth_ceilings.nominal_gdp_growth)}</b> (nothing
                   outgrows its economy forever) and the risk-free rate{' '}
                   <b>{pct(a.terminal_growth_ceilings.risk_free_rate)}</b> (Damodaran&rsquo;s
-                  cap — the ten-year is itself a market read of long-run nominal growth)
+                  cap: the ten-year is itself a market read of long-run nominal growth)
                 </span>
                 {a.terminal_growth_source === 'capped_at_risk_free_rate' && (
                   <>
                     {' '}
                     <span className="warn-chip">
-                      cut to the risk-free rate — a low-rate regime
+                      cut to the risk-free rate in a low-rate regime
                     </span>
                   </>
                 )}
@@ -241,7 +241,7 @@ function DcfAudit({ dcf }) {
             <>
               <span className="warn-chip">
                 {d.net_debt_assumed_zero.map((leg) => leg.replace('_', ' ')).join(' and ')} not
-                reported — assumed zero in the equity bridge
+                reported, assumed zero in the equity bridge
               </span>{' '}
             </>
           )}
@@ -250,7 +250,7 @@ function DcfAudit({ dcf }) {
           {a.fx_basis === 'rate_unavailable' && (
             <>
               <span className="warn-chip">
-                no {a.reporting_currency}/{a.currency} rate — upside withheld, fair value is
+                no {a.reporting_currency}/{a.currency} rate: upside withheld, fair value is
                 in {a.reporting_currency}
               </span>{' '}
             </>
@@ -261,7 +261,7 @@ function DcfAudit({ dcf }) {
           {d.terminal_value_high && (
             <span className="muted-note">
               {' '}
-              above 75% — the perpetuity assumption, not the forecast, is driving this
+              above 75%: the perpetuity assumption, not the forecast, is driving this
             </span>
           )}
           {d.implied_exit_ev_ebitda !== null && (
@@ -275,9 +275,9 @@ function DcfAudit({ dcf }) {
                   {' '}
                   vs {num(d.current_ev_ebitda, 1)}× today
                   {exitVsNow !== null &&
-                    ` — assumes ${exitVsNow < 0 ? 'compression' : 'expansion'} of ${Math.abs(
+                    ` (assumes ${exitVsNow < 0 ? 'compression' : 'expansion'} of ${Math.abs(
                       exitVsNow * 100,
-                    ).toFixed(0)}%`}
+                    ).toFixed(0)}%)`}
                 </span>
               )}
             </>
@@ -298,9 +298,9 @@ function DcfAudit({ dcf }) {
               <span className="muted-note">
                 {' '}
                 {d.market_implied_growth_high
-                  ? `— above ${pct(d.nominal_gdp_growth)} long-run nominal GDP, so the market is
+                  ? `, which is above ${pct(d.nominal_gdp_growth)} long-run nominal GDP, so the market is
                      pricing growth above the economy forever`
-                  : `— below ${pct(d.nominal_gdp_growth)} long-run nominal GDP, so the price needs
+                  : `, which is below ${pct(d.nominal_gdp_growth)} long-run nominal GDP, so the price needs
                      nothing unusual`}
               </span>
             </>
@@ -363,7 +363,7 @@ function BaseYearPanel({ dcf }) {
   return (
     <>
       <div className="sens-title">
-        Base year — is {dcf.assumptions.fcf_period} representative?
+        Base year: is {dcf.assumptions.fcf_period} representative?
       </div>
       <table className="sens-table base-year-table">
         <thead>
@@ -401,14 +401,14 @@ function BaseYearPanel({ dcf }) {
           <>
             Against that average, operating cash moved{' '}
             <b>{signedPp(b.operating_delta)}</b> of revenue and capital spending{' '}
-            <b>{signedPp(b.capex_delta)}</b> — and more capital spending lowers free
+            <b>{signedPp(b.capex_delta)}</b>. More capital spending lowers free
             cash flow.{' '}
             <b>
               {b.driver === 'capital_spending' ? 'Capital spending' : 'Operating cash'}
             </b>{' '}
             is the larger of the two.{' '}
             {DRIVER_NOTES[b.driver_note]}
-            {' '}The two legs sum exactly to the change — nothing is assumed to
+            {' '}The two legs sum exactly to the change; nothing is assumed to
             attribute it.
           </>
         ) : (
@@ -422,7 +422,7 @@ function BaseYearPanel({ dcf }) {
             <tbody>
               <tr>
                 <td style={{ textAlign: 'left' }}>
-                  On the reported year — <b>the headline above</b>, ticks to a filing
+                  On the reported year: <b>the headline above</b>, ticks to a filing
                 </td>
                 <td><b>{num(dcf.fair_value_per_share)}</b> {ccy}</td>
                 <td>{dcf.upside_pct > 0 ? '+' : ''}{num(dcf.upside_pct, 1)}%</td>
@@ -441,7 +441,7 @@ function BaseYearPanel({ dcf }) {
           </table>
           <div className="chart-note">
             We do not choose between these. Which is right depends on whether the
-            movement above persists — a judgement about the future, not a figure in
+            movement above persists: a judgement about the future, not a figure in
             the accounts, so the platform declines to make it for you. Note the
             adjustment is not one-way: it lowers companies whose newest year ran
             <i> above</i> their own average and raises those below, which is what
@@ -545,7 +545,7 @@ export default function ModelsTab({ ticker }) {
 
       <div className="panel dcf-panel">
         <div className="panel-title">
-          DCF valuation — two-stage FCFF
+          DCF valuation: two-stage FCFF
           {dcf?.assumptions && (
             <span className="title-note">
               {dcf.assumptions.stage1_years} explicit years + {dcf.assumptions.stage2_years}-year
@@ -568,7 +568,7 @@ export default function ModelsTab({ ticker }) {
             {card.classification === 'real_estate_reit'
               ? 'operating cash flow less capital expenditure, and for a REIT that capex is property acquisition rather than maintenance'
               : 'not a meaningful quantity for this balance sheet'}
-            . The Scorecard leaves it out of the valuation pillar for the same reason — read
+            . The Scorecard leaves it out of the valuation pillar for the same reason. Read
             the peer multiples and the football field instead.
           </div>
         )}
@@ -635,7 +635,7 @@ export default function ModelsTab({ ticker }) {
               </div>
               <DcfAudit dcf={dcf} />
               <div className="sens-title">
-                Sensitivity — fair value across WACC (rows) × terminal growth (columns)
+                Sensitivity: fair value across WACC (rows) × terminal growth (columns)
               </div>
               <table className="sens-table">
                 <thead>
@@ -682,14 +682,14 @@ export default function ModelsTab({ ticker }) {
               {dcf.diagnostics.base_fcf_quality?.anomalous && (
                 <>
                   <div className="sens-title">
-                    Base year — cash conversion has broken from this company&rsquo;s own history
+                    Base year: cash conversion has broken from this company&rsquo;s own history
                   </div>
                   <div className="chart-note">
                     Free cash flow was{' '}
                     <b>{pct(dcf.diagnostics.base_fcf_quality.conversion)}</b> of net income in{' '}
                     {dcf.assumptions.fcf_period}, against{' '}
                     <b>{pct(dcf.diagnostics.base_fcf_quality.reference)}</b> across the other
-                    filed years — a {pct(Math.abs(dcf.diagnostics.base_fcf_quality.deviation))} break.
+                    filed years, a {pct(Math.abs(dcf.diagnostics.base_fcf_quality.deviation))} break.
                     The DCF above uses the <b>reported</b> figure. The bridge below shows what a
                     normal working-capital movement would give instead; if the two are close, the
                     break is not working capital and the capital-expenditure line is where to look.
@@ -720,7 +720,7 @@ export default function ModelsTab({ ticker }) {
               {dcf.growth_sensitivity && (
                 <>
                   <div className="sens-title">
-                    Sensitivity — fair value across the starting growth rate
+                    Sensitivity: fair value across the starting growth rate
                     (the grid above holds it at{' '}
                     {(dcf.assumptions.growth_rate_year1 * 100).toFixed(2)}%)
                   </div>
@@ -750,9 +750,9 @@ export default function ModelsTab({ ticker }) {
                     </tbody>
                   </table>
                   <div className="chart-note">
-                    This sweep deliberately ranges outside the 0–25% band the growth
+                    This sweep deliberately ranges outside the 0-25% band the growth
                     <em> input</em> is clamped to. That clamp filters a noisy vendor field;
-                    bounding a stress test by it made the band one-sided — a company at 0%
+                    bounding a stress test by it made the band one-sided: a company at 0%
                     growth got upside and no downside, and one at 25% the reverse.
                   </div>
                 </>

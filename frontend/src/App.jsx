@@ -84,7 +84,7 @@ export default function App() {
         </ErrorBoundary>
       </main>
       <footer>
-        Data: yfinance (OpenBB adapter ready) · AI: local Ollama · Decision support only —
+        Data: yfinance (OpenBB adapter ready) · AI: local Ollama · Decision support only,
         not certified financial advice.
       </footer>
     </div>

@@ -11,7 +11,7 @@ import { stream } from '../api';
 const STAGES = [
   { key: 'bull', label: 'Bull case', cls: 'up' },
   { key: 'bear', label: 'Bear case', cls: 'down' },
-  { key: 'verdict', label: 'Verdict — and what would change it', cls: 'gold' },
+  { key: 'verdict', label: 'Verdict, and what would change it', cls: 'gold' },
 ];
 
 export default function Debate({ ticker, aiOnline }) {
@@ -53,7 +53,7 @@ export default function Debate({ ticker, aiOnline }) {
 
       {!aiOnline && (
         <div className="ai-offline-note">
-          Requires the local AI — install Ollama to enable (see README). Three passes on a
+          Requires the local AI. Install Ollama to enable (see README). Three passes on a
           CPU-only 7B model takes several minutes; the text streams in as it is written.
         </div>
       )}

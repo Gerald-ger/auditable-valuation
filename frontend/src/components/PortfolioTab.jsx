@@ -242,11 +242,11 @@ export default function PortfolioTab({ onPick }) {
               </table>
             </div>
             <div className="chart-note">
-              Scores come from the last time you ran the Scorecard or Screener on that ticker —
+              Scores come from the last time you ran the Scorecard or Screener on that ticker;
               they are not refreshed here. Click a ticker to open it.{' '}
               {/* Same wording as ScreenerTab, deliberately: two tabs must not
                   describe the same limitation differently. */}
-              <strong>Scores are not comparable across company types</strong> — the profile
+              <strong>Scores are not comparable across company types</strong>. The profile
               beside each one names the formula that produced it, and two profiles score
               different metrics on different weights. Compare within a type; across types,
               open the scorecards and compare pillars.
@@ -254,7 +254,7 @@ export default function PortfolioTab({ onPick }) {
                 <>
                   {' '}
                   <span className="down">
-                    Holdings span {currencies.join(', ')} — totals add face values without FX
+                    Holdings span {currencies.join(', ')}: totals add face values without FX
                     conversion, so the aggregate is indicative only.
                   </span>
                 </>
