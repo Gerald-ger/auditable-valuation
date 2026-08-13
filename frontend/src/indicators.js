@@ -1,16 +1,51 @@
 // Technical indicator math. All functions take chart bars ({time, close, ...})
 // and return lightweight-charts-ready [{time, value}] arrays.
 //
-// Every `period` here counts BARS, not days. That distinction became load-bearing
-// once the chart started serving intraday bars for periods up to 2 years: on 1h
-// bars a 50-bar average spans about 7 trading days, not 50, so a series labelled
-// "MA50" would silently mean something different on every period button.
-// PriceChart therefore scales these windows by the bars-per-day the backend
-// measured, and `barsForDays` below is the one place that conversion lives.
+// Every `period` here counts BARS, which is the convention every mainstream
+// charting platform uses: on a 5-minute chart AAStocks' SMA(150) is 150 bars —
+// 750 minutes — not 150 days.
+//
+// These windows were previously scaled to trading days, so that "MA50" meant the
+// same duration on every period button. That read well and made the short
+// periods unusable: a 50-day average does not exist inside a one-day chart at
+// any bar size, so MA, RSI and MACD simply vanished on 1d and 5d. Counting bars
+// is what makes a smooth intraday line possible at all.
+//
+// The cost is the ambiguity the old scheme was avoiding — MA50 spans 50 minutes
+// on a 1-minute chart and 50 days on a daily one. That is now paid for in the
+// UI rather than in the math: `windowSpan` turns a window into the time it
+// actually covers, and the chart states it beside every indicator.
 
-/** Bars covering N trading days, floored at 2 so a window is always a window. */
-export function barsForDays(days, barsPerDay) {
-  return Math.max(2, Math.round(days * (barsPerDay || 1)));
+// Minutes per bar for the intraday intervals the backend serves. Coarser
+// intervals are named rather than measured, because "50 days" reads better than
+// the 72,000 minutes it works out to.
+const INTERVAL_MINUTES = {
+  '1m': 1, '2m': 2, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '90m': 90, '1h': 60,
+};
+const INTERVAL_UNIT = { '1d': 'day', '1wk': 'week', '1mo': 'month' };
+
+/**
+ * How much time a window of `barCount` bars covers, as a label.
+ *
+ * This is what keeps a bar-counted window honest on screen: MA50 reads "50 min"
+ * on a 1-minute chart and "50 days" on a daily one, and the legend says which.
+ *
+ * A session is taken as 6.5 hours once a window is long enough that sessions
+ * read better than hours. Hong Kong trades 5.5, so that figure is approximate
+ * by construction — it is only ever shown behind a "≈".
+ */
+export function windowSpan(barCount, interval) {
+  const perBar = INTERVAL_MINUTES[interval];
+  if (perBar) {
+    const minutes = barCount * perBar;
+    if (minutes < 90) return `${minutes} min`;
+    const hours = minutes / 60;
+    if (hours < 13) return `${+hours.toFixed(1)} h`;
+    return `${+(hours / 6.5).toFixed(1)} sessions`;
+  }
+  const unit = INTERVAL_UNIT[interval];
+  if (unit) return `${barCount} ${unit}${barCount === 1 ? '' : 's'}`;
+  return `${barCount} bars`;
 }
 
 export function smaSeries(bars, period) {

@@ -10,9 +10,8 @@ const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
 export default function TrackerTab({ ticker, aiOnline }) {
   const [quote, setQuote] = useState(null);
   const [bars, setBars] = useState([]);
-  // interval is chosen by the backend per period (2m for 1d, 1h for 1y, ...);
-  // barsPerDay lets the chart keep MA/RSI/MACD windows measured in trading days
-  const [barsPerDay, setBarsPerDay] = useState(1);
+  // interval is chosen by the backend per period (1m for 1d, 1h for 1y, ...).
+  // MA/RSI/MACD windows count bars, so it is what says how long they span.
   const [interval, setInterval_] = useState('1d');
   // every datable item (news + SEC filings) for the chart markers; the list
   // below stays headlines-only, which is what "News behind the chart" means
@@ -39,7 +38,6 @@ export default function TrackerTab({ ticker, aiOnline }) {
         // guarded: a backend older than the page returns a bare array here,
         // and an undefined `bars` throws inside the chart's render
         setBars(h.bars ?? []);
-        setBarsPerDay(h.bars_per_day || 1);
         setInterval_(h.interval ?? '1d');
         setEvents(e.events);
         setFilingsSupported(e.filings_supported);
@@ -119,7 +117,7 @@ export default function TrackerTab({ ticker, aiOnline }) {
               bars={bars}
               events={events}
               filingsSupported={filingsSupported}
-              barsPerDay={barsPerDay}
+              interval={interval}
               ticker={ticker}
             />
           )}

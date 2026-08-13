@@ -7,7 +7,7 @@ import {
   HistogramSeries,
   createSeriesMarkers,
 } from 'lightweight-charts';
-import { smaSeries, rsiSeries, macdSeries, barsForDays } from '../indicators';
+import { smaSeries, rsiSeries, macdSeries, windowSpan } from '../indicators';
 import { toChartTime, fromChartTime } from '../charttime';
 import { eventStamp, groupEventsByBar, toDateStr } from '../events';
 import { DrawingsPrimitive } from '../drawingPrimitive';
@@ -20,11 +20,17 @@ const CHART_TYPES = [
   ['line', 'Line'],
   ['ohlc', 'OHLC'],
 ];
+// Moving averages, in BARS — the charting convention. What each spans in time
+// depends on the interval, which the legend names rather than leaves implied.
 const MA_CONFIG = [
   [10, '#60a5fa'],
   [20, '#f0b90b'],
   [50, '#c084fc'],
 ];
+const RSI_PERIOD = 14;
+const MACD_FAST = 12;
+const MACD_SLOW = 26;
+const MACD_SIGNAL = 9;
 // lightweight-charts PriceScaleMode: 0 normal, 1 logarithmic, 2 percentage
 const SCALE_MODES = [
   ['Lin', 0, 'Linear price scale'],
@@ -64,7 +70,7 @@ const dominantType = (items) =>
   EVENT_TYPES.find(([key]) => items.some((i) => i.category === key))?.[0] ?? 'company';
 
 export default function PriceChart({
-  bars: rawBars = [], events, filingsSupported = true, barsPerDay = 1, ticker = '',
+  bars: rawBars = [], events, filingsSupported = true, interval = '1d', ticker = '',
 }) {
   // Shift once, here, so every downstream consumer — the series, the volume
   // pane, event grouping, the crosshair legend — works in one time space.
@@ -196,9 +202,10 @@ export default function PriceChart({
 
     if (show.ma) {
       for (const [period, color] of MA_CONFIG) {
-        // period is in DAYS; convert to bars so MA50 spans 50 trading days
-        // whether the chart is drawing daily, hourly or 2-minute candles
-        const data = smaSeries(bars, barsForDays(period, barsPerDay));
+        // period is in BARS, so the line is as smooth as the bars are fine and
+        // starts `period` bars in — there is no warm-up history behind the left
+        // edge, which is the one visible difference from a vendor chart
+        const data = smaSeries(bars, period);
         if (!data.length) continue;
         chart.addSeries(LineSeries, { color, lineWidth: 1.5, ...OVERLAY_OPTS }).setData(data);
       }
@@ -232,10 +239,10 @@ export default function PriceChart({
     if (show.rsi) {
       const rsi = chart.addSeries(
         LineSeries,
-        { color: '#f0b90b', lineWidth: 1.5, priceLineVisible: false, title: 'RSI 14' },
+        { color: '#f0b90b', lineWidth: 1.5, priceLineVisible: false, title: `RSI ${RSI_PERIOD}` },
         paneIdx,
       );
-      rsi.setData(rsiSeries(bars, barsForDays(14, barsPerDay)));
+      rsi.setData(rsiSeries(bars, RSI_PERIOD));
       for (const [price, color] of [[70, 'rgba(246,70,93,0.45)'], [30, 'rgba(46,189,133,0.45)']]) {
         rsi.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
       }
@@ -245,10 +252,7 @@ export default function PriceChart({
       paneIdx += 1;
     }
     if (show.macd) {
-      const { macd, signal, hist } = macdSeries(
-        bars, barsForDays(12, barsPerDay), barsForDays(26, barsPerDay),
-        barsForDays(9, barsPerDay),
-      );
+      const { macd, signal, hist } = macdSeries(bars, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
       if (macd.length) {
         chart.addSeries(HistogramSeries, { ...OVERLAY_OPTS }, paneIdx).setData(hist);
         chart
@@ -311,7 +315,7 @@ export default function PriceChart({
       markersRef.current = null;
       primitiveRef.current = null;
     };
-  }, [bars, chartType, show, scaleMode, barsPerDay]);
+  }, [bars, chartType, show, scaleMode]);
 
   // ── markers, updated without rebuilding the chart ─────────────────
   // Kept in its own effect so toggling a filter does not recreate the chart and
@@ -339,19 +343,17 @@ export default function PriceChart({
     }
   }, [visibleGroups]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // How much history this period actually holds, and which day-based indicators
-  // therefore cannot be computed from it.
-  const daysCovered = Math.max(1, Math.round(bars.length / (barsPerDay || 1)));
+  // Windows count bars, so an indicator is missing only when the chart holds
+  // fewer bars than its window — which now takes a very short series rather
+  // than merely a short period.
   const unavailable = [];
   if (show.ma && bars.length) {
-    const missing = MA_CONFIG.filter(([p]) => barsForDays(p, barsPerDay) >= bars.length);
+    const missing = MA_CONFIG.filter(([p]) => bars.length <= p);
     if (missing.length) unavailable.push(missing.map(([p]) => `MA${p}`).join('/'));
   }
-  if (show.rsi && bars.length && barsForDays(14, barsPerDay) >= bars.length) {
-    unavailable.push('RSI(14)');
-  }
-  if (show.macd && bars.length && barsForDays(26, barsPerDay) >= bars.length) {
-    unavailable.push('MACD(12,26,9)');
+  if (show.rsi && bars.length && bars.length <= RSI_PERIOD) unavailable.push(`RSI(${RSI_PERIOD})`);
+  if (show.macd && bars.length && bars.length <= MACD_SLOW) {
+    unavailable.push(`MACD(${MACD_FAST},${MACD_SLOW},${MACD_SIGNAL})`);
   }
 
   // ── drawing interaction ───────────────────────────────────────────
@@ -545,30 +547,35 @@ export default function PriceChart({
             {MA_CONFIG.map(([p, color]) => (
               <span
                 key={p}
-                className={`ma-chip ${barsForDays(p, barsPerDay) >= bars.length ? 'ma-chip-unavailable' : ''}`}
+                className={`ma-chip ${bars.length <= p ? 'ma-chip-unavailable' : ''}`}
                 title={
-                  barsForDays(p, barsPerDay) >= bars.length
-                    ? `Needs ${p} trading days; this period covers about ${daysCovered}.`
-                    : `${p}-trading-day average (${barsForDays(p, barsPerDay)} bars at this interval)`
+                  bars.length <= p
+                    ? `Needs ${p} bars; this chart has ${bars.length}.`
+                    : `${p}-bar average ≈ ${windowSpan(p, interval)} at ${interval} bars`
                 }
               >
                 <span className="ma-swatch" style={{ background: color }} />
                 MA{p}
               </span>
             ))}
+            {/* MA50 is 50 minutes here and 50 days on the 5y chart. Naming the
+                unit in the legend is what stops the same label meaning two
+                things without saying so. */}
+            <span
+              className="ma-basis"
+              title={`Indicator windows count bars. At ${interval} bars, MA50 spans ≈ ${windowSpan(50, interval)}.`}
+            >
+              bars @ {interval}
+            </span>
           </span>
         )}
       </div>
 
-      {/* Indicator windows are day-based, so a short period genuinely cannot
-          produce them — a 50-day average does not exist inside one session.
-          Saying so beats drawing a 50-*bar* line under a "MA50" label. */}
       {unavailable.length > 0 && (
         <div className="chart-note">
-          {unavailable.join(', ')} need{unavailable.length === 1 ? 's' : ''} more history than
-          this period covers (~{daysCovered} trading day{daysCovered === 1 ? '' : 's'}). Windows
-          are measured in trading days, so they mean the same thing on every period — pick a
-          longer period to see them.
+          {unavailable.join(', ')} need{unavailable.length === 1 ? 's' : ''} more bars than this
+          chart holds ({bars.length}). Windows are measured in bars, so a longer period — or a
+          finer interval — fills them.
         </div>
       )}
 

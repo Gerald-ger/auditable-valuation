@@ -14,24 +14,40 @@
  * formula in "New Concepts in Technical Trading Systems".
  */
 import { describe, it, expect } from 'vitest';
-import { barsForDays, macdSeries, rsiSeries, smaSeries } from './indicators';
+import { macdSeries, rsiSeries, smaSeries, windowSpan } from './indicators';
 
 const bars = (closes) => closes.map((close, i) => ({ time: i, close }));
 const values = (series) => series.map((p) => p.value);
 
-describe('barsForDays', () => {
-  it('scales a day window by the measured bars per day', () => {
-    expect(barsForDays(50, 7)).toBe(350);
+describe('windowSpan', () => {
+  it('reads a short intraday window in minutes', () => {
+    expect(windowSpan(50, '1m')).toBe('50 min');
+    expect(windowSpan(10, '5m')).toBe('50 min');
   });
 
-  it('treats a missing bars-per-day as one bar per day', () => {
-    expect(barsForDays(50, 0)).toBe(50);
-    expect(barsForDays(50, undefined)).toBe(50);
+  it('switches to hours once minutes stop being readable', () => {
+    // 90 minutes is the cut, so 20 x 5m = 100 min reads as hours
+    expect(windowSpan(20, '5m')).toBe('1.7 h');
+    expect(windowSpan(50, '15m')).toBe('12.5 h'); // 750 min, just under the 13h cut
   });
 
-  it('never returns a window too short to be a window', () => {
-    // 1 day of daily bars would otherwise be a 1-bar "average"
-    expect(barsForDays(1, 1)).toBe(2);
+  it('switches to sessions once a window outgrows a trading day', () => {
+    // 50 x 1h = 50 hours; at a 6.5h session that is ~7.7 sessions, which is the
+    // number that actually tells you what MA50 means on the 1y chart
+    expect(windowSpan(50, '1h')).toBe('7.7 sessions');
+    expect(windowSpan(50, '30m')).toBe('3.8 sessions'); // 25 h is already >1 day
+  });
+
+  it('names the unit for coarse bars rather than converting to minutes', () => {
+    expect(windowSpan(50, '1d')).toBe('50 days');
+    expect(windowSpan(50, '1wk')).toBe('50 weeks');
+    expect(windowSpan(1, '1d')).toBe('1 day');
+  });
+
+  it('falls back to bars for an interval it does not know', () => {
+    // a new interval in the backend's PERIOD_INTERVALS must not render "undefined"
+    expect(windowSpan(50, '4h')).toBe('50 bars');
+    expect(windowSpan(50, undefined)).toBe('50 bars');
   });
 });
 
