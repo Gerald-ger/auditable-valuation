@@ -138,17 +138,54 @@ methodology" is therefore only true of the opening sections.
 **Trigger: after Ollama is installed** — worth measuring whether the 7B model even uses
 the excerpt it already gets before building retrieval for it.
 
-### 🟡 Growth sourcing is doing more work than anything else in the DCF
+### 🟡 A cyclical is still valued off one year of its own cycle
 
-XOM's `growth_rate_year1` is **0.0%**, taken from analyst forward consensus, and it
-drives the −55.7% result more than the beta correction does. The input is capped at
-25% and floored at 0%, so a company in consensus decline is modelled as flat forever
-through stage 1. Cyclicals are exactly where a single-year consensus figure is least
-meaningful.
+*Most of this item was resolved 2026-08-13 below — the clamp is gone, the explicit stage
+now matches the one-year consensus that feeds it, and the base year is shown against the
+company's own history. What is left is narrower, and it is a decision rather than a bug.*
 
-**Trigger: before trusting DCF upside on any cyclical.** Options: use a multi-year
-consensus average, use the 3-year revenue CAGR for cyclicals specifically (the
-sector profile already knows which they are), or widen the floor to allow decline.
+XOM's newest reported year is **0.71× its own four-year average FCF margin**, and the
+model still takes that year as the headline. The band beside it shows what the average
+implies (**71.75 → 102.17** on the fixture), but the platform deliberately declines to choose,
+because whether a trough persists is a forecast about the world rather than a figure in
+the accounts.
+
+For genuinely cyclical sectors that reasoning is weaker than elsewhere: normalising across
+a cycle is not a modelling opinion there, it is the professional standard, and energy /
+materials are the textbook case. Making the normalised figure the *headline* for
+classified cyclicals only — reusing the sector classification that already exists — was
+put to the owner on 2026-08-13 and **declined**; the band was accepted, the headline swap
+was not.
+
+**Trigger: the owner revisiting that call**, or a cyclical whose reported-year headline
+proves misleading in use. Options if revisited: normalised headline for classified
+cyclicals, or a multi-year consensus average, or the 3-year revenue CAGR for cyclicals
+specifically.
+
+### 🔵 Beta re-levering has never been audited on a net-cash company
+
+Raised 2026-08-13 and not investigated. `resolve_beta` unlevers peer betas and re-levers
+them to the target's capital structure, which is correct in general. AAPL and MSFT carry
+more cash than debt, and it has never been checked what the Hamada formula does with a
+*negative* net position, nor whether the result is the right input for a company whose
+financial risk is essentially nil. CAPM with a historical ERP is a known suspect for
+overstating the required return on exactly this kind of business.
+
+**Trigger: before treating the mega-cap DCF gaps as settled.** Cheap to look at; direction
+unknown, which is why it is not listed as a defect.
+
+### 🔵 Tencent's investment portfolio is not in the valuation at all
+
+Raised 2026-08-13, sized but not acted on. 0700.HK's balance sheet carries `Investments in
+Associates at Cost` 342bn, `Long Term Equity Investment` 349bn and `Investment in Financial
+Assets` 635bn against a 4,333bn market cap. A DCF of the operating business plus an equity
+bridge misses all of it, so the valuation is incomplete rather than wrong.
+
+Not fixed because the line items **nest** (adding them naively double-counts) and are held
+**at cost** rather than fair value. Choosing which line to use and how to mark it are both
+assumptions, which is why this is not the "zero-assumption" fix it first appears to be.
+
+**Trigger: a holdings-level source, or a decision to accept book value with that stated.**
 
 ### 🟡 Portfolio totals ignore FX
 
@@ -164,6 +201,15 @@ Line references re-verified 2026-08-09.
   landing in `failed`, because yfinance returns an empty payload instead of raising.
   The row is greyed and unranked, so it is honest, just not obvious. *(Not re-verified
   2026-08-09.)*
+- **Twelve distinct corner radii, with no rule** (audited 2026-08-13): 0, 2, 3, 4, 5, 6,
+  8, 10, 12, 14px, plus `50%` and `999px`. There is already a latent three-tier intent —
+  graphics 2-4px, controls and chips 5-6px, surfaces 8-14px, with 0 / circle / pill as
+  deliberate specials — so the drift is *within* each tier rather than across them.
+  Collapsing it to three tokens is ~19 declarations and a visible change to the tier badge
+  (14 → 10px); it was left alone because it is cosmetic and the owner declined a visual
+  redesign. *(Not a defect, just undocumented.)*
+- The footer metadata strip uses two middle dots on one line where the house rule allows
+  one. Same category as above: real, cosmetic, unactioned.
 - `ScorecardTab.jsx:225` carries an unsuppressed `exhaustive-deps` lint warning on
   `loadComps` (pre-existing, emitted by oxlint on every build). Separately,
   [PriceChart.jsx:398](frontend/src/components/PriceChart.jsx#L398) *disables* the same
@@ -194,9 +240,24 @@ formula and flags a sector-ETF-relative upgrade as future work.
 
 The tax rate is fixed (HKD → 16.5%), but `_wacc()` still applies the US 10Y to HK
 issuers and `EQUITY_RISK_PREMIUM = 0.05` is constant across every market and period.
-The HKD peg makes the risk-free proxy defensible; a flat global ERP is a simplification
-with no such excuse. A HKD government-bond yield and a per-market ERP would be the
-correct inputs.
+A flat global ERP is a simplification with no excuse. A per-market ERP would be the
+correct input.
+
+**The peg argument is weaker than this item used to claim (found 2026-08-13).** The code
+justifies the USD risk-free rate by the HKD peg, and for an HKD-reporting issuer that
+holds. But 0700.HK's *statements are in CNY*, and CNY is not pegged — so the largest HK
+name in the fixture set discounts CNY cash flows at a rate built on the US ten-year, then
+converts at spot. Rate and cash flow are in different currencies, which is the one
+consistency rule a DCF cannot bend.
+
+Size is genuinely unclear, which is why this is still a decision and not a fix. China's
+ten-year has run ~1.7–2.0% against the US 4.3%, and −250bp on 0700.HK's WACC moves its
+fair value 624.90 → 1,225.93. But the *missing* China country risk premium pushes the
+other way and no one has sized it, so the net could go either direction. Doing half of
+this — cutting the rate without adding the country premium — would be worse than doing
+neither.
+
+**Trigger: a per-market ERP source.** Both legs move together or neither moves.
 
 *(Distinct from the reporting-currency mismatch fixed 2026-08-10. That was a units bug —
 CNY cash flows compared against an HKD price. This is a choice of discount-rate inputs,
@@ -243,6 +304,79 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-13 — the football field triangulates, and the base year stops being free
+
+Backend **254 → 357 passing**, 46 frontend. Two questions answered: what the chart is
+really claiming when three bars disagree, and what the model assumes by taking one filed
+year as the starting point.
+
+**The chart refuses to draw what does not apply.** The DCF bar is gated on
+`sector_weights.dcf_applies` — the same rule the scorer uses — so a REIT gets a struck-out
+row with the reason instead of a confident number the Models tab suppresses one tab away.
+`peer_ev_revenue` is suppressed when target and peer operating margins differ by more than
+2×: on 0700.HK the peer set medians 5.7% operating margin against Tencent's 34.3%, so the
+peer median 1.84× revenue multiple implied **189.61** a share against a 439–471 cluster
+from every other multiple — one number stretching the comps bar to 2.48× wide, and the sole
+reason its verdict still read "in range".
+Analyst targets became context rather than a vote, with their dispersion carried as a
+separate uncertainty signal.
+
+**The growth clamp is gone.** `[0%, 25%]` was two economic judgements dressed as data
+hygiene. The floor grew shrinking companies at zero and inflated XOM 15.7%; the ceiling
+truncated a 42.6% consensus from 55 analysts. Replaced by a validity range of −50% to
++200% that *rejects* rather than truncates, with the provenance labelled either way. The
+explicit stage went 5 years to **1**, matching the one-year horizon of the consensus that
+feeds it — holding a one-year figure flat for five invented four years nobody forecast, and
+for AMD that compounded free cash flow 15.1× before any fade began.
+
+**The base year turned out to be the largest undeclared assumption.** Free cash flow enters
+linearly, so a base year 22% below normal is a valuation 22% below normal, permanently.
+Three of four profitable fixtures start below their own mean FCF margin (AAPL 0.90×, MSFT
+0.78×, XOM 0.71×; 0700.HK 1.06×). `base_year_context` decomposes the year *exactly* —
+`FCF/revenue = CFO/revenue − capex/revenue`, no residual — so the panel can separate a
+business spending more (MSFT: capex 13.3% → 34.9% of revenue while operating cash rose)
+from one earning less, with nothing assumed. The reported year stays the headline; the
+normalised figure sits beside it and the platform declines to choose.
+
+The direction is the whole argument, and a test pins it: normalisation moves 0700.HK
+**down** while moving MSFT and XOM up. A change that narrowed every gap would be a price
+tracker, not a model.
+
+**Analyst opinion is now counted once.** `analyst_upside` divided someone's forecast of
+price by price while every other valuation metric divided a reported figure or the
+platform's own model; the DCF already consumes analyst consensus growth, so scoring the
+target too moved two of five V metrics from one source with correlated errors of the same
+sign. Removed from every pillar, kept on screen as labelled context. Composite moved −3 to
++1; no fixture changed tier.
+
+**A grade that never varied was replaced by arithmetic.** Conviction read LOW on all eleven
+names tested and the overlap zone was non-empty once, so the chart now leads with a bridge
+decomposing model-value → price into named steps ending in an explicitly unexplained
+residual. The residual is left unexplained on purpose: it is the market pricing a longer
+advantage period, a lower discount rate or a higher terminal cash conversion than a
+ten-year fade at 2.5% can express, and closing it by tuning would make the DCF an expensive
+way to display the price.
+
+**Terminal growth shows its derivation** against two ceilings (nominal GDP, and the
+risk-free rate per Damodaran), both displayed whether or not they bind. The cap applies
+only to the platform default — a caller who names a rate gets it, because the
+reconciliation back-solves past both ceilings deliberately.
+
+**Also fixed, found reviewing the above:** white-on-accent measured **3.68:1** against a
+4.5:1 requirement on the primary button, active nav tab, period picker, segment controls
+and chat bubbles — all 13-14px body text, and the hover state was *more* readable than the
+resting state. Filled surfaces moved to a darker blue already in the palette (4.80:1). 71
+user-visible strings had em-dash and en-dash punctuation restructured into periods, colons
+and commas; the `—` no-data glyph in tables was deliberately kept, because a hyphen there
+reads as a minus sign in a column of financial figures.
+
+**Four defects in this work were caught by reviewing it afterwards** and are recorded
+because the review, not the tests, found them: the panel quoted a ratio against one
+baseline and its two legs against another, so the numbers on screen would not reconcile;
+the driver sentence claimed "spending more, not earning less" for XOM where *both* legs
+moved adversely; a first fix for that contradicted itself on 0700.HK; and rounding was
+compounded across periods instead of applied once at the output.
 
 ### ✅ 2026-08-10 (b) — the two decisions the review left open
 

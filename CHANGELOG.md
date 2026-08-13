@@ -7,6 +7,124 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-13 — the football field triangulates, and the base year stops being free
+
+Backend **254 → 357 passing** (16 network-deselected), frontend 44 → 46. Two questions
+answered: what the valuation chart is actually claiming when its bars disagree, and what
+the DCF assumes by taking one filed year as its starting point.
+
+### Changed
+
+- **The growth clamp is gone.** `[0%, 25%]` was two economic judgements dressed as data
+  hygiene. The floor grew shrinking companies at zero — fourteen analysts put XOM at
+  −2.3%, and flooring it inflated fair value **15.7%**. The ceiling truncated a **42.6%**
+  consensus from 55 analysts on NVDA. Replaced by a validity range of −50% to +200% that
+  **rejects** a corrupt figure rather than truncating a genuine one, with the provenance
+  labelled either way, so no number on screen is untraceable.
+
+- **The explicit stage went 5 years to 1**, with a 9-year fade after it. The growth figure
+  is a *one-year* consensus; holding it flat for five invented four years nobody forecast.
+  Measured: AMD's 72.1% consensus compounded free cash flow **15.1×** over five flat years
+  before any fade began, which is why its fair value ran from −81.4% clamped to +33.6%
+  unclamped. One year at the forecast rate then a linear fade gives **7.2× on NVDA against
+  13.5×** for the old plateau — most of the conservatism the cap was reaching for, without
+  discarding a basis point of observed data. This is what let the ceiling go; the ceiling
+  existed to survive the plateau, not to express a view about growth.
+
+- **`analyst_upside` is no longer scored in any pillar.** It divided *someone's forecast of
+  price* by price, while every other valuation metric divides a reported figure or the
+  platform's own model. Worse, `dcf_valuation` already takes its growth from analyst
+  consensus, so one source moved two of five V metrics with correlated errors of the same
+  sign. The scoring curve also anchored 0% upside at **45/100**, i.e. near-neutral, against
+  published targets that sit above price structurally — the seven fixtures scored a mean of
+  **69** against a centred 50. Removed from scoring, kept on screen as labelled context,
+  matching what the football field already did. Composite moved **−3 to +1**; no fixture
+  changed tier.
+
+- **Terminal growth shows its derivation** instead of appearing as a bare 2.5%, held under
+  two displayed ceilings: long-run nominal GDP, and the risk-free rate per Damodaran. The
+  cap applies **only** to the platform's default — a caller naming a rate gets that rate,
+  because `solve_for_fair_value` sweeps past both ceilings on purpose and capping it there
+  would report "closing this gap needs 7.01% perpetual growth" as unreachable, which is the
+  most useful sentence the reconciliation produces.
+
+### Added
+
+- **The base year is now shown as the assumption it is.** Free cash flow enters the
+  valuation linearly, so a base year 22% below normal is a valuation 22% below normal —
+  permanently, through every projected year *and* the terminal value. Measured across the
+  fixtures, the newest reported year sits below that company's own mean FCF margin for
+  three of the four profitable names: **AAPL 0.90×, MSFT 0.78×, XOM 0.71×**, with 0700.HK
+  the exception at 1.06×. Taking whatever period the vendor reported last is therefore a
+  one-directional bias, and unlike the terminal-growth band it does not wash out across
+  names — it penalises whoever is mid-investment or mid-cycle, corrupting exactly the
+  cross-name ranking a screener exists for.
+
+  `base_year_context` decomposes the base year **exactly** — `FCF/revenue = CFO/revenue −
+  capex/revenue`, no residual and no assumption — so the panel separates a business
+  *spending more* from one *earning less*. MSFT is the case it exists for: capex ran 13.3%
+  → 18.1% → 22.9% → **34.9%** of revenue over four years while operating cash *rose* 41.3%
+  → 55.1%. The reported year stays the headline; the normalised figure sits beside it and
+  the platform explicitly declines to choose, because whether that capex wave ends is a
+  forecast about the world, not a figure in the accounts.
+
+  **The direction is the whole argument.** Normalisation moves 0700.HK *down* (+29.8% →
+  +22.9% upside) while moving MSFT (−49.0% → −34.0%) and XOM (−52.7% → −32.6%) up. A change
+  that narrowed every gap to the market price would be a price tracker, not a model, and a
+  test pins both directions so a future change cannot quietly make it one-way.
+
+- **The football field refuses to draw what does not apply.** The DCF bar is gated on
+  `sector_weights.dcf_applies`, the same rule the scorer uses, so a REIT gets a struck-out
+  row naming the reason rather than a confident number the Models tab suppresses one tab
+  away. `peer_ev_revenue` is suppressed when target and peer operating margins differ by
+  more than 2×: on 0700.HK the curated peer set medians **5.7%** operating margin (9988
+  1.0%, 3690 −7.5%, 1024 10.5%) against Tencent's **34.3%**, so the peer median 1.84×
+  revenue multiple implied **189.61** a share against a **439–471** cluster from every
+  other multiple. That single number stretched the comps bar to **2.48× wide** and was the
+  sole reason its verdict still read "in range" — a bar that broad contains any price.
+  Analyst targets became context rather than a vote, with dispersion carried separately as
+  an uncertainty signal.
+
+- **A conviction grade that never varied was replaced by arithmetic.** It read LOW on all
+  eleven names tested and the overlap zone was non-empty **once**; a signal that never
+  varies is not a signal. The chart now leads with a bridge decomposing model value → price
+  into named steps ending in an explicitly *unexplained* residual. The residual is left
+  that way on purpose: it is the market pricing a longer advantage period, a lower discount
+  rate or a higher terminal cash conversion than a ten-year fade at 2.5% can express, and
+  closing it by tuning would make the DCF an expensive way to display the share price.
+
+- **Market-implied terminal growth**, solved backwards from today's traded multiple, which
+  is the more useful direction to read an exit multiple. Measured: AAPL 7.30%, MSFT 7.63%,
+  0700.HK 3.23% against a 4.0% nominal-GDP line — so Tencent's price needs nothing unusual
+  while Apple's needs free cash flow compounding above the economy in perpetuity.
+
+### Fixed
+
+- **White-on-accent failed WCAG AA at 3.68:1** (4.5:1 required) on the primary button, the
+  active nav tab, the period picker, the segment controls and the user's own chat bubbles —
+  all 13-14px body text. The hover state measured **4.80:1**, i.e. *more* readable than the
+  resting state, which is backwards. Filled surfaces now use `--accent-fill` (#2b6fd9,
+  4.80:1) with `--accent-fill-hover` (#1d4ed8, 6.70:1); `--accent` still drives strokes,
+  links, focus rings and chart bars, all of which already passed.
+
+- **71 user-visible strings** had em-dash and en-dash punctuation restructured into periods,
+  colons, commas and parentheses. The `—` no-data glyph returned by `num`/`big`/`pct` was
+  deliberately **kept**: in a column of financial figures a hyphen reads as a minus sign,
+  and that glyph is a table convention rather than prose.
+
+- **Four defects in the above, caught by reviewing the work rather than by the tests.** The
+  base-year panel quoted its ratio against the mean of *all* years and its two legs against
+  the mean of the *others*, so a reader recomputing from the table on screen got −5.8pp
+  where the sentence beneath said −7.7pp. The driver sentence claimed "spending more, not
+  earning less" for XOM, where capex rose **and** operating cash fell — both legs adverse.
+  A first fix for that keyed on the two signs alone and contradicted itself on 0700.HK,
+  naming operating cash the larger leg and calling it "a business spending more" in the same
+  breath; the six reachable combinations now resolve in the backend where they are tested.
+  And rounding was applied per period then averaged, compounding a display artefact instead
+  of landing once at the output.
+
+---
+
 ## 2026-08-10 (b) — the two decisions the review left open
 
 Both items the three-lens review deliberately did not settle alone, now decided. Backend

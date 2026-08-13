@@ -75,14 +75,20 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
     context ([backend/ai_client.py](backend/ai_client.py)), so roughly its opening 40%
     reaches the model and the later sections never do.
 - **Tab 2 — Financial Models**: pulls the company's financial reports automatically and runs
-  a two-stage FCFF DCF — 5 explicit years at the starting growth rate, then a 5-year fade
-  to terminal growth — with editable growth / terminal growth / WACC and a sensitivity
-  grid, anchored to analyst consensus growth when available; plus ratio analysis, DuPont
-  ROE decomposition, valuation multiples, and revenue trend. Every DCF shows an **audit
-  row** (the beta actually used and where it came from, credit spread and interest
-  coverage, tax rate, the exact FCF statement period, forecast shape) and **two trust
-  checks**: what share of enterprise value is terminal value (>75% is flagged), and what
-  exit EV/EBITDA multiple the terminal value implies against today's multiple.
+  a two-stage FCFF DCF — **1 explicit year at the forecast rate, then a 9-year fade** to
+  terminal growth, the explicit stage matching the one-year horizon of the consensus that
+  feeds it — with editable growth / terminal growth / WACC and a sensitivity grid, anchored
+  to analyst consensus growth when available; plus ratio analysis, DuPont ROE
+  decomposition, valuation multiples, and revenue trend. Every DCF shows an **audit row**
+  (the beta actually used and where it came from, credit spread and interest coverage, tax
+  rate, the exact FCF statement period, forecast shape), the **derivation of the terminal
+  rate** against both ceilings it is held under, and **trust checks**: what share of
+  enterprise value is terminal value (>75% is flagged), what exit EV/EBITDA multiple the
+  terminal value implies against today's multiple, and the same check run backwards — what
+  perpetual growth *today's own traded multiple* already assumes, read against long-run
+  nominal GDP. A **base-year panel** shows the company's own margin history, decomposes the
+  newest year exactly into an operating and a capital leg, and gives the fair value on a
+  normalised base beside the reported-year headline without choosing between them.
   Every ratio carries a **0–100 quality bar** — the same score the Scorecard computes from
   its calibrated ranges for that company type, so "is 1.0 a good current ratio?" is
   answered in place rather than left to the reader. Metrics the sector profile drops show
@@ -97,9 +103,14 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
   naming the strongest and weakest pillar (composed from the scores, not written by the
   AI, so it works offline and never invents a figure). Includes a valuation-range
   "football field" — one price rule across all methods, a labelled axis, and a
-  `price above` / `price below` / `in range` read per method — an editable
-  peer-comparison table,
-  and an optional AI-written explanation of the score. Also shows **score history** —
+  `price above` / `price below` / `in range` read per method. The chart **refuses to draw
+  a method that does not apply** (a bank or REIT gets a struck-out DCF row with the
+  reason, not a confident wrong number), suppresses an EV/Revenue multiple whose peer
+  margins are not comparable, treats analyst targets as context rather than a vote, and
+  leads with a **bridge** decomposing the distance from the model's value to the price
+  into named steps ending in an explicitly unexplained residual. Below it sit an editable
+  peer-comparison table and an optional AI-written explanation of the score. The tab also
+  shows **score history** —
   every scoring writes a dated row, charted against the price recorded at the time — and
   a **bull vs bear debate** run as three separate AI passes (bull → bear → verdict), so
   disagreement stays visible instead of being averaged into one hedged paragraph.
@@ -137,12 +148,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 254 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 357 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 44 tests
+cd frontend; npm test                                   # 46 tests
 ```
 
-Of the 269 collected, 15 are `network`-marked and deselected by default.
+Of the 373 collected, 16 are `network`-marked and deselected by default.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -160,7 +171,7 @@ same day when the calibration landed — a strict xfail reports the breach every
 errors the moment it is fixed.
 
 The suite runs entirely against seven real `get_fundamentals` payloads committed under
-`backend/tests/fixtures/` (264 KB), covering the technology, bank, REIT, energy,
+`backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
 pre-profit and HK classification paths. Golden snapshots of every scorecard are checked
 in; after a deliberate methodology change regenerate them and **review the diff — that
 diff is the record of what your change did to every score**:
@@ -332,10 +343,38 @@ start.bat / start.ps1   one-click cold start (backend + frontend + browser)
   into the **trading** currency and the panel names it. When no FX rate can be fetched the
   upside is **withheld** rather than computed across two units, the two market-cap yields
   are dropped, and Altman Z reports `n/a`; the rate is never guessed at.
-- The default DCF growth is anchored to analyst forward consensus when available
-  (falling back to trailing revenue growth). Note this input does a lot of work: XOM's
-  consensus forward revenue growth is 0%, which drives its result more than any other
-  assumption.
+- The default DCF growth is anchored to analyst forward consensus when available, falling
+  back to trailing revenue growth and then to a stated default. **Nothing is truncated.** A
+  figure either passes a validity range of −50% to +200% and is used exactly as published,
+  or fails it and is *rejected* in favour of the next source — and the label on screen
+  always names which of the four provenances produced the number. The old `[0%, 25%]` clamp
+  was removed because both ends were economic judgements wearing data-hygiene clothes: the
+  floor grew shrinking companies at zero and inflated XOM's fair value 15.7%, and the
+  ceiling truncated a 42.6% consensus from 55 analysts on NVDA. XOM's consensus is
+  **−1.9%** and is now modelled as the decline it is.
+- **Terminal growth shows its derivation** rather than appearing as a bare 2.5%. It is held
+  under two ceilings, both displayed whether or not they bind: long-run nominal GDP
+  (nothing outgrows its economy forever) and the risk-free rate (Damodaran's cap — the
+  ten-year is itself a market read of long-run nominal growth). The cap applies only to the
+  platform's own default; a caller who names a rate gets that rate, because the
+  reconciliation back-solves deliberately past both ceilings and capping it there would
+  report "closing this gap needs 7.0% perpetual growth" as unreachable.
+- **The base year is one reported period, and that is an assumption, not a neutral choice.**
+  Free cash flow enters the valuation linearly, so a base year 22% below normal is a
+  valuation 22% below normal — permanently, through every projected year and the terminal
+  value. Measured across the fixtures, the newest reported year sits *below* that company's
+  own mean FCF margin for three of the four profitable names (AAPL 0.90×, MSFT 0.78×, XOM
+  0.71×; 0700.HK is the exception at 1.06×). The model still reports the filed year as the
+  headline, and shows the normalised alternative beside it. The adjustment is deliberately
+  **not one-way** — it moves 0700.HK down while moving MSFT and XOM up — which is what
+  separates a correction from a nudge toward the market price.
+- **Analyst target prices are shown and scored nowhere.** A target is a twelve-month
+  forecast of where a stock will trade, not an estimate of what the business is worth, and
+  published targets sit above price on average. It used to sit in the valuation pillar,
+  where it also double-counted sell-side opinion: the DCF's growth input is *already*
+  analyst consensus, so one source moved two of five metrics with correlated errors of the
+  same sign. Removing it moved the composite −3 to +1 and no fixture changed tier. The DCF
+  still consumes consensus growth — opinion counted once, and labelled.
 - **Beta is not trusted blindly.** yfinance reported 0.173 for XOM, which alone moved its
   DCF upside by ~79 points. A reported beta is used only within `[0.3, 2.5]`; otherwise
   peer betas are **unlevered, medianed and re-levered to the company's own capital
@@ -357,7 +396,7 @@ start.bat / start.ps1   one-click cold start (backend + frontend + browser)
   for every market and period.
 - Corporate tax defaults to the statutory rate for the listing currency (HKD 16.5%,
   USD 21%, otherwise 21%) and is overridable per request.
-- Terminal value is 53–66% of enterprise value on the sample fixtures. Above 75% the UI
+- Terminal value is 52–66% of enterprise value on the sample fixtures. Above 75% the UI
   flags it: at that point the perpetuity assumption, not the explicit forecast, is
   producing the answer. Cross-check with the implied exit multiple — a DCF that only works
   by exiting far below today's trading multiple is assuming compression, which is a stance
