@@ -4,6 +4,20 @@ A local website for tracking stocks, explaining price moves with news, chatting 
 local AI financial expert, and running investment-banking financial models — powered by
 the methodology in [docs/financial-models-reference.md](docs/financial-models-reference.md).
 
+> ### Decision support only — not certified financial advice.
+>
+> The caveat the app itself attaches to every scorecard, verbatim from
+> [backend/scoring.py](backend/scoring.py):
+>
+> *"This score is a snapshot of current fundamentals, valuation and price momentum against
+> heuristic healthy ranges. It is NOT a prediction or a guarantee of future returns; it does
+> not model catalysts, competitive shifts, or macro regime changes. Coverage and data quality
+> limits apply."*
+>
+> Read [Notes & limitations](#notes--limitations) before relying on any number here. Licensed
+> under [AGPL-3.0](LICENSE); see [Licence and data provenance](#licence-and-data-provenance)
+> for what the licence does *not* cover.
+
 ## Architecture
 
 ```
@@ -189,6 +203,38 @@ Fixtures themselves are regenerated with `backend\tests\capture_fixtures.py`.
 The `network`-marked tests are deselected by default and exist to tell you when
 yfinance changes shape — it has already shipped two different news payloads.
 
+## Prerequisites
+
+| | |
+|---|---|
+| Python | **3.14** — what CI runs; `pandas==3.0.5` / `numpy==2.5.1` narrow the workable range |
+| Node | **22** |
+| Ollama | optional — the AI features disable cleanly without it, everything else works |
+
+## Install
+
+```powershell
+git clone https://github.com/Gerald-ger/finance-analysis-platform.git
+cd finance-analysis-platform
+
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.post-openbb.txt
+
+cd frontend
+npm install
+cd ..
+```
+
+**Which requirements file:** install `requirements.post-openbb.txt` — that is the runtime set.
+`requirements.lock.txt` is the pre-OpenBB rollback target and **will not boot the app**: it
+omits `aiohttp`, which [backend/ai_client.py](backend/ai_client.py) imports at module scope.
+`requirements-test.txt` is the minimal set CI installs to run the suite offline.
+
+**On macOS/Linux** a venv puts its interpreter at `backend/.venv/bin/python` — substitute that
+for `backend\.venv\Scripts\python.exe` throughout, and use `start.ps1`'s two commands directly
+rather than `start.bat`. The Python and JavaScript are platform-neutral; only the launcher
+scripts and the command examples below are Windows-shaped.
+
 ## Run it
 
 Double-click **`start.bat`** (or run `.\start.ps1` from PowerShell).
@@ -226,16 +272,16 @@ repo rewrites LF as CRLF — does not raise a false alarm.
 
 ## Install guidance
 
-Your machine: **15.6 GB RAM, Intel Iris Xe (no dedicated GPU), i7-1355U.**
-Disk is not a constraint; RAM and CPU-only inference are what size the choices below.
+The model choices below are sized for **CPU-only inference on ~16 GB RAM**, no dedicated GPU.
+Disk is not the constraint; RAM and CPU are.
 
-### 1. Local AI — Ollama *(not installed yet)*
+### 1. Local AI — Ollama *(optional)*
 
 | | |
 |---|---|
-| Download | https://ollama.com/download/windows (~1 GB installer, installs to `C:\Users\<user>\AppData\Local\Programs\Ollama`) |
-| Model storage | `C:\Users\<user>\.ollama\models` — change by setting the `OLLAMA_MODELS` environment variable before first pull |
-| Recommended model | `qwen2.5:7b-instruct` — ~4.7 GB disk, ~6–8 GB RAM while running. Best quality/speed balance for finance reasoning on your CPU (expect ~5–10 tokens/sec). |
+| Download | https://ollama.com/download (~1 GB installer; on Windows it lands in `%LOCALAPPDATA%\Programs\Ollama`) |
+| Model storage | `~/.ollama/models` — change by setting the `OLLAMA_MODELS` environment variable before first pull |
+| Recommended model | `qwen2.5:7b-instruct` — ~4.7 GB disk, ~6–8 GB RAM while running. Best quality/speed balance for finance reasoning on a CPU (expect ~5–10 tokens/sec). |
 | Faster fallback | `qwen2.5:3b-instruct` (~2 GB) if the 7B feels too slow — noticeably weaker analysis. |
 | Avoid | Anything ≥ 13B — will swap on 16 GB RAM and crawl. |
 
@@ -248,14 +294,14 @@ That's it — the backend polls `localhost:11434` and the website's chat + AI ou
 activate automatically (green dot in the chat panel). To use a different model, change
 `MODEL` at the top of [backend/ai_client.py](backend/ai_client.py).
 
-### 2. OpenBB Platform *(installed — v4.7.2)*
+### 2. OpenBB Platform *(required — v4.7.2)*
 
 | | |
 |---|---|
 | Install | `backend\.venv\Scripts\python.exe -m pip install openbb` — 41 MB / 66 wheels into the existing venv. pandas & numpy are already present, so the download is small and needs no C compiler. **Stop the servers first** or Windows file locks break the install. |
 | Side effect | Downgrades `fastapi` 0.141.1 → 0.136.3 and `uvicorn` 0.52.0 → 0.40.0. Verified harmless here. Roll back with `backend\requirements.lock.txt`; the post-install state is `backend\requirements.post-openbb.txt`. |
 | Import cost | `from openbb import obb` takes ~4–5 s. Never import it at module scope in the request path — every call site defers it into the function that needs it, and the symbol index is cached to disk so a warm start never pays it at all. |
-| Credentials | `C:\Users\<user>\.openbb_platform\user_settings.json` (outside the repo, never committed). There is **no** `obb.account.save()` in 4.7.2 — edit that JSON directly. |
+| Credentials | `~/.openbb_platform/user_settings.json` — outside the repo, never committed. There is **no** `obb.account.save()` in 4.7.2, so edit that JSON directly. Only `equity.compare.peers` needs a key (FMP, free tier); the other three calls run without one. |
 
 **What OpenBB is actually used for today** — four calls, all on the free tier, all with a
 fallback when the fetch fails:
@@ -322,7 +368,34 @@ CHANGELOG.md   what changed, with measured before/after
 TODOLIST.md    open work, ranked, with the trigger for each deferred item
 pytest.ini     test config; network tests deselected by default
 start.bat / start.ps1   one-click cold start (backend + frontend + browser)
+LICENSE        GNU AGPL-3.0
 ```
+
+## Licence and data provenance
+
+Licensed under the **GNU Affero General Public License v3.0** — see [LICENSE](LICENSE).
+Copyright © 2026 Gerald-ger.
+
+AGPL rather than something permissive because `openbb` and `openbb-core` are themselves
+`AGPL-3.0-only` and are imported into this process. The clause that matters is **§13**: if this
+app is ever run as a network service, whoever runs it must offer the complete corresponding
+source of the served work. Running it locally for yourself carries no such obligation.
+
+**What the licence does not cover.** Two things in this repo are third-party material, included
+under attribution rather than owned:
+
+- `backend/tests/fixtures/` — captured Yahoo Finance responses for nine symbols, kept because
+  the 408-test suite runs entirely offline against them. Provenance and capture dates in
+  [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
+- `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
+  risk premium table, reproduced with attribution and an as-of date.
+
+**yfinance is documented personal-use-only.** Yahoo's terms prohibit automated access and
+redistribution, and yfinance is an unofficial scraper of Yahoo's internal endpoints, not an
+affiliated client. Running this locally for yourself is the ordinary use and the risk is low.
+Hosting it, or sharing it as a service, is a blocker to resolve first — the full argument, and
+why no free redistribution-clean alternative covers Hong Kong, is in
+[docs/data-sources-review.md](docs/data-sources-review.md) §3.
 
 ## Notes & limitations
 
