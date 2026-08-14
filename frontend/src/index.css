@@ -18,6 +18,22 @@
   --up: #2ebd85;
   --down: #f6465d;
   --gold: #f0b90b;
+
+  /* Corner radius. Audited 2026-08-14: forty-two declarations carrying twelve
+     distinct values, drifting *within* tiers rather than across them — chips at
+     5px beside controls at 6px, surfaces at 8/10/12/14px. Nobody can see a 1px
+     difference; it only makes the next component a guess.
+
+     Ten of those declarations were not radii at all but `height / 2` written as
+     a number: .pillar-track and .pillar-fill are 8px tall at 4px, .ff-envelope
+     6px at 3px, the scrollbar thumb 8px at 4px. Those are pills, and --r-pill
+     says so where the number hid it. The conversion is pixel-identical for the
+     exact halves and imperceptibly rounder for .quality-* and the 3px swatches,
+     which were already over-rounded past their own half-height. */
+  --r-tag: 4px;       /* micro labels, 9.5-10.5px text */
+  --r-control: 6px;   /* inputs, buttons, chips, segmented groups */
+  --r-surface: 10px;  /* panels, popovers, banners */
+  --r-pill: 999px;    /* bars whose radius is a function of their height */
 }
 
 * {
@@ -50,13 +66,16 @@ body {
 
 *::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-pill);
 }
 
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* Deliberately not a token: this shapes the focus ring on every element the
+   page has, from 3px swatches to 10px panels, so it cannot match all of them.
+   4px is the compromise that looks wrong nowhere rather than right somewhere. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -132,7 +151,7 @@ h1 {
   z-index: 40;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-surface);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   max-height: 340px;
@@ -196,7 +215,7 @@ h1 {
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 600;
-  border-radius: 5px;
+  border-radius: var(--r-control);
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
@@ -221,7 +240,7 @@ h1 {
 input {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--text);
   padding: 7px 12px;
   font-size: 14px;
@@ -238,7 +257,7 @@ input:focus {
 button {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--text);
   padding: 7px 14px;
   cursor: pointer;
@@ -293,7 +312,7 @@ nav button.active {
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-surface);
   padding: 14px 16px;
   margin-bottom: 14px;
 }
@@ -397,7 +416,7 @@ nav button.active {
 .seg-group {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   overflow: hidden;
 }
 
@@ -434,7 +453,7 @@ nav button.active {
 .ma-swatch {
   width: 14px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--r-pill);
   display: inline-block;
 }
 
@@ -460,7 +479,7 @@ nav button.active {
   color: var(--muted);
   background: rgba(13, 17, 23, 0.8);
   padding: 3px 8px;
-  border-radius: 5px;
+  border-radius: var(--r-control);
   pointer-events: none;
 }
 
@@ -471,7 +490,7 @@ nav button.active {
   width: 330px;
   background: #1c2530;
   border: 1px solid var(--gold);
-  border-radius: 8px;
+  border-radius: var(--r-surface);
   padding: 10px 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   pointer-events: auto;
@@ -500,7 +519,7 @@ nav button.active {
   width: 310px;
   background: rgba(28, 37, 48, 0.97);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-surface);
   padding: 8px 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   pointer-events: none;
@@ -535,7 +554,7 @@ nav button.active {
   gap: 6px;
   padding: 3px 9px;
   font-size: 12px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   opacity: 0.55;
 }
 
@@ -607,7 +626,7 @@ nav button.active {
   font-weight: 700;
   letter-spacing: 0.06em;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--r-tag);
   margin-right: 6px;
   vertical-align: 1px;
 }
@@ -696,7 +715,7 @@ nav button.active {
 .ai-offline-note {
   background: rgba(246, 70, 93, 0.1);
   border: 1px solid rgba(246, 70, 93, 0.35);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   padding: 8px 10px;
   font-size: 12.5px;
   margin-bottom: 10px;
@@ -717,6 +736,8 @@ nav button.active {
   line-height: 1.5;
 }
 
+/* Softer than --r-surface on purpose: a chat bubble is a speech shape, not a
+   panel, and it is the one surface that repeats down the page at small size. */
 .chat-msg {
   padding: 8px 11px;
   border-radius: 12px;
@@ -843,7 +864,7 @@ nav button.active {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--r-tag);
   margin-left: 5px;
   vertical-align: 1px;
 }
@@ -863,7 +884,7 @@ nav button.active {
 .warn-chip {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 5px;
+  border-radius: var(--r-control);
   font-weight: 600;
 }
 
@@ -952,7 +973,7 @@ nav button.active {
 .quality-track {
   display: block;
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   background: rgba(120, 140, 160, 0.16);
   overflow: hidden;
 }
@@ -960,7 +981,7 @@ nav button.active {
 .quality-fill {
   display: block;
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   transform-origin: left;
   animation: grow-x 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -968,7 +989,7 @@ nav button.active {
 .quality-na {
   display: block;
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   background: repeating-linear-gradient(
     90deg,
     rgba(120, 140, 160, 0.18) 0 3px,
@@ -1063,7 +1084,7 @@ nav button.active {
   position: absolute;
   top: 3px;
   bottom: 3px;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   transform-origin: left;
   animation: grow-x 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1092,6 +1113,10 @@ nav button.active {
   gap: 18px;
 }
 
+/* The only element on the page at this size, and radius does not scale with a
+   box: --r-surface on a 64px square reads as a rounded rectangle, where 14px
+   reads as the squircle the grade letter is supposed to sit in. Kept as a
+   special rather than dragged into the tier it visually is not part of. */
 .tier-badge {
   width: 64px;
   height: 64px;
@@ -1182,12 +1207,12 @@ nav button.active {
 .pillar-track {
   height: 8px;
   background: rgba(120, 140, 160, 0.15);
-  border-radius: 4px;
+  border-radius: var(--r-pill);
 }
 
 .pillar-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--r-pill);
   transform-origin: left;
   animation: grow-x 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1345,7 +1370,7 @@ nav button.active {
   font-size: 10.5px;
   font-weight: 700;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--r-tag);
   white-space: nowrap;
 }
 
@@ -1362,6 +1387,11 @@ nav button.active {
   flex-shrink: 0;
 }
 
+/* .ff-track / .ff-bar are a concentric pair, not two tier members: the bar is
+   inset 4px inside the track, so its radius steps down with it. Tokenising them
+   to one value would round the inner edge harder than the outer and make the
+   inset look like a rendering error. The envelope nested inside them is 6px
+   tall, which makes it a pill, so it takes --r-pill. */
 .ff-track {
   position: relative;
   flex: 1;
@@ -1388,7 +1418,7 @@ nav button.active {
   top: 8px;
   bottom: 8px;
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   opacity: 0.22;
 }
 
@@ -1476,7 +1506,7 @@ nav button.active {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-tag);
   color: var(--muted);
   cursor: help;
 }
@@ -1641,7 +1671,7 @@ nav button.active {
   display: inline-block;
   width: 14px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--r-pill);
   margin-right: 5px;
   vertical-align: 3px;
 }
@@ -1707,7 +1737,7 @@ nav button.active {
 textarea {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--text);
   padding: 9px 12px;
   font-size: 13.5px;
@@ -1794,7 +1824,7 @@ textarea:focus {
   display: inline-block;
   min-width: 26px;
   padding: 1px 7px;
-  border-radius: 5px;
+  border-radius: var(--r-control);
   font-weight: 700;
   font-size: 12px;
   color: #0d1117;
@@ -1932,7 +1962,7 @@ textarea:focus {
 .error-banner {
   background: rgba(246, 70, 93, 0.12);
   border: 1px solid rgba(246, 70, 93, 0.4);
-  border-radius: 8px;
+  border-radius: var(--r-surface);
   padding: 12px 16px;
 }
 
@@ -1951,7 +1981,7 @@ footer {
 .error-boundary {
   background: var(--panel);
   border: 1px solid #f6465d;
-  border-radius: 8px;
+  border-radius: var(--r-surface);
   padding: 18px 20px;
   margin: 16px 0;
   max-width: 640px;
@@ -1973,7 +2003,7 @@ footer {
 .error-boundary-detail {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   padding: 8px 10px;
   font-size: 12px;
   color: var(--text);
