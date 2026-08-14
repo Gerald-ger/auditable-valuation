@@ -28,6 +28,7 @@
   "url": "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html",
   "as_of": "2026-01-05",
   "retrieved": "2026-08-14",
+  "license_note": "Reproduced with attribution. Damodaran publishes these datasets publicly and free of charge; three derived values are carried here, not the table itself. Not covered by this repository's AGPL-3.0 licence — see the Licence and data provenance section of README.md.",
   "mature_market_erp": 0.0423,
   "markets": {
     "USD": {
