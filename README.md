@@ -152,12 +152,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 399 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 402 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 46 tests
 ```
 
-Of the 415 collected, 16 are `network`-marked and deselected by default.
+Of the 418 collected, 16 are `network`-marked and deselected by default.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -203,6 +203,23 @@ cd frontend; npm run dev
 ```
 
 Then open http://localhost:5173.
+
+**The backend does not hot-reload — restart it after changing any `backend/*.py`.** Vite
+handles the frontend, so a JSX edit appears immediately and a Python edit does not, which is
+the asymmetry that makes this easy to forget. The symptom is silence rather than an error: a
+field added after the server booted is simply absent from responses, and a panel that reads
+it renders nothing, which looks exactly like a feature that was never built.
+
+`--reload` is **not** recommended here. Tried 2026-08-14: WatchFiles logged
+`detected changes in 'backend\main.py'. Reloading...`, the replacement worker never started,
+and the old process kept serving — with the log claiming it had reloaded. It also leaves an
+orphaned child holding port 8000 after the parent dies, so the next start fails with
+`WinError 10048` and the port has to be freed by hand.
+
+Instead the app tells you. `GET /api/health` returns `source_changed_since_start`, a digest of
+`backend/*.py` captured at import and re-checked per call, and the page shows a banner when it
+flips. The digest reads text rather than bytes so a line-ending change — `git checkout` on this
+repo rewrites LF as CRLF — does not raise a false alarm.
 
 ---
 

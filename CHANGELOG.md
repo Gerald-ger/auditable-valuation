@@ -7,6 +7,43 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-14 (e) — the app notices when the backend is running old code
+
+Backend **399 → 402 passing** (16 network-deselected), frontend 46.
+
+### Added
+
+- **`source_changed_since_start` on `GET /api/health`**, and a banner when it flips. A digest
+  of `backend/*.py` is captured at import and re-checked per call.
+
+  This exists because the equity-bridge panel shipped at 14:17 against a backend started at
+  13:28, so the API never returned `diagnostics.equity_bridge`, the panel correctly rendered
+  `null`, and the result was indistinguishable from a feature that had never been built —
+  diagnosed by hand, for the third time in one day. `ErrorBoundary` already told the reader to
+  suspect a stale backend; now the app says it before anything looks broken.
+
+- **`/health` replaces `/ai/status` as the frontend's poll.** It already carried the same AI
+  block, so one 30-second timer now answers both questions instead of adding a second.
+
+### Fixed
+
+- **The digest reads text, not bytes.** A byte hash looked correct and was wrong on Windows:
+  measured 2026-08-14, `git checkout` restored `sector_weights.py` with **252 CRLF** where the
+  running process had loaded LF, so the guard reported a stale server for a file `git status`
+  called unmodified. A banner nobody can clear is a banner people learn to ignore. Pinned by a
+  test, and mutation-checked by reverting to `read_bytes()`, which fails it.
+
+### Not done, deliberately
+
+- **`--reload` is not recommended, and the README now says why.** Tried here first: WatchFiles
+  logged `detected changes in 'backend\main.py'. Reloading...`, the replacement worker never
+  started, and the old process kept serving — *with the log claiming it had reloaded*, which is
+  worse than no reload at all. It also orphaned a child holding port 8000 after the parent was
+  killed, so the next start failed with `WinError 10048` and the socket had to be freed by
+  hand. The health flag does the job without pretending to fix it.
+
+---
+
 ## 2026-08-14 (d) — the equity bridge carries four of its five terms
 
 Backend **389 → 399 passing** (16 network-deselected), frontend 46.

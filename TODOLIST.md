@@ -389,6 +389,32 @@ would need a third category. Decide whether you want that before it gets built.
 
 ## Done
 
+### ✅ 2026-08-14 (e) — the app notices when the backend is running old code
+
+Backend **399 → 402 passing**, frontend 46.
+
+`GET /api/health` now returns `source_changed_since_start` — a digest of `backend/*.py` taken
+at import, re-checked per call — and the page shows a banner when it flips. `/health` also
+replaces `/ai/status` as the frontend's 30-second poll, since it already carried the same AI
+block.
+
+Built after the equity-bridge panel appeared to be missing: it shipped at 14:17 against a
+backend started at 13:28, so the API never returned `diagnostics.equity_bridge`, the panel
+correctly rendered nothing, and that was indistinguishable from a feature never built. Third
+hand diagnosis of the same failure in one day.
+
+**The digest reads text rather than bytes**, and that detail is the whole difference between a
+useful signal and one people switch off. A byte hash false-positived immediately: `git
+checkout` restored `sector_weights.py` with 252 CRLF where the process had loaded LF, so the
+guard called a git-clean file stale. Pinned, and mutation-checked against `read_bytes()`.
+
+**`--reload` was tried first and rejected**, which is recorded in the README because the
+failure is not obvious: WatchFiles logged `detected changes in 'backend\main.py'.
+Reloading...`, the replacement worker never started, and the old process kept serving while
+the log claimed a reload had happened. It also orphaned a child holding port 8000 after the
+parent died, so the next start failed `WinError 10048` and the socket needed freeing by hand.
+A reload that lies is worse than no reload.
+
 ### ✅ 2026-08-14 (d) — the equity bridge carries four of its five terms
 
 Backend **389 → 399 passing**, frontend 46.
