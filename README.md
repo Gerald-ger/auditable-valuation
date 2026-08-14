@@ -332,7 +332,10 @@ start.bat / start.ps1   one-click cold start (backend + frontend + browser)
   made.
 - The DCF risk-free rate is the live US 10Y treasury yield, refreshed once per day, with a
   4.3% fallback when OpenBB or the Fed feed is unreachable. HK issuers use the same USD
-  rate — the HKD peg makes it an acceptable proxy, not a correct one.
+  rate — the HKD peg makes it an acceptable proxy, not a correct one, and for a *CNY*
+  reporter such as 0700.HK the peg argument does not apply at all. This is the one half of
+  the cost-of-capital pair still unsourced; see `docs/data-sources-review.md` §7 for why
+  the obvious fix is gated rather than shipped.
 - **A company's statements and its shares can be in different currencies**, and for the
   China-domiciled Hong Kong listings they are: 0700.HK reports in CNY and trades in HKD
   (so do 9988.HK and 1810.HK). Cash flows, `totalDebt` and `totalCash` follow the
@@ -392,8 +395,12 @@ start.bat / start.ps1   one-click cold start (backend + frontend + browser)
   every score without adding evidence. Z reports `n/a` with a reason for banks, insurers,
   REITs and utilities rather than mislabelling an asset-heavy balance sheet as distress.
 - Cost of debt is the risk-free rate plus a synthetic credit spread keyed on interest
-  coverage, not the flat +1.5% used previously. The equity risk premium is still a flat 5%
-  for every market and period.
+  coverage, not the flat +1.5% used previously. The equity risk premium is **per market**,
+  read from a dated Damodaran snapshot (`backend/market_risk_premiums.json`) and keyed on
+  the currency the discounted cash flows are reported in — United States 4.46%, Hong Kong
+  5.01%, China 5.14% as of 2026-01-05, against the flat 5% that preceded it. A market with
+  no entry falls back to the mature-market premium, and a missing file to the old 5%; the
+  Models tab names which of the three was used.
 - Corporate tax defaults to the statutory rate for the listing currency (HKD 16.5%,
   USD 21%, otherwise 21%) and is overridable per request.
 - Terminal value is 52–66% of enterprise value on the sample fixtures. Above 75% the UI

@@ -7,6 +7,74 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-14 (b) — the equity risk premium is sourced, and the data layer is audited
+
+Backend **366 → 373 passing** (16 network-deselected), frontend 46.
+
+### Changed
+
+- **The equity risk premium is per market instead of a flat 5%.** `EQUITY_RISK_PREMIUM =
+  0.05` was one number for every market and every year, with no source and no date — the
+  largest remaining hardcoded constant in the model. It is replaced by Damodaran's published
+  country table, vendored dated at `backend/market_risk_premiums.json`.
+
+  | Market | was | now | effect on fair value |
+  |---|---|---|---|
+  | United States | 5.00% | **4.46%** | AAPL +9.2%, MSFT +9.8%, XOM +9.2% |
+  | Hong Kong | 5.00% | **5.01%** | ~nil |
+  | China (0700.HK reports CNY) | 5.00% | **5.14%** | 0700.HK **−1.8%** |
+
+  It moves US valuations up and Tencent's down. That two-directional result is what makes it
+  a correction rather than price tuning, and a test pins it so a future snapshot update
+  cannot quietly make it one-way.
+
+  Keyed on `financialCurrency`, deliberately unlike `tax_rate_for`, which keys on the
+  trading currency: tax follows the filing jurisdiction, a discount rate follows the money.
+  0700.HK trades HKD and reports CNY, so it is priced off China's premium.
+
+  Vendored rather than fetched — the data changes twice a year, so a parser on the request
+  path would be fragile for no benefit and would put a network call inside the offline test
+  suite. The Models tab now names which of the three sources a valuation used
+  (`damodaran_<date>` / `mature_market` / `platform_default`).
+
+- **Golden scores.** One line moved: 0700.HK's `dcf_upside_pct` 82 → 80. Every other name is
+  anchor-clipped at the −40 floor and unchanged; no composite and no tier moved.
+
+### Added
+
+- **`docs/data-sources-review.md`** — what the platform's numbers are actually made of.
+  Records that there is effectively *one* data source rather than four, the three occasions
+  this codebase has already proven that source wrong, a gap table saying which needs a free
+  source can and cannot close, and the two fixes that need no new source at all (beta from
+  price history, HK momentum against `^HSI`).
+
+- **The yfinance licence position**, newly recorded as an open decision. It is
+  personal-use-only and Yahoo's terms prohibit redistribution, which is fine locally and is a
+  **blocker to resolve before the app is hosted or shared**. Kept for now because no free
+  source covers Hong Kong fundamentals — FMP's free plan is US-only and Finnhub's
+  international coverage is paid.
+
+### Fixed
+
+- **A test that stopped measuring its own subject.**
+  `test_correcting_the_currency_also_corrects_the_wacc_weights` builds its comparison by
+  flipping `financialCurrency`, which now also selects the ERP — so it was no longer
+  isolating the capital-structure weighting effect it is named for. The premium is pinned
+  across both runs there now. A genuine side effect of this change, caught by the suite.
+
+### Not done, deliberately
+
+- **The risk-free rate stays the US 10Y for every issuer**, and after measurement that is a
+  decision rather than a backlog item. China's ten-year runs ~1.70% against the US 4.30%
+  (−260bp) while China's country risk premium is only 0.91pp, so the legs do not cancel as
+  `TODOLIST.md` had hoped — sourcing the rate would roughly *double* Tencent's valuation.
+  A second problem also surfaced: discounting CNY flows at a CNY rate and converting at
+  **spot** ignores interest-rate parity, which implies a low-rate currency trades at a
+  forward premium. Today's treatment is wrong in a named way; the naive fix would be wrong
+  in an unnamed way. Gated until spot-versus-forward is settled in writing.
+
+---
+
 ## 2026-08-14 — the DCF bar carries its third assumption, and radius gets a rule
 
 Backend **357 → 366 passing** (16 network-deselected), frontend 46.

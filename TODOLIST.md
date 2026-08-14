@@ -246,6 +246,28 @@ null-renders-green upside chip and the dead `equity_multiplier = None` line were
 
 ## Decisions needed (not bugs — your call)
 
+### 🔵 yfinance is personal-use-only, and it carries the whole app
+
+Raised 2026-08-14 during the data-layer audit. yfinance supplies quotes, history, news,
+statements, peer snapshots, FX *and* search — every number that decides a valuation. It is
+an unofficial scraper of Yahoo's internal endpoints, documented **personal-use-only**, and
+Yahoo's terms prohibit automated access and redistribution.
+
+- Running locally, for yourself: fine, and that is what the platform does today.
+- **Shared, hosted or public: this is a blocker**, not a bug. Redistributing scraped Yahoo
+  data through a web app is the case those terms target.
+
+**Decided 2026-08-14: record it, keep yfinance.** There is no free, redistribution-clean,
+HK-covering fundamentals API — FMP's free plan is US-only, Finnhub's international coverage
+is paid, and the README's own 2026-08-02 measurements found the same. Removing yfinance now
+would cost exactly the Hong Kong coverage the platform is meant to have.
+
+**Trigger: any decision to host or share this.** That decision has a data-licensing
+prerequisite, not just a deployment one, and the realistic answers are pay for HK coverage
+or let HK degrade to price-and-quote. The six-method `YFinanceProvider` interface is what
+keeps the eventual swap bounded — worth keeping clean. Full reasoning in
+`docs/data-sources-review.md` §3.
+
 ### 🔵 HK stocks are benchmarked against the S&P 500
 
 `rel_52w_change = 52WeekChange − SandP52WeekChange` treats every ticker as US.
@@ -255,12 +277,16 @@ formula and flags a sector-ETF-relative upgrade as future work.
 **Options:** keep as "relative to global equity", or benchmark HK names to `^HSI`
 (costs one extra fetch). Investment judgement, not correctness.
 
-### 🔵 HK stocks still use the USD risk-free rate, and ERP is flat 5% everywhere
+### 🔵 HK stocks still use the USD risk-free rate *(the ERP half was fixed 2026-08-14)*
 
-The tax rate is fixed (HKD → 16.5%), but `_wacc()` still applies the US 10Y to HK
-issuers and `EQUITY_RISK_PREMIUM = 0.05` is constant across every market and period.
-A flat global ERP is a simplification with no excuse. A per-market ERP would be the
-correct input.
+**The ERP leg is done.** `EQUITY_RISK_PREMIUM = 0.05` is replaced by Damodaran's published
+country table, vendored dated at `backend/market_risk_premiums.json` and keyed on
+`financialCurrency` — US 4.46%, HK 5.01%, China 5.14%. It moves US fair values **up** ~9%
+and 0700.HK **down** 1.8%, so it is two-directional and cannot be read as tuning. See the
+2026-08-14 Done entry and `docs/data-sources-review.md` §4.
+
+**The risk-free leg is not**, and after measuring it, that is deliberate rather than
+pending. `_wacc()` still applies the US 10Y to every issuer.
 
 **The peg argument is weaker than this item used to claim (found 2026-08-13).** The code
 justifies the USD risk-free rate by the HKD peg, and for an HKD-reporting issuer that
@@ -269,14 +295,25 @@ name in the fixture set discounts CNY cash flows at a rate built on the US ten-y
 converts at spot. Rate and cash flow are in different currencies, which is the one
 consistency rule a DCF cannot bend.
 
-Size is genuinely unclear, which is why this is still a decision and not a fix. China's
-ten-year has run ~1.7–2.0% against the US 4.3%, and −250bp on 0700.HK's WACC moves its
-fair value 624.90 → 1,225.93. But the *missing* China country risk premium pushes the
-other way and no one has sized it, so the net could go either direction. Doing half of
-this — cutting the rate without adding the country premium — would be worse than doing
-neither.
+**The country premium has now been sized, and it does not rescue this (2026-08-14).**
+This item used to hope the two legs would cancel. They do not. China's ten-year runs
+~1.70% against the US 4.30%, a **−260bp** cut, while China's country risk premium is
+**0.91pp** — which reaches cost of equity multiplied by beta, so roughly +0.7pp on
+0700.HK. The rate cut dominates by a factor of three or so, and a −250bp move was already
+measured at **624.90 → 1,225.93**. Sourcing the rate would therefore roughly *double*
+Tencent's valuation.
 
-**Trigger: a per-market ERP source.** Both legs move together or neither moves.
+**And a second problem surfaced that this item never named.** Discounting CNY cash flows
+at a CNY rate and then converting at **spot** is not obviously right either: interest-rate
+parity implies a low-rate currency trades at a forward premium, so the conversion arguably
+needs a forward rate rather than spot. Today's treatment is wrong in a *named* way; the
+naive fix would be wrong in an *unnamed* way, which is worse.
+
+**Trigger: the spot-versus-forward question settled in writing, with a worked 0700.HK
+example.** Not a data problem any more — the HKMA publishes Exchange Fund yields free and
+official (unverified from this machine, 502 on 2026-08-14), and China's ten-year is widely
+published. It is a modelling question, and doubling a valuation on an unexamined FX
+assumption is exactly what this platform exists to avoid.
 
 *(Distinct from the reporting-currency mismatch fixed 2026-08-10. That was a units bug —
 CNY cash flows compared against an HKD price. This is a choice of discount-rate inputs,
@@ -323,6 +360,56 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-14 (b) — the equity risk premium is sourced, and the data layer is audited
+
+Backend **366 → 373 passing**, frontend 46. Two outputs: the ERP stops being invented, and
+the whole data layer gets a written review at `docs/data-sources-review.md`.
+
+**The ERP is per market, dated and sourced.** `EQUITY_RISK_PREMIUM = 0.05` — one number for
+every market and every year, no source, no date — is replaced by Damodaran's published
+country table, vendored at `backend/market_risk_premiums.json` and keyed on
+`financialCurrency`, the currency the discounted cash flows are actually in.
+
+| Market | was | now | effect |
+|---|---|---|---|
+| United States | 5.00% | **4.46%** | AAPL +9.2%, MSFT +9.8%, XOM +9.2% |
+| Hong Kong | 5.00% | **5.01%** | ~nil |
+| China (0700.HK reports CNY) | 5.00% | **5.14%** | 0700.HK **−1.8%** |
+
+It moves US valuations up and Tencent's down, so it cannot be read as tuning — and a test
+pins that two-directionality so a future snapshot update cannot quietly make it one-way.
+The only golden score that moved is 0700.HK's `dcf_upside_pct`, 82 → 80; every other name
+is anchor-clipped and unchanged, and no composite or tier moved.
+
+Two traps encoded rather than discovered later. Damodaran's country figure is **additive**
+(total = mature market + CRP), so consuming the total *and* adding the CRP would count the
+country twice — only the total is used, and a test asserts the snapshot's own arithmetic
+across all three markets (each implies the same 4.23% mature premium, which is how the
+figures were checked on retrieval). And the key is `financialCurrency`, deliberately unlike
+`tax_rate_for`, which keys on the trading currency: tax follows the filing jurisdiction, a
+discount rate follows the money. 0700.HK trades HKD and reports CNY, so it is priced off
+China — which is also the right economic answer for a Chinese operating business.
+
+Vendored rather than fetched because Damodaran republishes twice a year: an xlsx parser on
+the request path would be fragile for no benefit and would put a network call inside the
+offline suite. Updating the file is a manual, dated act, which is the point.
+
+**One existing test needed repair, and it was a real side effect.**
+`test_correcting_the_currency_also_corrects_the_wacc_weights` builds its "mixed" case by
+flipping `financialCurrency` — which now also selects the ERP, so the test stopped isolating
+the weighting effect it is named for. The ERP is pinned across both runs there now.
+
+**Also found while measuring:** O moves +15.4% against a +5.8% enterprise-value change.
+Not a bug — its net debt is 59% of EV, so the equity bridge gears the move 2.44×. AAPL and
+XOM have near-zero gearing and move 1:1 with EV.
+
+**The data-layer review** records what the platform actually runs on: one source (yfinance)
+plus three narrow helpers, the three occasions that source has already been proven wrong in
+this codebase, and — new — that yfinance is **personal-use-only**, which is fine locally and
+is a blocker to resolve *before* the app is ever hosted or shared. Decision taken: record
+it, keep yfinance, because no free source covers HK fundamentals and removing it today
+would cost coverage. See the new 🔵 item under Decisions needed.
 
 ### ✅ 2026-08-14 — the DCF bar carries its third assumption, and radius gets a rule
 
