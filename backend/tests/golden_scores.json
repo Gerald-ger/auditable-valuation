@@ -1,7 +1,7 @@
 {
  "0700_HK": {
   "classification": "communication_svcs",
-  "composite_score": 70,
+  "composite_score": 71,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -49,12 +49,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 28,
+     "dcf_upside_pct": 47,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 43,
      "fcf_yield": 68
     },
-    "score": 56
+    "score": 60
    }
   },
   "tier": "A"
@@ -390,12 +390,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 57,
+     "dcf_upside_pct": 55,
      "earnings_yield_fwd": 76,
      "ev_ebitda": 72,
      "fcf_yield": 58
     },
-    "score": 66
+    "score": 65
    }
   },
   "tier": "A"

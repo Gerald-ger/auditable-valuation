@@ -147,6 +147,86 @@ def _value_at(statement: dict, period: str, *row_names):
     return None
 
 
+def equity_bridge(bal: dict, period: str | None) -> dict:
+    """The EV→equity terms beyond net debt, read from one balance-sheet date.
+
+    `financial-models-reference.md` §1.1 states the bridge as five terms:
+
+        Equity = EV - Net Debt - Minority Interest - Preferred + Non-operating Assets
+
+    The model implemented one. The other three are on the balance sheet the app
+    already fetches, and on 0700.HK they are worth 28% of enterprise value —
+    enough to reverse its verdict — while on the other six fixtures they are
+    worth 1-4pp. Absent, they are not merely imprecise: a reader sees a fair
+    value that silently excludes a quarter of the company.
+
+    Three of the terms are read; the fourth is only reported.
+
+      minority_interest, preferred   subtracted. Book value is the conventional
+                                     basis for both, and the reference doc asks
+                                     for them by name.
+      marked_securities             added. `Investmentin Financial Assets` is
+                                     exactly `Available For Sale Securities` +
+                                     `Financial Assets at FVTPL` (verified on
+                                     both of 0700.HK's reported periods), and
+                                     both of those are *already carried at fair
+                                     value*. Using them reads a filed mark; it
+                                     does not make one.
+      associates_at_cost            returned, never added. Held at cost, and
+                                     cost is not value — that is a judgement the
+                                     platform does not make. Same treatment as
+                                     the normalised base year: shown beside the
+                                     headline, excluded from it.
+
+    `Long Term Equity Investment` is the parent of `Investmentsin Associatesat
+    Cost` and `Investmentsin Joint Venturesat Cost` — on 0700.HK the three
+    satisfy 342,409 + 6,303 = 348,712 exactly, in both reported periods. Reading
+    the parent is what avoids the double count that kept this unimplemented;
+    never sum the children. Issuers that report no children still report the
+    parent, so nothing is lost by ignoring them.
+
+    **Period-pinned, and deliberately without a fallback.** `_value_at` reads one
+    date; `_latest` would walk backwards until it found a number. MSFT is the
+    live case: its `Long Term Equity Investment` row exists at 2025-06-30 and is
+    absent at 2026-06-30, so a fallback would import a year-old balance into
+    today's valuation. This codebase has been bitten by exactly that twice — see
+    `paired_latest` below, where interest coverage was FY2025 EBIT over FY2023
+    interest. A row that is not reported is unknown, and unknown stays out.
+
+    An absent row is read as zero here, unlike the net-debt legs, and the
+    difference is deliberate. Every issuer has debt and cash, so a missing
+    `totalDebt` is a vendor failure worth naming. Most issuers genuinely have no
+    preferred stock and no associates, so a missing row is the balance sheet
+    saying "nil" — flagging it would put a warning on all seven fixtures and
+    teach the reader to ignore warnings.
+
+    What *is* worth naming is a row that **used to be reported and no longer
+    is**, which is a real signal and a real defect this vendor produces: MSFT
+    carried `Long Term Equity Investment` at 2025-06-30 and carries nothing at
+    2026-06-30. That may be a disposal or a dropped row, and the filing does not
+    say which — so it is reported as `disappeared` rather than guessed at.
+    """
+    out = {"minority_interest": 0.0, "preferred": 0.0, "marked_securities": 0.0,
+           "associates_at_cost": 0.0, "period": period, "disappeared": []}
+    if not period:
+        return out
+
+    earlier = [p for p in bal if p < period]
+    for key, names in (
+        ("minority_interest", ("Minority Interest",)),
+        ("preferred", ("Preferred Stock", "Preferred Securities Outside Stock Equity")),
+        ("marked_securities", ("Investmentin Financial Assets",)),
+        ("associates_at_cost", ("Long Term Equity Investment",)),
+    ):
+        value = _value_at(bal, period, *names)
+        if value is None:
+            if any(_value_at(bal, p, *names) is not None for p in earlier):
+                out["disappeared"].append(key)
+        else:
+            out[key] = float(value)
+    return out
+
+
 def paired_latest(statement: dict, names_a: tuple, names_b: tuple):
     """(period, a, b) from the newest period reporting **both**, else None.
 
@@ -741,7 +821,20 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     net_debt_assumed = [name for name, value in
                         (("total_debt", total_debt), ("total_cash", total_cash))
                         if value is None]
-    equity_value = ev - net_debt
+    # The other three terms of the bridge (see `equity_bridge`). Read from the
+    # newest balance-sheet date — a balance sheet is a snapshot, so the latest
+    # one is the company's current financial position, where the FCF above is a
+    # flow across a year.
+    bal = f["balance_sheet"]
+    bridge = equity_bridge(bal, sorted(bal)[-1] if bal else None)
+    # One figure, subtracted everywhere EV is turned into equity. There are four
+    # such places — the headline below, the WACC x terminal-growth grid, the
+    # growth sweep and the normalised base year — and they must agree, or the
+    # sensitivity table would contradict the headline printed above it.
+    # `associates_at_cost` is deliberately absent: it is reported, not adopted.
+    bridge_deduction = (net_debt + bridge["minority_interest"]
+                        + bridge["preferred"] - bridge["marked_securities"])
+    equity_value = ev - bridge_deduction
     shares = info.get("sharesOutstanding")
     price = info.get("currentPrice") or info.get("regularMarketPrice")
 
@@ -804,7 +897,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
                 row["values"].append(None)
             else:
                 row["values"].append(
-                    round((enterprise_value(w, g) - net_debt) * conv / shares, 2))
+                    round((enterprise_value(w, g) - bridge_deduction) * conv / shares, 2))
         sensitivity.append(row)
 
     # The grid above sweeps WACC and terminal growth — the two second-order
@@ -819,7 +912,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     growth_rates = [round(max(growth_rate + d, GROWTH_SENSITIVITY_FLOOR), 4)
                     for d in GROWTH_SENSITIVITY_STEPS]
     growth_values = [
-        round((enterprise_value(wacc, terminal_growth, g) - net_debt) * conv / shares, 2)
+        round((enterprise_value(wacc, terminal_growth, g) - bridge_deduction) * conv / shares, 2)
         if shares else None
         for g in growth_rates
     ]
@@ -846,8 +939,31 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     if normalised and normalised > 0 and shares:
         normalised_fcff = normalised + interest_addback
         fair_value_normalised = round(
-            (enterprise_value(wacc, terminal_growth, base=normalised_fcff) - net_debt)
+            (enterprise_value(wacc, terminal_growth, base=normalised_fcff) - bridge_deduction)
             * conv / shares, 2)
+
+    # The fourth bridge term, reported and not adopted. Associates are carried at
+    # cost, and cost is neither a market value nor a floor — a long-held stake is
+    # usually worth more than it cost and an impaired one less, and the filing
+    # does not say which. Shown for the same reason the normalised base year is:
+    # the reader can see the size of what the platform declines to decide.
+    # `+ 0.0` normalises the negative zero that -(0.0) produces, which would
+    # otherwise render as "-0.00" on a row that is simply not there.
+    per_share = ((lambda x: round(x * conv / shares, 2) + 0.0) if shares
+                 else (lambda x: None))
+    bridge_out = {
+        **bridge,
+        "net_debt": net_debt,
+        "deduction": bridge_deduction,
+        "per_share": {k: per_share(v) for k, v in
+                      (("minority_interest", -bridge["minority_interest"]),
+                       ("preferred", -bridge["preferred"]),
+                       ("marked_securities", bridge["marked_securities"]),
+                       ("associates_at_cost", bridge["associates_at_cost"]))},
+        "fair_value_including_associates": (
+            per_share(ev - bridge_deduction + bridge["associates_at_cost"])
+            if shares and bridge["associates_at_cost"] else None),
+    }
 
     return {
         "assumptions": {
@@ -916,6 +1032,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
             # empty is the healthy case: both legs of the bridge were reported
             "net_debt_assumed_zero": net_debt_assumed,
+            "equity_bridge": bridge_out,
             # whether the base year is a run-rate, with an auditable alternative
             # where it is not. Reported stays the headline — this is shown
             # beside it, never substituted for it.

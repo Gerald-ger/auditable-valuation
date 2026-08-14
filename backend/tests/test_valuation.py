@@ -360,9 +360,10 @@ def test_a_single_currency_issuer_is_untouched_by_any_of_this(monkeypatch):
     dcf = fm.dcf_valuation(load_fundamentals("AAPL"))
     assert dcf["assumptions"]["fx_basis"] == "single_currency"
     # 143.99 under the old 5-year growth plateau; 129.29 once the explicit stage
-    # matched the one-year horizon of the consensus that feeds it; 141.17 now
-    # that the US premium is Damodaran's published 4.46% rather than a flat 5%
-    assert dcf["fair_value_per_share"] == pytest.approx(141.17, rel=1e-3)
+    # matched the one-year horizon of the consensus that feeds it; 141.17 once
+    # the US premium was Damodaran's published 4.46% rather than a flat 5%;
+    # 146.49 now that the equity bridge adds AAPL's marked investment securities
+    assert dcf["fair_value_per_share"] == pytest.approx(146.49, rel=1e-3)
 
 
 def test_peer_leverage_is_put_on_one_basis_before_unlevering():
@@ -1195,3 +1196,147 @@ def test_sourcing_the_premium_is_not_one_directional():
     assert fair_value("AAPL", 0.0446) > fair_value("AAPL", flat)
     assert fair_value("MSFT", 0.0446) > fair_value("MSFT", flat)
     assert fair_value("0700_HK", 0.0514) < fair_value("0700_HK", flat)
+
+
+# ── the EV -> equity bridge ──────────────────────────────────────────
+#
+# The reference doc states five terms; the model implemented one. These pin the
+# three that were added, the one that deliberately was not, and the two exact
+# identities the whole approach rests on.
+
+def _bridge(stem):
+    return fm.dcf_valuation(load_fundamentals(stem))["diagnostics"]["equity_bridge"]
+
+
+def test_the_investment_lines_nest_exactly():
+    """The blocker that kept this unimplemented: adding associates, JVs and
+    `Long Term Equity Investment` together double-counts, because the third is
+    the sum of the first two. Reading the parent is what makes it safe, and this
+    asserts the identity rather than trusting the row names."""
+    bal = load_fundamentals("0700_HK")["balance_sheet"]
+    checked = 0
+    for period, rows in bal.items():
+        parent = rows.get("Long Term Equity Investment")
+        if parent is None:
+            continue
+        children = ((rows.get("Investmentsin Associatesat Cost") or 0)
+                    + (rows.get("Investmentsin Joint Venturesat Cost") or 0))
+        assert children == pytest.approx(parent, rel=1e-9), period
+        checked += 1
+    assert checked >= 2, "identity should hold on every reported period"
+
+
+def test_the_securities_line_is_already_marked_to_market():
+    """The argument for adding this term at all. `Investmentin Financial Assets`
+    is exactly available-for-sale plus fair-value-through-profit-or-loss, and
+    both of those are carried at fair value — so using it reads a filed mark
+    rather than making one. If a vendor ever redefines that row, this fails."""
+    bal = load_fundamentals("0700_HK")["balance_sheet"]
+    checked = 0
+    for period, rows in bal.items():
+        total = rows.get("Investmentin Financial Assets")
+        if total is None:
+            continue
+        parts = ((rows.get("Available For Sale Securities") or 0)
+                 + (rows.get("Financial Assetsdesignatedas Fair Value Through Profitor Loss Total")
+                    or rows.get("Financial Assets Designatedas Fair Value Through Profitor Loss Total")
+                    or 0))
+        assert parts == pytest.approx(total, rel=1e-9), period
+        checked += 1
+    assert checked >= 2
+
+
+def test_associates_at_cost_never_reach_the_headline():
+    """Cost is not value. The figure is reported beside the headline, the same
+    way the normalised base year is, and must not be inside it."""
+    d = fm.dcf_valuation(load_fundamentals("0700_HK"))
+    b = d["diagnostics"]["equity_bridge"]
+
+    assert b["associates_at_cost"] > 0
+    assert b["per_share"]["associates_at_cost"] > 0
+    # the headline excludes it; the disclosed alternative is exactly it higher
+    assert d["fair_value_per_share"] < b["fair_value_including_associates"]
+    assert (b["fair_value_including_associates"] - d["fair_value_per_share"]
+            == pytest.approx(b["per_share"]["associates_at_cost"], abs=0.02))
+
+
+def test_minority_interest_is_subtracted_and_marked_securities_added():
+    """Directions, pinned. Both are one-way by definition rather than by choice:
+    a claim on the business reduces the equity, an asset outside it adds."""
+    b = _bridge("0700_HK")
+    assert b["per_share"]["minority_interest"] < 0
+    assert b["per_share"]["marked_securities"] > 0
+    assert b["deduction"] == pytest.approx(
+        b["net_debt"] + b["minority_interest"] + b["preferred"] - b["marked_securities"])
+
+
+def test_the_sensitivity_grid_uses_the_same_bridge_as_the_headline():
+    """The failure most likely to slip through. `net_debt` was subtracted at four
+    separate places, and a bridge applied to only some of them would print a
+    sensitivity table whose centre cell disagreed with the fair value directly
+    above it. The grid is built at the base WACC and base terminal growth in its
+    middle cell, so that cell must *be* the headline."""
+    for stem in ("0700_HK", "XOM", "AAPL"):
+        d = fm.dcf_valuation(load_fundamentals(stem))
+        rows = d["sensitivity"]["rows"]
+        centre = rows[len(rows) // 2]["values"][len(rows[0]["values"]) // 2]
+        assert centre == pytest.approx(d["fair_value_per_share"], abs=0.02), stem
+
+
+def test_the_growth_sweep_uses_the_same_bridge_too():
+    """Same trap, the other grid: the sweep holds WACC and terminal growth at
+    base, so its middle point is also the headline."""
+    for stem in ("0700_HK", "XOM"):
+        d = fm.dcf_valuation(load_fundamentals(stem))
+        values = d["growth_sensitivity"]["values"]
+        assert values[len(values) // 2] == pytest.approx(d["fair_value_per_share"], abs=0.02), stem
+
+
+def test_a_row_that_vanished_is_named_rather_than_carried_forward():
+    """MSFT reports `Long Term Equity Investment` at 2025-06-30 and nothing at
+    2026-06-30. `_latest` would walk back and import the year-old balance into
+    today's valuation — the period-drift defect this codebase has already fought
+    twice. The row reads zero, and the fact that it moved is reported."""
+    b = _bridge("MSFT")
+    assert b["associates_at_cost"] == 0.0
+    assert "associates_at_cost" in b["disappeared"]
+
+
+def test_a_row_that_was_never_reported_is_not_flagged():
+    """The other half of that rule. Most companies have no preferred stock and no
+    associates, so an absent row means nil — flagging it would put a warning on
+    every company and train the reader to ignore warnings."""
+    assert _bridge("AAPL")["disappeared"] == []
+    assert _bridge("0700_HK")["disappeared"] == []
+
+
+def test_a_company_with_none_of_these_rows_is_valued_exactly_as_before():
+    """Regression guard: where the balance sheet carries no such lines, the
+    bridge must collapse back to `EV - net debt` to the cent."""
+    f = load_fundamentals("AAPL")
+    for rows in f["balance_sheet"].values():
+        for name in ("Minority Interest", "Preferred Stock", "Investmentin Financial Assets",
+                     "Long Term Equity Investment"):
+            rows.pop(name, None)
+
+    d = fm.dcf_valuation(f)
+    info = f["info"]
+    expected = ((d["enterprise_value"]
+                 - (info["totalDebt"] - info["totalCash"])) / info["sharesOutstanding"])
+    assert d["fair_value_per_share"] == pytest.approx(round(expected, 2), abs=0.01)
+    assert d["diagnostics"]["equity_bridge"]["deduction"] == pytest.approx(
+        info["totalDebt"] - info["totalCash"])
+
+
+def test_the_bridge_terms_are_converted_once_like_net_debt():
+    """0700.HK reports CNY and trades HKD. The balance-sheet terms are reporting
+    currency, exactly like net debt, so they must be converted at the output
+    boundary and not before — a term converted twice would be 1.1x too large."""
+    d = fm.dcf_valuation(load_fundamentals("0700_HK"))
+    b = d["diagnostics"]["equity_bridge"]
+    fx = d["assumptions"]["fx_rate_used"]
+    shares = load_fundamentals("0700_HK")["info"]["sharesOutstanding"]
+
+    assert d["assumptions"]["fx_basis"] == "converted"
+    assert b["per_share"]["marked_securities"] == pytest.approx(
+        b["marked_securities"] * fx / shares, abs=0.01)

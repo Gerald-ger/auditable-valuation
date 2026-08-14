@@ -376,6 +376,121 @@ function signedPp(v) {
   return `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}pp`;
 }
 
+// Named so the rows read as a bridge rather than a list of balance-sheet trivia.
+// Order matters: claims on the business first, then assets outside it, which is
+// the order the reference doc states the identity in.
+const BRIDGE_ROWS = [
+  ['minority_interest', 'Minority interest', 'a claim on the business held by someone else'],
+  ['preferred', 'Preferred equity', 'ranks ahead of the ordinary shares'],
+  ['marked_securities', 'Investment securities',
+   'already carried at fair value in the filing, so no mark is being invented'],
+];
+
+function EquityBridgePanel({ dcf }) {
+  const b = dcf.diagnostics?.equity_bridge;
+  if (!b) return null;
+  const ccy = dcf.assumptions?.currency;
+  const ps = b.per_share || {};
+  const rows = BRIDGE_ROWS.filter(([key]) => ps[key]);
+  const assoc = ps.associates_at_cost;
+
+  // A bridge with nothing to add is still worth one line. The alternative is
+  // silence, and silence here reads as "there was nothing to check" rather than
+  // "we checked and there was nothing" — the distinction this panel exists for.
+  if (!rows.length && !assoc && !b.disappeared?.length) {
+    return (
+      <div className="chart-note">
+        Equity bridge: enterprise value less net debt. This company reports no
+        minority interest, preferred equity or investments held outside the
+        operating business, so there is nothing further to bridge.
+      </div>
+    );
+  }
+
+  // The starting point, backed out rather than passed down: the headline already
+  // has every row applied, so subtracting them recovers what the bridge was
+  // before. Keeps one number authoritative instead of two that can drift.
+  const base = dcf.fair_value_per_share - rows.reduce((t, [k]) => t + ps[k], 0);
+
+  return (
+    <>
+      <div className="sens-title">
+        Bridge: from enterprise value to a value per share
+      </div>
+      <table className="sens-table">
+        <tbody>
+          <tr>
+            <td style={{ textAlign: 'left' }}>Enterprise value less net debt</td>
+            <td />
+            <td>{num(base)}</td>
+          </tr>
+          {rows.map(([key, label, why]) => (
+            <tr key={key}>
+              <td style={{ textAlign: 'left' }}>
+                {ps[key] < 0 ? '−' : '+'} {label}
+                <span className="muted-note"> — {why}</span>
+              </td>
+              <td />
+              <td>{ps[key] > 0 ? '+' : '−'}{num(Math.abs(ps[key]))}</td>
+            </tr>
+          ))}
+          <tr>
+            <td style={{ textAlign: 'left' }}>
+              = <b>Fair value / share</b> — the headline above
+            </td>
+            <td />
+            <td><b>{num(dcf.fair_value_per_share)}</b> {ccy}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {b.disappeared?.map((key) => (
+        <span className="warn-chip" key={key}>
+          {key.replaceAll('_', ' ')} was reported in an earlier year and is absent from{' '}
+          {b.period}: read as nil rather than carried forward
+        </span>
+      ))}
+
+      {assoc ? (
+        <>
+          <table className="sens-table">
+            <tbody>
+              <tr>
+                <td style={{ textAlign: 'left' }}>
+                  Associates and joint ventures, <b>held at cost</b>
+                </td>
+                <td>+{num(assoc)}</td>
+                <td>
+                  <b>{num(b.fair_value_including_associates)}</b> {ccy}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="chart-note">
+            This last line is <b>not</b> in the headline. The stakes are carried at
+            what they cost, and cost is neither a market value nor a floor — a
+            long-held stake is usually worth more than it cost, an impaired one
+            less, and the filing does not say which. Marking them would be a
+            judgement about assets we cannot see, so the figure is shown and left
+            out of the number. The rows above it are different in kind: the
+            securities are already carried at fair value in the filing, and the
+            deductions are claims on the business that are not the shareholders&rsquo;.
+          </div>
+        </>
+      ) : (
+        <div className="chart-note">
+          Enterprise value belongs to everyone with a claim on the business, so
+          the deductions above remove the claims that are not the ordinary
+          shareholders&rsquo;, and the additions bring in what the cash-flow forecast
+          never counted. A discounted cash flow values the operating business; an
+          asset parked beside it earns nothing in that forecast and has to be
+          added separately or it is valued at zero.
+        </div>
+      )}
+    </>
+  );
+}
+
 function BaseYearPanel({ dcf }) {
   const b = dcf.diagnostics?.base_year;
   if (!b?.history?.length) return null;
@@ -704,6 +819,13 @@ export default function ModelsTab({ ticker }) {
                   wording stays neutral about the cause: the bridge shows whether
                   working capital or capital expenditure moved. */}
               <BaseYearPanel dcf={dcf} />
+
+              {/* The bridge from enterprise value to a share price. It ran on one
+                  of the five terms the reference doc specifies, and said so
+                  nowhere — on 0700.HK the missing three are 28% of enterprise
+                  value and reverse the verdict. Shown in full so the reader can
+                  see both what is counted and where the platform stops. */}
+              <EquityBridgePanel dcf={dcf} />
 
               {dcf.diagnostics.base_fcf_quality?.anomalous && (
                 <>
