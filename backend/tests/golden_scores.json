@@ -49,7 +49,7 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 82,
+     "dcf_upside_pct": 80,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 43,
      "fcf_yield": 68

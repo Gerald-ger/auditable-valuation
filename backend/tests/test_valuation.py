@@ -289,13 +289,21 @@ def test_conversion_scales_the_valuation_by_exactly_the_rate():
 def test_correcting_the_currency_also_corrects_the_wacc_weights():
     """The other half: a reporting-currency debt balance weighed against a
     trading-currency market cap understated the debt weight, and with it the
-    share of the cheaper after-tax cost of debt."""
+    share of the cheaper after-tax cost of debt.
+
+    The ERP is pinned across both runs. `financialCurrency` now carries a second
+    job — it also selects the market premium — so flipping it to build the mixed
+    case would move the cost of equity too, and this test would stop measuring
+    the weighting effect it is named for.
+    """
     f = load_fundamentals("0700_HK")
     g = load_fundamentals("0700_HK")
     g["info"]["financialCurrency"] = "HKD"
 
-    corrected = fm.dcf_valuation(f)["assumptions"]
-    mixed = fm.dcf_valuation(g)["assumptions"]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fm, "equity_risk_premium_for", lambda c: (0.05, "test", None))
+        corrected = fm.dcf_valuation(f)["assumptions"]
+        mixed = fm.dcf_valuation(g)["assumptions"]
     assert corrected["weight_equity"] < mixed["weight_equity"]
     assert corrected["wacc"] < mixed["wacc"]
 
@@ -351,9 +359,10 @@ def test_a_single_currency_issuer_is_untouched_by_any_of_this(monkeypatch):
     monkeypatch.setattr(fm, "fx_rate", explode)
     dcf = fm.dcf_valuation(load_fundamentals("AAPL"))
     assert dcf["assumptions"]["fx_basis"] == "single_currency"
-    # 143.99 under the old 5-year growth plateau; 129.29 now that the explicit
-    # stage matches the one-year horizon of the consensus that feeds it
-    assert dcf["fair_value_per_share"] == pytest.approx(129.29, rel=1e-3)
+    # 143.99 under the old 5-year growth plateau; 129.29 once the explicit stage
+    # matched the one-year horizon of the consensus that feeds it; 141.17 now
+    # that the US premium is Damodaran's published 4.46% rather than a flat 5%
+    assert dcf["fair_value_per_share"] == pytest.approx(141.17, rel=1e-3)
 
 
 def test_peer_leverage_is_put_on_one_basis_before_unlevering():
@@ -1096,3 +1105,93 @@ def test_the_note_never_contradicts_the_driver_on_real_data():
         ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
         if ctx["driver"] == "operating_cash":
             assert ctx["driver_note"] not in spending_notes, stem
+
+
+# ── equity risk premium: sourced per market, not one number for the world ──
+#
+# `EQUITY_RISK_PREMIUM = 0.05` was invented — no source, no date, one figure for
+# every market and every year. These pin the replacement: Damodaran's published
+# country table, vendored as a dated snapshot, keyed on the currency the
+# discounted cash flows are actually denominated in.
+
+def test_erp_resolves_per_market():
+    """USD, HKD and CNY each get their own published figure."""
+    usd, src, market = fm.equity_risk_premium_for("USD")
+    assert (usd, market) == (0.0446, "United States")
+    assert src.startswith("damodaran_")
+
+    assert fm.equity_risk_premium_for("HKD")[::2] == (0.0501, "Hong Kong")
+    assert fm.equity_risk_premium_for("CNY")[::2] == (0.0514, "China")
+
+
+def test_tencent_is_priced_off_china_not_hong_kong():
+    """The distinction the whole keying rests on. 0700.HK *trades* in HKD and
+    *reports* in CNY, and the discount rate has to match the currency of the
+    cash flows it discounts — so China's premium applies, not Hong Kong's.
+    `tax_rate_for` deliberately keys the other way: tax follows the filing
+    jurisdiction, a discount rate follows the money."""
+    f = load_fundamentals("0700_HK")
+    assert f["info"]["currency"] == "HKD"
+    assert f["info"]["financialCurrency"] == "CNY"
+
+    a = fm.dcf_valuation(f)["assumptions"]
+    assert a["equity_risk_premium_market"] == "China"
+    assert a["equity_risk_premium"] == 0.0514
+    assert fm.tax_rate_for(f["info"]) == 0.165  # still Hong Kong, on purpose
+
+
+def test_the_country_risk_premium_is_never_added_on_top():
+    """Damodaran's country figure is additive — total = mature + CRP — so using
+    `total_erp` *and* adding the CRP would count the country twice. This pins
+    both halves: the snapshot's arithmetic, and that the resolver returns the
+    total unmodified."""
+    data = fm._market_premiums()
+    mature = data["mature_market_erp"]
+    for ccy, entry in data["markets"].items():
+        assert round(mature + entry["country_risk_premium"], 4) == entry["total_erp"], ccy
+        assert fm.equity_risk_premium_for(ccy)[0] == entry["total_erp"], ccy
+
+
+def test_an_unknown_market_falls_back_to_the_mature_premium():
+    erp, src, market = fm.equity_risk_premium_for("JPY")
+    assert (erp, src, market) == (fm._market_premiums()["mature_market_erp"],
+                                  "mature_market", None)
+
+
+def test_a_missing_reference_file_degrades_the_number_not_the_endpoint(monkeypatch):
+    """Same rule as risk_free_rate falling back to RISK_FREE_RATE when the Fed
+    feed is unreachable: the valuation still runs, and says which number it used.
+    """
+    monkeypatch.setattr(fm, "_MARKET_PREMIUMS", None)
+    monkeypatch.setattr(fm, "MARKET_PREMIUMS_PATH",
+                        fm.MARKET_PREMIUMS_PATH.with_name("does-not-exist.json"))
+
+    assert fm.equity_risk_premium_for("USD") == (fm.EQUITY_RISK_PREMIUM,
+                                                 "platform_default", None)
+    d = fm.dcf_valuation(load_fundamentals("AAPL"))
+    assert not d.get("error")
+    assert d["assumptions"]["equity_risk_premium_source"] == "platform_default"
+
+
+def test_every_valuation_reports_where_its_premium_came_from():
+    for stem in ("AAPL", "MSFT", "XOM", "0700_HK", "O"):
+        a = fm.dcf_valuation(load_fundamentals(stem))["assumptions"]
+        assert a["equity_risk_premium_source"], stem
+        assert a["equity_risk_premium"] > 0, stem
+
+
+def test_sourcing_the_premium_is_not_one_directional():
+    """The direction-blindness check, pinned. Replacing a flat 5% with published
+    figures *raises* US valuations (4.46% is below 5%) and *lowers* Tencent's
+    (China is 5.14%, above it). A change that only ever moved values one way
+    would be tuning wearing a citation; this one cannot be, and the test fails
+    if a future snapshot update quietly makes it so."""
+    def fair_value(stem, erp):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(fm, "equity_risk_premium_for", lambda c: (erp, "test", None))
+            return fm.dcf_valuation(load_fundamentals(stem))["fair_value_per_share"]
+
+    flat = 0.05
+    assert fair_value("AAPL", 0.0446) > fair_value("AAPL", flat)
+    assert fair_value("MSFT", 0.0446) > fair_value("MSFT", flat)
+    assert fair_value("0700_HK", 0.0514) < fair_value("0700_HK", flat)

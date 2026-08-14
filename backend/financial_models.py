@@ -13,12 +13,18 @@ load does not fan out into peer fetches it did not ask for.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from statistics import median
 
 from data_provider import fx_rate, risk_free_rate
 
 # Assumption defaults (user-overridable via the API)
 RISK_FREE_RATE = 0.043      # fallback only — WACC uses the live US 10Y when reachable
+# Fallback only, and no longer the number a valuation normally uses: a per-market
+# premium is read from market_risk_premiums.json (see equity_risk_premium_for).
+# This value is what a market with no entry, or a missing reference file, falls
+# back to — the same shape as RISK_FREE_RATE above backstopping the Fed feed.
 EQUITY_RISK_PREMIUM = 0.05
 TERMINAL_GROWTH = 0.025
 DEFAULT_TAX_RATE = 0.21
@@ -268,6 +274,61 @@ def tax_rate_for(info: dict) -> float:
     return TAX_RATE_BY_CURRENCY.get(info.get("currency"), DEFAULT_TAX_RATE)
 
 
+MARKET_PREMIUMS_PATH = Path(__file__).resolve().parent / "market_risk_premiums.json"
+_MARKET_PREMIUMS: dict | None = None
+
+
+def _market_premiums() -> dict:
+    """The vendored Damodaran snapshot, read once per process.
+
+    Returns `{}` when the file is missing or unparseable, which sends every
+    caller to EQUITY_RISK_PREMIUM. Same rule as `risk_free_rate` falling back to
+    RISK_FREE_RATE when the Fed feed is unreachable: a missing reference file
+    degrades the number and says so, it never breaks the endpoint.
+    """
+    global _MARKET_PREMIUMS
+    if _MARKET_PREMIUMS is None:
+        try:
+            _MARKET_PREMIUMS = json.loads(
+                MARKET_PREMIUMS_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _MARKET_PREMIUMS = {}
+    return _MARKET_PREMIUMS
+
+
+def equity_risk_premium_for(reporting_currency: str | None
+                            ) -> tuple[float, str, str | None]:
+    """(erp, source, market) for the currency the cash flows are denominated in.
+
+    Keyed on `financialCurrency`, deliberately differing from `tax_rate_for`
+    above, which keys on the trading currency. Tax follows the jurisdiction a
+    company files in; a discount rate has to match the currency of the cash
+    flows it discounts. 0700.HK trades HKD and reports CNY, so it is priced off
+    China's premium — which is also the right economic answer for a business
+    whose operations and risk are Chinese, not merely listed in Hong Kong.
+
+    `total_erp` is used exactly as published and nothing is added to it.
+    Damodaran's country figure is additive — total = mature market + country
+    risk premium — so adding the CRP on top would count the country twice. The
+    snapshot carries the CRP for audit only, and a test pins that it stays out
+    of the arithmetic.
+
+    Three sources, each named rather than silently blended:
+      damodaran_<date>  the market has an entry
+      mature_market     no entry for this currency; the floor Damodaran's own
+                        table is built on, which is honest for a developed
+                        market and understates a risky one
+      platform_default  no reference file at all
+    """
+    data = _market_premiums()
+    entry = (data.get("markets") or {}).get(reporting_currency or "")
+    if entry and entry.get("total_erp"):
+        return entry["total_erp"], f"damodaran_{data.get('as_of')}", entry.get("country")
+    if data.get("mature_market_erp"):
+        return data["mature_market_erp"], "mature_market", None
+    return EQUITY_RISK_PREMIUM, "platform_default", None
+
+
 def statement_to_market_fx(trading_currency, reporting_currency):
     """(rate, mismatch) taking a statement figure into the trading currency.
 
@@ -454,9 +515,17 @@ def ratio_analysis(f: dict) -> dict:
 def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
     info = f["info"]
     beta, beta_source = resolve_beta(info, peers, tax_rate)
-    # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy
+    # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy.
+    # Known to be the weaker half of this pair — 0700.HK reports CNY, which is
+    # not pegged, so its cash flows and its discount rate are in different
+    # currencies. Not fixed here: China's 10Y runs ~260bp below the US, which
+    # would roughly double that valuation, and whether the conversion should
+    # then use spot or a forward rate is unsettled. See TODOLIST.
     rf = risk_free_rate(RISK_FREE_RATE)
-    cost_of_equity = rf + beta * EQUITY_RISK_PREMIUM
+    # The ERP half of the same pair, and the half that can be sourced today.
+    erp, erp_source, erp_market = equity_risk_premium_for(
+        info.get("financialCurrency"))
+    cost_of_equity = rf + beta * erp
     market_cap = info.get("marketCap") or 0
     # the capital-structure weights compare a trading-currency market cap with a
     # reporting-currency debt balance, so the debt leg is converted first
@@ -475,6 +544,9 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
         "beta": beta,
         "beta_source": beta_source,
         "beta_reported": info.get("beta"),
+        "equity_risk_premium": round(erp, 4),
+        "equity_risk_premium_source": erp_source,
+        "equity_risk_premium_market": erp_market,
         "cost_of_equity": round(cost_of_equity, 4),
         "credit_spread": spread,
         "interest_coverage": coverage,

@@ -167,6 +167,24 @@ function DcfAudit({ dcf }) {
           )}
           {' · '}WACC <b>{pct(a.wacc_used)}</b>
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>
+          {/* The ERP was a bare 5% for every market on earth until it was
+              sourced. Shown with its market because that is the surprising
+              part: 0700.HK trades in Hong Kong but reports in CNY, so it is
+              priced off China's premium, not Hong Kong's. */}
+          {a.equity_risk_premium !== undefined && (
+            <>
+              {' · '}equity premium <b>{pct(a.equity_risk_premium)}</b>
+              <span className={`src-tag ${a.equity_risk_premium_source?.startsWith('damodaran')
+                ? 'reported' : 'default'}`}>
+                {a.equity_risk_premium_source?.startsWith('damodaran')
+                  ? `Damodaran ${a.equity_risk_premium_source.slice(-10)}`
+                  : a.equity_risk_premium_source?.replace(/_/g, ' ')}
+              </span>
+              {a.equity_risk_premium_market && (
+                <span className="muted-note"> ({a.equity_risk_premium_market})</span>
+              )}
+            </>
+          )}
           {' · '}credit spread <b>{pct(a.credit_spread)}</b>
           {a.interest_coverage !== null && (
             <span className="muted-note">

@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "Equity risk premiums by market. Vendored deliberately rather than fetched:",
+    "Damodaran republishes twice a year (January, with a mid-year update in July), so",
+    "an xlsx parser on the request path would be fragile for no benefit and would put a",
+    "network call inside the offline test suite. Updating this file is a manual, dated",
+    "act — which is the point. The figure it replaces was invented; this one is sourced.",
+    "",
+    "STRUCTURE — read before editing. Damodaran's country figure is ADDITIVE:",
+    "    total_erp = mature_market_erp + country_risk_premium",
+    "Only `total_erp` is consumed. `country_risk_premium` and `default_spread` are",
+    "carried for audit, NOT to be added to anything — adding a CRP on top of a total",
+    "ERP double-counts the country. A test pins this.",
+    "",
+    "Cross-check on retrieval: all three markets imply the same mature-market premium",
+    "(4.46-0.23 = 5.01-0.78 = 5.14-0.91 = 4.23), which is what the additive structure",
+    "requires. If a future update fails that check, the figures were misread.",
+    "",
+    "KEYED BY REPORTING CURRENCY, not country. `info['country']` is None on all seven",
+    "fixtures and is not in the get_fundamentals whitelist, so currency is the only",
+    "market signal available — the same approximation TAX_RATE_BY_CURRENCY already",
+    "makes, and it fails the same way for an issuer whose trading currency is not its",
+    "risk domicile. The currency chosen is `financialCurrency`, the one the discounted",
+    "cash flows are actually denominated in, because that is what the discount rate has",
+    "to match. 0700.HK reports CNY, so it is priced off China, not Hong Kong."
+  ],
+  "source": "Aswath Damodaran, NYU Stern — Country Default Spreads and Risk Premiums",
+  "url": "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html",
+  "as_of": "2026-01-05",
+  "retrieved": "2026-08-14",
+  "mature_market_erp": 0.0423,
+  "markets": {
+    "USD": {
+      "country": "United States",
+      "total_erp": 0.0446,
+      "country_risk_premium": 0.0023,
+      "default_spread": 0.0023
+    },
+    "HKD": {
+      "country": "Hong Kong",
+      "total_erp": 0.0501,
+      "country_risk_premium": 0.0078,
+      "default_spread": 0.0051
+    },
+    "CNY": {
+      "country": "China",
+      "total_erp": 0.0514,
+      "country_risk_premium": 0.0091,
+      "default_spread": 0.0060
+    }
+  }
+}
