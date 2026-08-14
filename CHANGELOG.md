@@ -7,6 +7,63 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-14 — the DCF bar carries its third assumption, and radius gets a rule
+
+Backend **357 → 366 passing** (16 network-deselected), frontend 46.
+
+### Changed
+
+- **The football-field DCF bar now spans the base year as well as the rates.** The bar
+  stressed WACC and terminal growth through the sensitivity grid and the starting growth
+  rate through `growth_sensitivity` — three rate assumptions, and none of them the level
+  those rates are applied to. `_dcf_band` now unions `fair_value_normalised` in, so the bar
+  shows what the company's own multi-year average margin implies alongside what its newest
+  filed year implies. Fair value is homogeneous of degree one in base FCF, so a level error
+  there is permanent and undamped; it was the largest assumption the bar did not carry.
+
+  Fires on two of four fixtures (risk-free pinned at 4.3%), and in both directions across
+  the set, which is what distinguishes a band from a thumb on the scale:
+
+  | | reported | normalised | bar before | bar after |
+  |---|---|---|---|---|
+  | XOM | 71.75 | 102.17 | 59.25–86.35 | **59.25–102.17** |
+  | MSFT | 248.51 | 321.75 | 211.58–290.97 | **211.58–321.75** |
+  | AAPL | 129.29 | 144.27 | 109.76–151.89 | unchanged, already inside |
+  | 0700.HK | 663.32 | **628.00** | 561.47–781.62 | unchanged, already inside |
+
+  The basis string names `+ base year` only when it moved an edge, following the rule the
+  growth sweep's one-sided wording already set. The midpoint tick still marks the
+  reported-year answer: this is a union, not a substitution.
+
+- **Corner radius is four tokens instead of twelve values.** `--r-tag: 4px`,
+  `--r-control: 6px`, `--r-surface: 10px`, `--r-pill: 999px` over 31 of 42 declarations.
+  Visible movement is small and deliberate: four chips 5 → 6px, five surfaces 8 → 10px.
+  `.tier-badge` (14px), `.chat-msg` (12px), `:focus-visible` and the concentric
+  `.ff-track` / `.ff-bar` pair are kept as specials with the reasoning written beside them.
+
+### Fixed
+
+- **Ten "radii" that were really `height / 2`.** `.pillar-track` and `.pillar-fill` are 8px
+  tall at 4px, `.ff-envelope` 6px at 3px, the scrollbar thumb 8px at 4px — pills expressed
+  as numbers. The earlier audit had counted them as radius choices, and the three-token
+  plan it produced would have flattened them into squircles. They now use `--r-pill`, which
+  is pixel-identical for the exact halves and imperceptibly rounder for `.quality-*` and the
+  3px swatches, already over-rounded past their own half-height.
+
+### Not done, deliberately
+
+- **The cyclical headline swap stays declined**, now on measurement rather than principle.
+  XOM's FCF margins run 14.65 → 9.99 → 9.05 → **7.29%**, monotonically down, where MSFT,
+  AAPL and 0700.HK oscillate: the four-year window holds a trend, not a cycle, so its mean
+  is a lagged trend rather than a mid-cycle estimate. Separately, `SECTOR_MAP` routes
+  `basic materials` to `industrials`, so no clean cyclical classification exists to key on.
+  The scoring objection turned out to be nearly empty — `dcf_upside_pct` is anchor-clipped
+  at −40, so XOM's metric moves 0 → 9 of 100 and the composite stays 70, tier A — but the
+  two findings above stand. The bar union above takes the part of the value that costs no
+  assumption. Full reasoning in `TODOLIST.md`.
+
+---
+
 ## 2026-08-13 — the football field triangulates, and the base year stops being free
 
 Backend **254 → 357 passing** (16 network-deselected), frontend 44 → 46. Two questions

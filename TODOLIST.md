@@ -157,10 +157,33 @@ classified cyclicals only — reusing the sector classification that already exi
 put to the owner on 2026-08-13 and **declined**; the band was accepted, the headline swap
 was not.
 
-**Trigger: the owner revisiting that call**, or a cyclical whose reported-year headline
-proves misleading in use. Options if revisited: normalised headline for classified
-cyclicals, or a multi-year consensus average, or the 3-year revenue CAGR for cyclicals
-specifically.
+**Revisited 2026-08-14 and declined again, this time on measurement rather than
+principle.** Three findings, any one of which is enough:
+
+- **XOM's own history shows a trend, not a cycle.** Its FCF margins run 14.65% → 9.99% →
+  9.05% → **7.29%**, monotonically down; MSFT, AAPL and 0700.HK all oscillate. A cycle
+  average needs a window that spans a cycle, and four points moving one way is a lagged
+  trend. Normalising XOM assumes reversion to a level it has moved *away from every year
+  in the window* — a forecast about the world, which is the thing the platform does not do.
+- **The classification to key on does not exist.** `SECTOR_MAP` sends `basic materials` to
+  `industrials`, so "energy / materials" resolves to `energy` alone and materials stays
+  fused with non-cyclical industrials.
+- **It is not one number.** The sensitivity grid, `growth_sensitivity`, the football-field
+  mid and `price_gap_bridge` are all built on the reported base. Swapping the headline
+  without rebuilding them puts the mid outside its own bar (hidden by `_clamped_mid`) and
+  makes the bridge either double-count its adjustment or show a zero-length step.
+
+What was *not* an argument against it, contrary to the earlier assumption: **scoring.**
+`dcf_upside_pct` is anchor-clipped at −40, so XOM's metric moves 0 → 9 of 100 and the
+composite stays **70, tier A**. The swap is a display change almost entirely.
+
+The cheap part of the value was taken instead — see the 2026-08-14 Done entry: the DCF
+bar now spans both bases, so the chart shows the base-year uncertainty without the
+platform choosing a side.
+
+**Trigger: a cyclical whose reported-year headline proves misleading in use**, or margin
+history long enough to contain a turn. Options if revisited: normalised headline for
+`energy` only, a multi-year consensus average, or the 3-year revenue CAGR.
 
 ### 🔵 Beta re-levering has never been audited on a net-cash company
 
@@ -201,13 +224,9 @@ Line references re-verified 2026-08-09.
   landing in `failed`, because yfinance returns an empty payload instead of raising.
   The row is greyed and unranked, so it is honest, just not obvious. *(Not re-verified
   2026-08-09.)*
-- **Twelve distinct corner radii, with no rule** (audited 2026-08-13): 0, 2, 3, 4, 5, 6,
-  8, 10, 12, 14px, plus `50%` and `999px`. There is already a latent three-tier intent —
-  graphics 2-4px, controls and chips 5-6px, surfaces 8-14px, with 0 / circle / pill as
-  deliberate specials — so the drift is *within* each tier rather than across them.
-  Collapsing it to three tokens is ~19 declarations and a visible change to the tier badge
-  (14 → 10px); it was left alone because it is cosmetic and the owner declined a visual
-  redesign. *(Not a defect, just undocumented.)*
+- ~~Twelve distinct corner radii, with no rule~~ — **done 2026-08-14**, see the Done entry
+  below. The 2026-08-13 audit undercounted: it read ten of the declarations as radius
+  choices when they were `height / 2` pills written as numbers.
 - The footer metadata strip uses two middle dots on one line where the house rule allows
   one. Same category as above: real, cosmetic, unactioned.
 - `ScorecardTab.jsx:225` carries an unsuppressed `exhaustive-deps` lint warning on
@@ -304,6 +323,56 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-14 — the DCF bar carries its third assumption, and radius gets a rule
+
+Backend **357 → 366 passing** (16 network-deselected), frontend 46, `ruff` and `oxlint`
+clean apart from the pre-existing `exhaustive-deps` warning.
+
+**The football-field DCF bar now spans both bases.** The bar already unioned in the growth
+sweep; both it and the sensitivity grid move a *rate* while holding fixed the level that
+rate is applied to, so neither could say what an unrepresentative starting year would do —
+and that error is undamped, because fair value is homogeneous of degree one in base FCF.
+`_dcf_band` now unions `fair_value_normalised` in the same shape, naming `+ base year` in
+the basis only when it actually moved an edge.
+
+Measured on the fixtures (risk-free pinned at 4.3%), it fires on two of four and is *not*
+one-directional, which is what makes it a band rather than a thumb on the scale:
+
+| | reported | normalised | bar before | bar after |
+|---|---|---|---|---|
+| XOM | 71.75 | 102.17 | 59.25–86.35 | **59.25–102.17** |
+| MSFT | 248.51 | 321.75 | 211.58–290.97 | **211.58–321.75** |
+| AAPL | 129.29 | 144.27 | 109.76–151.89 | unchanged (inside) |
+| 0700.HK | 663.32 | 628.00 | 561.47–781.62 | unchanged (inside) |
+
+The tick still marks the reported-year answer, so this widens the band without touching
+the headline. Conviction is computed from method *midpoints*, not bar centres, so a wider
+bar moves the overlap zone and nothing else — pinned by a test, because reading the centre
+instead would silently make every conviction grade a function of bar width. Nine tests
+added; mutation-checked by disabling the guard, which failed three of them including the
+end-to-end one.
+
+**Corner radius has a rule.** Forty-two declarations carrying twelve distinct values, now
+four tokens over thirty-one declarations and eleven documented specials. The 2026-08-13
+audit had this wrong in a way worth recording: it counted ten declarations as radius
+choices when they were `height / 2` — `.pillar-track` and `.pillar-fill` are 8px tall at
+4px, `.ff-envelope` 6px at 3px, the scrollbar thumb 8px at 4px. Those are pills, and
+collapsing them into a numeric tier as planned would have flattened real pills into
+squircles. `--r-pill: 999px` says what the number hid; the conversion is pixel-identical
+for the exact halves and imperceptibly rounder for `.quality-*` and the 3px swatches,
+which were already over-rounded past their own half-height.
+
+`--r-tag: 4px` / `--r-control: 6px` / `--r-surface: 10px` cover the rest. The only visible
+movement is four chips 5 → 6px and five surfaces 8 → 10px. `.tier-badge` (14px) and
+`.chat-msg` (12px) were **kept** as documented specials rather than normalised — radius
+does not scale with a box, and `--r-surface` on a 64px square reads as a rounded rectangle
+where 14px reads as the squircle the grade letter sits in. `:focus-visible` and the
+concentric `.ff-track` / `.ff-bar` pair stay literal for reasons now written beside them.
+
+Worth stating plainly: **this change has no test.** The 46 frontend tests are behavioural;
+none asserts a radius, and the project has no visual regression harness. The safety net
+was a per-line pre-assert during the edit plus a production build.
 
 ### ✅ 2026-08-13 — the football field triangulates, and the base year stops being free
 
