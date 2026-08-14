@@ -410,11 +410,17 @@ function signedPp(v) {
 // Named so the rows read as a bridge rather than a list of balance-sheet trivia.
 // Order matters: claims on the business first, then assets outside it, which is
 // the order the reference doc states the identity in.
+// `why` takes the balance-sheet date because one row's argument depends on it:
+// the securities are defensible *because* the filing already marked them, and a
+// mark is a statement about a day. The other two are claims rather than marks
+// and age less, but they are dated in the heading all the same.
 const BRIDGE_ROWS = [
-  ['minority_interest', 'Minority interest', 'a claim on the business held by someone else'],
-  ['preferred', 'Preferred equity', 'ranks ahead of the ordinary shares'],
+  ['minority_interest', 'Minority interest',
+   () => 'a claim on the business held by someone else'],
+  ['preferred', 'Preferred equity', () => 'ranks ahead of the ordinary shares'],
   ['marked_securities', 'Investment securities',
-   'already carried at fair value in the filing, so no mark is being invented'],
+   (period) => `already carried at fair value in the ${period} filing, so no mark `
+     + 'is being invented — but a mark is a statement about that day, not today'],
 ];
 
 function EquityBridgePanel({ dcf }) {
@@ -431,9 +437,10 @@ function EquityBridgePanel({ dcf }) {
   if (!rows.length && !assoc && !b.disappeared?.length) {
     return (
       <div className="chart-note">
-        Equity bridge: enterprise value less net debt. This company reports no
-        minority interest, preferred equity or investments held outside the
-        operating business, so there is nothing further to bridge.
+        Equity bridge: enterprise value less net debt. As of{' '}
+        <b>{b.period}</b> this company reports no minority interest, preferred
+        equity or investments held outside the operating business, so there is
+        nothing further to bridge.
       </div>
     );
   }
@@ -447,6 +454,10 @@ function EquityBridgePanel({ dcf }) {
     <>
       <div className="sens-title">
         Bridge: from enterprise value to a value per share
+        {/* One date for all three rows, because `equity_bridge` is period-pinned
+            by design and refuses a cross-year fallback — so they cannot come
+            from different balance sheets. */}
+        <span className="muted-note"> — balance-sheet terms as of {b.period}</span>
       </div>
       <table className="sens-table">
         <tbody>
@@ -459,7 +470,7 @@ function EquityBridgePanel({ dcf }) {
             <tr key={key}>
               <td style={{ textAlign: 'left' }}>
                 {ps[key] < 0 ? '−' : '+'} {label}
-                <span className="muted-note"> — {why}</span>
+                <span className="muted-note"> — {why(b.period)}</span>
               </td>
               <td />
               <td>{ps[key] > 0 ? '+' : '−'}{num(Math.abs(ps[key]))}</td>
