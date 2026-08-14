@@ -6,6 +6,8 @@ live behaviour they encode was measured 2026-08-07 and is recorded in each test.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import data_provider
@@ -215,3 +217,51 @@ def test_parsed_news_items_carry_published_at():
     item = data_provider.YFinanceProvider._parse_news(raw, "company", 10)[0]
     assert item["published_at"] == 1786025100
     assert item["date"] == "2026-08-06"  # unchanged, still the fallback
+
+
+# ── the stale-backend guard ──────────────────────────────────────────
+#
+# A backend running older code than the folder is this project's most repeated
+# self-inflicted wound, and its symptom is silence: a field added after the
+# server booted is simply absent, the panel reading it renders nothing, and that
+# is indistinguishable from a feature never built. `/api/health` now reports it.
+
+def test_the_source_fingerprint_ignores_line_endings(tmp_path, monkeypatch):
+    """The subtle half. A byte hash looked right and was wrong on Windows:
+    measured 2026-08-14, `git checkout` restored `sector_weights.py` with 252
+    CRLF where the running process had loaded LF, so the guard reported a stale
+    server for a file git itself called unmodified. A banner nobody can clear is
+    a banner people learn to ignore, so the hash reads text, not bytes.
+    """
+    lf, crlf = tmp_path / "lf", tmp_path / "crlf"
+    for d in (lf, crlf):
+        d.mkdir()
+    (lf / "a.py").write_bytes(b"x = 1\ny = 2\n")
+    (crlf / "a.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+
+    def fingerprint_of(directory):
+        monkeypatch.setattr(main, "__file__", str(directory / "main.py"))
+        return main._source_fingerprint()
+
+    assert fingerprint_of(lf) == fingerprint_of(crlf)
+
+
+def test_the_source_fingerprint_changes_when_the_source_does(tmp_path, monkeypatch):
+    """The other half: it must still catch a real edit, or it is decoration."""
+    d = tmp_path / "src"
+    d.mkdir()
+    monkeypatch.setattr(main, "__file__", str(d / "main.py"))
+
+    (d / "a.py").write_text("x = 1\n", encoding="utf-8")
+    before = main._source_fingerprint()
+    (d / "a.py").write_text("x = 2\n", encoding="utf-8")
+
+    assert main._source_fingerprint() != before
+
+
+def test_health_reports_whether_the_source_moved():
+    """Fresh by construction inside the suite — the fingerprint is captured at
+    import, and the suite does not rewrite the backend while running."""
+    body = asyncio.run(main.health())
+    assert body["status"] == "ok"
+    assert body["source_changed_since_start"] is False

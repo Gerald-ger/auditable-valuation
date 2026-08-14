@@ -5,11 +5,13 @@ Run:  backend\\.venv\\Scripts\\python.exe -m uvicorn main:app --app-dir backend 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from statistics import median
 from typing import AsyncIterator
 
@@ -137,9 +139,45 @@ async def _text_stream(messages: list[dict], context: str) -> AsyncIterator[dict
         yield {"delta": delta}
 
 
+def _source_fingerprint() -> str:
+    """A digest of the backend source this process could be running.
+
+    Content-hashed rather than mtime-compared: an editor or a checkout can touch
+    a file without changing a byte of it — `sector_weights.py` did exactly that
+    on 2026-08-14 while `git status` stayed clean — and an mtime test would
+    report that as a stale server.
+
+    Read as *text*, so line endings are normalised before hashing. On a Windows
+    checkout that is not a detail: measured 2026-08-14, `git checkout` restored
+    `sector_weights.py` with 252 CRLF where the running process had loaded LF, so
+    a byte hash reported a stale server for a file git itself called unmodified.
+    A false positive here is cheap but not free — a banner nobody can clear is a
+    banner people learn to ignore.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        digest.update(path.read_text(encoding="utf-8").encode("utf-8"))
+    return digest.hexdigest()[:12]
+
+
+# Captured at import, so it is the source this interpreter actually loaded.
+SOURCE_AT_START = _source_fingerprint()
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "ai": await ai_client.status()}
+    """Liveness, AI status, and whether this process is still running the code
+    on disk.
+
+    The last one exists because a stale backend is this project's most repeated
+    self-inflicted wound — three times on 2026-08-14 alone. It is nastier than a
+    crash: an endpoint added after the server booted simply returns nothing, the
+    UI panel that reads it correctly renders nothing, and the result is
+    indistinguishable from a feature that was never built. `ErrorBoundary`
+    already tells the reader to suspect it; this lets the app say so first.
+    """
+    return {"status": "ok", "ai": await ai_client.status(),
+            "source_changed_since_start": _source_fingerprint() != SOURCE_AT_START}
 
 
 @app.get("/api/search")

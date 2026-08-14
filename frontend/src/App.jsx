@@ -25,13 +25,25 @@ export default function App() {
   const [tab, setTab] = useState('tracker');
   const [ticker, setTicker] = useState('AAPL');
   const [aiOnline, setAiOnline] = useState(false);
+  // Backend source changed since it booted. Worth a banner because the symptom
+  // is silence: an endpoint added after the server started returns nothing, the
+  // panel reading it renders nothing, and that is indistinguishable from a
+  // feature never having been built. It cost three separate diagnoses on
+  // 2026-08-14, one of them of a panel that was working perfectly.
+  const [backendStale, setBackendStale] = useState(false);
   // watchlist + holdings, surfaced as one-click chips under the search box
   const [saved, setSaved] = useState([]);
 
+  // `/health` carries the same AI block `/ai/status` does, plus whether the
+  // backend is still running the code on disk — so one poll answers both rather
+  // than adding a second timer for the second question.
   useEffect(() => {
     const check = () =>
-      get('/ai/status')
-        .then((s) => setAiOnline(s.online))
+      get('/health')
+        .then((s) => {
+          setAiOnline(s.ai?.online ?? false);
+          setBackendStale(s.source_changed_since_start === true);
+        })
         .catch(() => setAiOnline(false));
     check();
     const id = setInterval(check, 30000);
@@ -73,6 +85,15 @@ export default function App() {
         </nav>
       </header>
       <main>
+        {backendStale && (
+          <div className="ai-offline-note">
+            <b>The backend is running older code than this project folder.</b> Python
+            files changed after the server started, so new fields are missing from
+            its responses and any panel that reads one will simply not appear.
+            Restart it — <code>-m uvicorn main:app --app-dir backend --port 8000</code>
+            {' '}— then reload this page.
+          </div>
+        )}
         {/* keyed on tab+ticker so navigating away from a failed render resets it
             rather than leaving the boundary stuck on a stale error */}
         <ErrorBoundary key={`${tab}:${ticker}`}>
