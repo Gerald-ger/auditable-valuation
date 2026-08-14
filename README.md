@@ -8,7 +8,8 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 
 ```
 React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yfinance — quotes, history,
-      │                            │                     │    news, fundamentals (15-min cache)
+      │                            │                     │    news, fundamentals (15-min cache,
+      │                            │                     │    price refreshed every 60s)
       │  Tab 1: Tracker            │                     ├─►  OpenBB — 10Y treasury yield,
       │  Tab 2: Financial Models   │                     │    SEC filings, SEC symbol list,
       │  Tab 3: Scorecard          │                     │    FMP peer sets
@@ -152,12 +153,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 402 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 408 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 46 tests
 ```
 
-Of the 418 collected, 16 are `network`-marked and deselected by default.
+Of the 424 collected, 16 are `network`-marked and deselected by default.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -351,6 +352,19 @@ start.bat / start.ps1   one-click cold start (backend + frontend + browser)
   interest recovered from the statements, not required (IFRS filers such as 0700.HK put
   interest in financing already), or an unverified classification where no adjustment is
   made.
+- **The price is delayed, and says so.** Yahoo's free feed runs ~15 minutes behind the
+  exchange — `exchangeDataDelayedBy: 15`, `quoteSourceName: "Delayed Quote"` — and that floor
+  cannot be removed without a paid feed. The app used to add its own 15 on top, because the
+  price rode inside the 15-minute fundamentals cache; it is now refetched on a 60-second cache,
+  so the screen is ~15 minutes behind rather than ~30. The DCF audit row states the quote's
+  timestamp and the vendor delay.
+
+  **Market cap is deliberately *not* refreshed with it.** It feeds the WACC weights, so
+  refreshing it would make fair value drift intraday with no filing having changed. So the
+  upside moves with the price while fair value, P/E, P/B and EV/EBITDA stay as of the
+  fundamentals snapshot — the audit row names which is which. The batch screener keeps the
+  snapshot price throughout: a stale quote cannot reorder a ranking, and a fetch per ticker
+  would roughly double a fifty-name run.
 - The DCF risk-free rate is the live US 10Y treasury yield, refreshed once per day, with a
   4.3% fallback when OpenBB or the Fed feed is unreachable. HK issuers use the same USD
   rate — the HKD peg makes it an acceptable proxy, not a correct one, and for a *CNY*

@@ -389,6 +389,37 @@ would need a third category. Decide whether you want that before it gets built.
 
 ## Done
 
+### ✅ 2026-08-14 (f) — the price is as fresh as the feed allows, and says how fresh
+
+Backend **402 → 408 passing**, frontend 46.
+
+The price rode inside `get_fundamentals`'s 15-minute cache, on top of Yahoo's own 15-minute
+delay, so the valuation screen ran up to **~30 minutes** behind the market — `/analysis`
+returned 441.0 twice seconds apart while the uncached `/quote` said 441.2. Now refetched on a
+60-second cache, so it is ~15 minutes: the vendor's floor, which no free feed clears.
+
+Five consumers read the price and **all five read the same two `info` fields**, so one refresh
+point covered the DCF upside, the football-field price rule, the gap bridge, the momentum
+metrics and the score history without touching a single call site.
+
+`price_as_of` and `price_delayed_by_minutes` now appear in the audit row. Both are the
+vendor's own numbers (`regularMarketTime`, `exchangeDataDelayedBy`), forwarded rather than
+estimated — the price was the denominator of the headline upside and the only input on that
+screen with no provenance at all.
+
+**Market cap is deliberately not refreshed**, because it feeds the WACC weights and refreshing
+it would make fair value drift intraday with no filing having changed. A test pins it: two
+different prices must leave `fair_value_per_share` and `wacc` identical while `upside_pct`
+moves. The cost is that recomputing P/E from the displayed price gives a marginally different
+answer, which is why the row says which figures are live and which are as of the snapshot.
+
+**The batch screener keeps the snapshot price** — a stale quote cannot reorder a ranking, and a
+fetch per ticker would roughly double a fifty-name run.
+
+Worth recording: the staleness guard from (e) caught its own author. After editing these files
+the health endpoint reported `source_changed_since_start: true` before anything was tested by
+hand, which is exactly the loop it was built to close.
+
 ### ✅ 2026-08-14 (e) — the app notices when the backend is running old code
 
 Backend **399 → 402 passing**, frontend 46.

@@ -7,6 +7,55 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-14 (f) — the price is as fresh as the feed allows, and says how fresh
+
+Backend **402 → 408 passing** (16 network-deselected), frontend 46.
+
+### Changed
+
+- **The price is refetched on a 60-second cache instead of riding the 15-minute fundamentals
+  cache.** Measured: `/analysis` returned 441.0 twice seconds apart while the uncached `/quote`
+  said 441.2, because the price sat inside `get_fundamentals`'s TTL. Stacked on Yahoo's own
+  15-minute delay that put the valuation screen up to **~30 minutes** behind the market. It is
+  now ~15 — the vendor's floor — and `/analysis` and `/quote` agree.
+
+  Five places read the price and all five read the same two `info` fields, so one refresh point
+  fixed the DCF upside, the football-field price rule, the gap bridge, the momentum metrics and
+  the score history with no call-site changes.
+
+  60 seconds rather than uncached because one page view fires several endpoints at once — a
+  Scorecard load hits `/score`, `/peers` and `/comps` — so this is one quote fetch per view
+  instead of three or four, while staying far inside the delay it exists to work around.
+  `get_quote` remains uncached; the Tracker depends on that.
+
+### Added
+
+- **`price_as_of` and `price_delayed_by_minutes` in the DCF assumptions**, rendered in the audit
+  row. Both are the vendor's own figures, forwarded rather than estimated. The price was the
+  denominator of the headline upside and the only input on that screen carrying no provenance,
+  while beta, FCF, the equity premium and the FX rate all state theirs.
+
+### Not done, deliberately
+
+- **Market cap is not refreshed with the price.** It feeds the WACC weights, so refreshing it
+  would make fair value drift intraday with no filing having changed — a valuation that will not
+  reproduce minute to minute. Leaving it also keeps P/E, P/B, EV/EBITDA and `fcf_yield` mutually
+  consistent as of one snapshot rather than half-refreshed. Pinned by a test: two different
+  prices must leave `fair_value_per_share` and `wacc` identical while `upside_pct` moves.
+- **The batch screener keeps the snapshot price.** A stale quote cannot reorder a ranking, and a
+  fetch per ticker would roughly double the network work of a fifty-name run.
+- **Yahoo's 15 minutes stays.** `docs/data-sources-review.md` already records that no free
+  source clears it for HKEX.
+
+### Fixed
+
+- **The refresh copies rather than mutates.** `get_fundamentals` output is TTL-cached and shared
+  between requests, so writing a price into it would hand a later caller statements and a price
+  from different fetches with nothing saying so. Asserted directly, and mutation-checked by
+  making it mutate, which fails that test alone.
+
+---
+
 ## 2026-08-14 (e) — the app notices when the backend is running old code
 
 Backend **399 → 402 passing** (16 network-deselected), frontend 46.
