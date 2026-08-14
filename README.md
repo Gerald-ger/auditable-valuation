@@ -148,12 +148,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 357 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 389 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 46 tests
 ```
 
-Of the 373 collected, 16 are `network`-marked and deselected by default.
+Of the 405 collected, 16 are `network`-marked and deselected by default.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -378,16 +378,23 @@ start.bat / start.ps1   one-click cold start (backend + frontend + browser)
   analyst consensus, so one source moved two of five metrics with correlated errors of the
   same sign. Removing it moved the composite −3 to +1 and no fixture changed tier. The DCF
   still consumes consensus growth — opinion counted once, and labelled.
-- **Beta is not trusted blindly.** yfinance reported 0.173 for XOM, which alone moved its
-  DCF upside by ~79 points. A reported beta is used only within `[0.3, 2.5]`; otherwise
-  peer betas are **unlevered, medianed and re-levered to the company's own capital
-  structure** (reference doc §1.1.2) — a raw peer median carried the peers' balance
-  sheets rather than the target's. Needs at least two peers with known leverage; without
-  that it falls back to the levered median, then to 1.0. The value used and its source
-  (`reported` / `peer_median_relevered` / `peer_median` / `default`) are shown in the DCF
-  audit row. The band catches implausible readings, not merely wrong ones — and
-  yfinance's betas are broken sector-wide for energy (SHEL −0.218, BP −0.212), which is
-  why the two-peer minimum exists.
+- **Beta is measured, not read.** It is regressed from **five years of weekly returns**
+  against the company's home index (`^HSI` for `.HK` listings, `^GSPC` otherwise) —
+  cov/var, cross-checked against numpy's covariance and a least-squares slope. The vendor's
+  own figure is kept beside it as a cross-check rather than as the input.
+
+  Below that the older ladder is unchanged: a reported beta within `[0.3, 2.5]`, else peer
+  betas **unlevered, medianed and re-levered to the company's own capital structure**
+  (reference doc §1.1.2), needing at least two peers with known leverage, else the levered
+  median, else 1.0. The value used and its source (`computed` / `reported` /
+  `peer_median_relevered` / `peer_median` / `default`) are shown in the DCF audit row.
+
+  This matters most where the vendor and the band disagreed. XOM's reported 0.173 failed the
+  band and only one of its four peers survived it, so it fell through to a neutral **1.0** —
+  and the regression puts it at **0.2888**. Correcting that alone moves XOM's fair value
+  **+103%**. Note what that implies: the vendor was directionally right and the `0.3` floor
+  was the problem, so the floor now clamps a *measured* value, which `TODOLIST.md` carries as
+  an open calibration question.
 - **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
   Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each
   with its published threshold. They stay out of the score because the composite already

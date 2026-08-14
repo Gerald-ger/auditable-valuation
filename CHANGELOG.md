@@ -7,6 +7,70 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-14 (c) — beta and relative strength are measured, not read
+
+Backend **373 → 389 passing** (16 network-deselected), frontend 46.
+
+### Changed
+
+- **Beta is regressed from price history instead of read from the vendor.** New
+  `backend/market_series.py` runs cov/var over five years of weekly returns against the
+  home index — `^HSI` for `.HK` tickers, `^GSPC` otherwise — cross-checked to 1e-9 against
+  numpy's covariance and a least-squares slope. It sits above the existing ladder; the peer
+  and reported tiers keep their old order, so a history outage restores exactly the previous
+  behaviour rather than a third one. The vendor figure stays on screen as a cross-check.
+
+  | | was | now | composite | fair value |
+  |---|---|---|---|---|
+  | XOM | 1.0 *(neutral default)* | **0.2888** → 0.30 | 70 → **74** | **+103%** |
+  | 0700.HK | 0.745 *(vendor)* | **1.3192** | 73 → **70** | −34% |
+  | AAPL | 1.086 | 1.1546 | 65 → 65 | −4.6% |
+  | MSFT | 1.099 | 1.1412 | 71 → 71 | −3.0% |
+
+  Two directions, and no tier moved. XOM's +103% is the size of an error that was already
+  there: a neutral 1.0 standing in for a company whose measured beta is 0.29.
+
+- **Relative strength is measured against the index the company actually trades on.**
+  `rel_52w_change` benchmarked every ticker to the S&P 500. Both legs are now computed from
+  weekly closes; 0700.HK reads −23.79% against the Hang Seng where the S&P gave −45.15%.
+  Falls back to the old vendor scalars when bars are unavailable, and flags it.
+
+- **`_ttl_cached` now keys on every argument, not just the ticker.** It was fine while every
+  cached method took nothing else. Caching `get_history` on the old key would have served
+  the chart's 1y hourly bars to the beta regression's 5y weekly request, or the reverse.
+
+### Added
+
+- `backend/tests/fixtures/bars/` — weekly closes for the seven fixtures plus both indices,
+  144 KB. `capture_fixtures.py` gained `--bars-only` / `--fundamentals-only`, because
+  regenerating the statements refetches live data and would move every pinned figure with it.
+
+### Fixed
+
+- **A UI message that became an accusation.** `ModelsTab` printed "(reported X, **not
+  credible**)" whenever beta came from anywhere but the vendor. Once a measured beta can
+  outrank a perfectly credible vendor one, "we had something better" and "your data is
+  untrustworthy" stop being the same statement. The backend now reports
+  `beta_reported_credible` and the UI says "vendor X", adding "not credible" only when the
+  band actually rejected it.
+- **`.src-tag.peer_median_relevered` had no style.** The class is the whole source string, so
+  `.peer_median` never matched it — that tag has rendered unstyled since the re-levering tier
+  was added. Pre-existing; fixed here because the same rule needed a `.computed` variant.
+
+### Corrected
+
+- **A stale figure I propagated.** Three documents stated 0700.HK's relative reading as
+  −31.9% (from −13.6% and +18.3%). Those were live figures from an earlier date; yesterday's
+  data-sources review copied them from `TODOLIST.md` without re-measuring. Computed from the
+  committed bars it is **−23.79%** against the Hang Seng, or −45.15% against the S&P.
+- **"yfinance's energy betas are broken" was wrong.** The regression says they were
+  directionally right — XOM's vendor 0.173, measured 0.2888 and peers at 0.488 / 0.123 all
+  agree the correlation is genuinely very low. What was broken is `BETA_MIN = 0.3`, which
+  rejected every one of those readings and substituted a number nobody measured. The floor
+  now binds on a *measured* value, which is logged as an open calibration question.
+
+---
+
 ## 2026-08-14 (b) — the equity risk premium is sourced, and the data layer is audited
 
 Backend **366 → 373 passing** (16 network-deselected), frontend 46.

@@ -83,22 +83,32 @@ days. Nothing to do now except use it.
 the price N months later, bucket by tier) and find out whether the anchor tables in
 `scoring.py` mean anything.
 
-### 🔵 The beta credibility band catches extremes, not merely wrong values
+### 🟡 The beta credibility band may be miscalibrated for decoupled sectors
 
-`resolve_beta` rejects a beta outside `[0.3, 2.5]`. That caught XOM's 0.173, but a
-plausible-looking 0.45 for an oil major would pass straight through. And because
-yfinance's energy betas are broken sector-wide (CVX 0.488, COP 0.123, SHEL −0.218,
-BP −0.212), peer substitution cannot rescue that sector either — XOM falls through
-to the neutral 1.0 default.
+*Superseded 2026-08-14: beta is now regressed from five years of weekly returns, so
+the vendor figure no longer decides anything. What is left is the band itself.*
 
-Peer betas are now unlevered and re-levered (2026-08-07), which fixes *which*
-capital structure the substitute carries but not the band problem: a wrong-but-
-plausible input still passes, and a sector-wide break still defeats the peer tier.
+This item used to say yfinance's energy betas were **broken**. The regression says
+otherwise. XOM's vendor 0.173, its measured **0.2888**, and its peers' 0.488 and
+0.123 all agree that an oil major's correlation to the S&P is genuinely very low —
+oil moves on its own drivers. The vendor was directionally right.
 
-**Options:** accept it (the audit row shows the beta and its source, and beta is
-inspectable); add a sector-median beta table as a third tier; or compute beta from
-price history directly, which is the only real fix and needs 2–5 years of weekly
-returns for the stock and its index.
+What was wrong was `BETA_MIN = 0.3`. It rejected every one of those readings and
+substituted a neutral 1.0 that nobody measured, and on XOM that alone was worth
+roughly **half the valuation**. The floor now binds on a *measured* value, pulling
+0.2888 up to 0.30 — a small distortion, but the clamp firing on a good measurement
+is the signal worth watching.
+
+**The deeper question is a modelling one, not a data one.** CAPM prices only
+systematic risk, so a genuinely uncorrelated business gets a low required return
+however volatile it is on its own terms. Whether that is the right answer for a
+commodity cyclical is a known criticism of CAPM, and it is not something a better
+beta fixes.
+
+**Trigger: a name whose measured beta sits below 0.3 and whose valuation looks
+implausible because of it.** Options then: lower the floor for computed betas
+(the band was written for an unverifiable input), or add a total-risk adjustment,
+or accept CAPM's answer and say so on screen.
 
 ### 🔵 Cross-sectional normalization needs a universe, not a `scoring.py` change
 
@@ -268,15 +278,6 @@ or let HK degrade to price-and-quote. The six-method `YFinanceProvider` interfac
 keeps the eventual swap bounded — worth keeping clean. Full reasoning in
 `docs/data-sources-review.md` §3.
 
-### 🔵 HK stocks are benchmarked against the S&P 500
-
-`rel_52w_change = 52WeekChange − SandP52WeekChange` treats every ticker as US.
-0700.HK (−13.6%) is scored against the S&P (+18.3%) for a −31.9% relative reading.
-[docs/scoring-system-design.md:89](docs/scoring-system-design.md#L89) specifies this
-formula and flags a sector-ETF-relative upgrade as future work.
-**Options:** keep as "relative to global equity", or benchmark HK names to `^HSI`
-(costs one extra fetch). Investment judgement, not correctness.
-
 ### 🔵 HK stocks still use the USD risk-free rate *(the ERP half was fixed 2026-08-14)*
 
 **The ERP leg is done.** `EQUITY_RISK_PREMIUM = 0.05` is replaced by Damodaran's published
@@ -360,6 +361,50 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-14 (c) — beta and relative strength are measured, not read
+
+Backend **373 → 389 passing**, frontend 46. Both defects had one root cause: the platform
+trusted vendor *scalars* where the honest answer needs a *series*.
+
+**Beta is regressed.** `market_series.beta` runs cov/var over five years of weekly returns
+against the home index (`^HSI` for `.HK`, `^GSPC` otherwise), cross-checked to 1e-9 against
+numpy's covariance and a least-squares slope. It sits above the existing ladder; everything
+below it keeps its old order, so a history outage restores exactly the previous behaviour.
+
+**Relative strength is measured against the index the company trades on.** Both legs come
+from closes. The obvious fix — read `^HSI`'s own `52WeekChange` — turned out to be a trap:
+measured live, `^GSPC` reports that field in **percent** (20.918) and `^HSI` in **decimal**
+(0.500), and the Hang Seng value matches neither its own history (−1.41%) nor any unit
+reading of it. Using it would have scored 0700.HK at ≈−63.7% instead of −23.79%.
+
+Measured on the committed fixtures:
+
+| | beta was | beta now | composite | note |
+|---|---|---|---|---|
+| XOM | 1.0 *(default)* | **0.2888** → 0.30 | 70 → **74** | fair value +103% |
+| 0700.HK | 0.745 *(vendor)* | **1.3192** | 73 → **70** | fair value −34% |
+| AAPL | 1.086 | 1.1546 | 65 → 65 | −4.6% fair value |
+| MSFT | 1.099 | 1.1412 | 71 → 71 | −3.0% fair value |
+
+Two directions again, and **no tier moved**. XOM's +103% is the size of the error that was
+already there: a neutral 1.0 standing in for a company whose measured beta is 0.29.
+
+New fixture type: `tests/fixtures/bars/`, weekly closes for the seven tickers plus both
+indices, 144 KB. `capture_fixtures.py` grew `--bars-only` / `--fundamentals-only`, because
+regenerating the statements refetches live data and moves every pinned figure with it.
+
+**Three things found while building it, all fixed here:**
+
+- `_ttl_cached` keyed only on ticker, ignoring other arguments. Caching `get_history` on
+  that key would have served the chart's 1y hourly bars to the 5y weekly beta request, or
+  the reverse. Now keyed on the full argument list.
+- `ModelsTab` printed "(reported X, **not credible**)" whenever beta came from anywhere but
+  the vendor. With a measured beta on top that became an accusation against perfectly good
+  data, so the backend now reports `beta_reported_credible` and the UI says "vendor X" and
+  only adds "not credible" when the band actually rejected it.
+- `.src-tag.peer_median_relevered` had no style at all — the class is the whole source
+  string, so `.peer_median` never matched it. Unstyled since the re-levering tier was added.
 
 ### ✅ 2026-08-14 (b) — the equity risk premium is sourced, and the data layer is audited
 

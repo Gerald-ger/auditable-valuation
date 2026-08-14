@@ -161,19 +161,38 @@ Free *does* cover, cleanly and with redistribution rights:
 
 ## 6. Two fixes that need no new source at all
 
-Both inputs are already being fetched. Neither is built yet; recorded here so they are not
-mistaken for data problems.
+Both inputs were already being fetched. **Both were built on 2026-08-14** — this section is
+kept because what it got wrong is more useful than what it got right.
 
-**Beta computed from price history.** `resolve_beta` ingests a vendor beta, checks it against
-a credibility band, and falls back to peers and then to 1.0. The band catches extremes but a
-plausible-looking wrong value passes straight through, and for energy the whole sector is
-wrong, so XOM ends up at a neutral 1.0. Computing beta from 2–5 years of weekly returns
-against the home index is the actual fix, and `get_history` already returns those bars.
+**Beta computed from price history — done.** `resolve_beta` ingested a vendor beta, checked
+it against a credibility band, and fell back to peers and then to 1.0; XOM ended up at that
+neutral 1.0. It now regresses five years of weekly returns against the home index, and the
+vendor's figure is retained beside it as a cross-check. XOM measures **0.2888**.
 
-**Home-market benchmark for momentum.** `rel_52w_change = 52WeekChange − SandP52WeekChange`
-treats every ticker as American. 0700.HK at −13.6% is scored against the S&P at +18.3% for a
-−31.9% relative reading that means nothing. `^HSI` is *already fetched* for the macro news
-feed, keyed on the same `.HK` suffix test.
+That number is the interesting part. This section assumed yfinance's energy betas were
+simply *broken*. An independent regression says they were **directionally right**: XOM's
+vendor 0.173, its computed 0.2888 and its peers' 0.488 / 0.123 all agree that an oil major's
+correlation to the S&P really is very low. What was broken was the credibility band —
+`BETA_MIN = 0.3` rejected every one of those readings and substituted a number nobody
+measured. The floor now binds on a *measured* value (0.2888 clamped to 0.30), which is a hint
+it is calibrated for equities in general rather than for a sector that genuinely decouples.
+
+**Home-market benchmark for momentum — done, but not the way this section proposed.** It
+suggested reading `^HSI`'s own `52WeekChange`, which one extra fetch would supply. Measured
+live 2026-08-14, that field is unusable: `^GSPC` reports it in **percent** (20.918) while
+`^HSI` reports it in **decimal** (0.500), and the Hang Seng value matches neither its own
+price history (−1.41%) nor any unit reading of it. Following this section's advice would have
+scored 0700.HK at roughly −63.7% relative — worse than the defect it was fixing.
+
+Both legs are therefore computed from weekly closes instead. On the committed bars 0700.HK
+is −24.23% against the Hang Seng's −0.43%, a relative **−23.79%**, where the S&P's +20.92%
+gave −45.15%. Note the per-stock scalar was no better than the index one: the fixture's
+`52WeekChange` for 0700.HK says −13.74% where its own closes say −24.23%.
+
+*(An earlier revision of this file quoted −13.6% / +18.3% / −31.9% for that comparison. Those
+were live figures from an earlier date, copied from `TODOLIST.md` without re-measuring — the
+same mistake this document warns about elsewhere. The figures above are computed from the
+committed fixtures and are reproducible.)*
 
 ---
 
