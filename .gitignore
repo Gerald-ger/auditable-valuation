@@ -5,3 +5,8 @@ frontend/dist/
 .pytest_cache/
 # local score history + watchlist — your data, never committed
 backend/data/
+.ruff_cache/
+# local Claude Code tooling, not part of the platform. settings.local.json was previously
+# protected only by a machine-global ignore, so any other clone would have staged it.
+**/.claude/settings.local.json
+.claude/agents/
