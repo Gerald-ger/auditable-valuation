@@ -88,7 +88,11 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
   perpetual growth *today's own traded multiple* already assumes, read against long-run
   nominal GDP. A **base-year panel** shows the company's own margin history, decomposes the
   newest year exactly into an operating and a capital leg, and gives the fair value on a
-  normalised base beside the reported-year headline without choosing between them.
+  normalised base beside the reported-year headline without choosing between them. An
+  **equity-bridge panel** prints the path from enterprise value to a share price term by
+  term — net debt, minority interest, preferred, and investment securities the cash-flow
+  forecast never counted — with associates shown at their carrying cost and deliberately
+  left out of the headline. On 0700.HK those terms are 28% of enterprise value.
   Every ratio carries a **0–100 quality bar** — the same score the Scorecard computes from
   its calibrated ranges for that company type, so "is 1.0 a good current ratio?" is
   answered in place rather than left to the reader. Metrics the sector profile drops show
@@ -148,12 +152,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 389 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 399 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 46 tests
 ```
 
-Of the 405 collected, 16 are `network`-marked and deselected by default.
+Of the 415 collected, 16 are `network`-marked and deselected by default.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus

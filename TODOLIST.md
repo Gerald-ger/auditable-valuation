@@ -207,18 +207,45 @@ overstating the required return on exactly this kind of business.
 **Trigger: before treating the mega-cap DCF gaps as settled.** Cheap to look at; direction
 unknown, which is why it is not listed as a defect.
 
-### 🔵 Tencent's investment portfolio is not in the valuation at all
+### 🟡 Associates are still carried at cost, and cost is not value
 
-Raised 2026-08-13, sized but not acted on. 0700.HK's balance sheet carries `Investments in
-Associates at Cost` 342bn, `Long Term Equity Investment` 349bn and `Investment in Financial
-Assets` 635bn against a 4,333bn market cap. A DCF of the operating business plus an equity
-bridge misses all of it, so the valuation is incomplete rather than wrong.
+*Mostly resolved 2026-08-14 (d) — see the Done entry. Both blockers this item recorded turned
+out to be measurable rather than intractable.*
 
-Not fixed because the line items **nest** (adding them naively double-counts) and are held
-**at cost** rather than fair value. Choosing which line to use and how to mark it are both
-assumptions, which is why this is not the "zero-assumption" fix it first appears to be.
+**The nesting is an exact identity, so the parent is safe.** On 0700.HK, both reported
+periods: `Long Term Equity Investment` 348,712 = `Investmentsin Associatesat Cost` 342,409 +
+`Investmentsin Joint Venturesat Cost` 6,303. Read the parent, never sum the children.
 
-**Trigger: a holdings-level source, or a decision to accept book value with that stated.**
+**"At cost" applied to only a third of the portfolio.** `Investmentin Financial Assets`
+635,426 = `Available For Sale Securities` 428,342 + `Financial Assets at FVTPL` 207,084 —
+and both of those are *already carried at fair value*. That 635bn is now in the bridge,
+because using it reads a filed mark rather than inventing one. It moves 0700.HK from −11.1%
+to **+3.6%** with no assumption entering the headline.
+
+**What is left is the associates leg only** — 348.7bn, +45.06/share on 0700.HK, shown beside
+the headline and excluded from it. Cost is neither a market value nor a floor: a long-held
+stake is usually worth more than it cost and an impaired one less, and the filing does not
+say which.
+
+**Trigger: a holdings-level source with marks**, or a decision to accept carrying cost with
+that stated on screen. Note the platform can already show the second answer — the panel
+prints it — so what a source would buy is the right to put it in the headline.
+
+### 🟡 `comps.ev_implied` still uses the one-term bridge
+
+Raised 2026-08-14 (d). `comps.py:222` bridges every peer-multiple implied value with
+`EV − net_debt` alone, which is what the DCF did until the same day. So the DCF bar on the
+football field now subtracts minority interest and adds marked securities while the peer
+bars beside it do not — on 0700.HK that is a 71-per-share difference in basis between bars
+the chart invites you to compare.
+
+Not fixed in the same change because it moves every peer bar on every company, which is a
+different blast radius from one headline, and the football field's verdicts and overlap zone
+all read off those bars.
+
+**Trigger: before the next football-field change.** The fix is mechanical — the bridge
+figure is already computed in `dcf_valuation`; the work is deciding whether comps should
+import it or recompute, and re-measuring every verdict.
 
 ### 🟡 Portfolio totals ignore FX
 
@@ -361,6 +388,55 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-14 (d) — the equity bridge carries four of its five terms
+
+Backend **389 → 399 passing**, frontend 46.
+
+`financial-models-reference.md:38` states the bridge as
+`EV − Net Debt − Minority Interest − Preferred + Non-operating Assets`. The model
+implemented **one** term — `dcf_valuation` never read the balance sheet at all — and said so
+nowhere: a grep of `frontend/src/` for `totalDebt`, `balance_sheet`, `minority`, `associate`
+or `invest` returned **zero hits**, and none of the 27 caveat strings the UI already shows
+mentioned it. The omission was deliberate (`comps.py:545`) and completely silent.
+
+Three terms are now read from the newest balance sheet; the fourth is reported and excluded.
+
+| | now | was | of which MI | of which marked securities |
+|---|---|---|---|---|
+| 0700.HK | 498.67 (**+3.6%**) | 427.75 (−11.1%) | −11.23 | +82.11 |
+| AAPL | 140.00 (−55.0%) | 134.67 (−56.7%) | 0 | +5.33 |
+| MSFT | 269.64 (−44.7%) | (−45.7%) | 0 | +4.89 |
+| XOM | 157.30 (+3.7%) | 158.98 (+4.8%) | −1.75 | +0.07 |
+| O | 36.00 (−42.6%) | (−42.8%) | −0.73 | +0.86 |
+
+Goldens: 0700.HK `dcf_upside_pct` 28 → 47 (composite 70 → **71**), XOM 57 → 55. Two
+directions, no tier moved. AAPL and MSFT moved in fair value but are anchor-clipped, so no
+score changed.
+
+**Both blockers this had been parked on turned out to be measurable.** The lines nest as an
+*exact identity* — 342,409 + 6,303 = 348,712 on both of 0700.HK's periods — so reading the
+parent avoids the double count entirely. And "held at cost" applied to only a third of the
+portfolio: `Investmentin Financial Assets` is exactly available-for-sale plus FVTPL, both
+already carried at fair value. Using them reads a filed mark rather than making one, which
+is why the verdict can flip with no assumption entering the headline. Associates stay out.
+
+**One figure, four subtraction sites.** `net_debt` was subtracted in four places — headline,
+WACC × terminal-growth grid, growth sweep, normalised base year. A bridge applied to some of
+them would print a sensitivity table whose centre cell disagreed with the fair value above
+it. Both grids now assert their centre cell *is* the headline; mutation-checked by reverting
+one site, which fails that test and nothing else.
+
+**No cross-year fallback.** The bridge uses `_value_at`, not `_latest`. MSFT is the live
+case: it reports `Long Term Equity Investment` at 2025-06-30 and nothing at 2026-06-30, and
+`_latest` would have imported a year-old balance into today's valuation — the period-drift
+defect this codebase has already fought twice. A vanished row reads nil and is *named*; a
+row never reported is silently nil, because flagging that would have warned on all seven
+fixtures and taught the reader to ignore warnings.
+
+Left open, both above: associates at cost, and `comps.ev_implied` still on the one-term
+bridge — a ~71/share basis difference on 0700.HK between the DCF bar and the peer bars
+beside it.
 
 ### ✅ 2026-08-14 (c) — beta and relative strength are measured, not read
 

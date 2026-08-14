@@ -7,6 +7,72 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-14 (d) — the equity bridge carries four of its five terms
+
+Backend **389 → 399 passing** (16 network-deselected), frontend 46.
+
+### Changed
+
+- **The EV→equity bridge implements the identity its own reference document states.**
+  `docs/financial-models-reference.md:38` specifies
+  `EV − Net Debt − Minority Interest − Preferred + Non-operating Assets`. The model
+  implemented one term; `dcf_valuation` never read the balance sheet. Three are now read
+  from the newest balance-sheet date, and the fourth is reported without being adopted.
+
+  | | now | was | minority interest | marked securities |
+  |---|---|---|---|---|
+  | **0700.HK** | **498.67 (+3.6%)** | 427.75 (−11.1%) | −11.23 | **+82.11** |
+  | AAPL | 140.00 (−55.0%) | 134.67 (−56.7%) | 0 | +5.33 |
+  | MSFT | 269.64 (−44.7%) | (−45.7%) | 0 | +4.89 |
+  | XOM | 157.30 (+3.7%) | 158.98 (+4.8%) | −1.75 | +0.07 |
+  | O | 36.00 (−42.6%) | (−42.8%) | −0.73 | +0.86 |
+
+  Tencent's verdict reverses **without any assumption entering the headline**, because the
+  635bn of securities is already carried at fair value in the filing. Two directions across
+  the set (Tencent up, XOM down), and no tier moved.
+
+- **Associates and joint ventures are shown and excluded.** 348.7bn, +45.06/share on
+  0700.HK, printed beside the headline as `fair_value_including_associates` and kept out of
+  it — the same treatment the normalised base year already gets. Cost is neither a market
+  value nor a floor, and the filing does not say which way it errs.
+
+### Added
+
+- **An equity-bridge panel on the Models tab.** Before this, a grep of `frontend/src/` for
+  `totalDebt`, `balance_sheet`, `minority`, `associate` or `invest` returned **zero hits** —
+  the reader could not see a single balance-sheet line anywhere in the product, and none of
+  the 27 existing caveat strings mentioned what the valuation leaves out. The panel prints
+  every term with its per-share effect and how it is carried. A company with nothing to
+  bridge gets one line saying so, rather than silence that reads as "nothing was checked".
+
+### Fixed
+
+- **A consistency trap in the making.** `net_debt` was subtracted at four separate places —
+  the headline, the WACC × terminal-growth grid, the growth sweep and the normalised base
+  year. A bridge applied to some of them would have printed a sensitivity table whose centre
+  cell disagreed with the fair value directly above it. Both grids now assert that their
+  centre cell *is* the headline; mutation-checked by reverting one site, which fails that
+  test and nothing else.
+
+- **No cross-year fallback in the new reads.** `_value_at`, not `_latest`. MSFT reports
+  `Long Term Equity Investment` at 2025-06-30 and nothing at 2026-06-30, so `_latest` would
+  have carried a year-old balance into today's valuation — the period-drift defect that
+  produced FY2025 EBIT over FY2023 interest once already. A vanished row reads nil and is
+  named; a row never reported is silently nil, because flagging that would warn on all seven
+  fixtures and train the reader to ignore warnings.
+
+### Not done, deliberately
+
+- **Associates are not marked.** Adding them at carrying cost would flip Tencent a second
+  time on a number the filing does not support.
+- **`comps.ev_implied` still uses the one-term bridge** (`comps.py:222`), so peer-multiple
+  bars and the DCF bar on the same football field now differ in basis by ~71/share on
+  0700.HK. Changing it moves every peer bar on every company and every verdict read off
+  them, which is a different blast radius; logged in `TODOLIST.md` with the next
+  football-field change as its trigger.
+
+---
+
 ## 2026-08-14 (c) — beta and relative strength are measured, not read
 
 Backend **373 → 389 passing** (16 network-deselected), frontend 46.
