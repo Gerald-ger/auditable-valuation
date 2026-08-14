@@ -1005,6 +1005,14 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "reporting_currency": info.get("financialCurrency"),
             "fx_basis": fx_basis,
             "fx_rate_used": round(conv, 6) if fx_mismatch and fx is not None else None,
+            # The price's own provenance. It is the denominator of the headline
+            # upside and was the only input on this screen carrying none, while
+            # beta, FCF, the premium and the FX rate all state theirs. Both
+            # figures come from the vendor rather than being assumed: measured on
+            # 0700.HK 2026-08-14, `exchangeDataDelayedBy` was 15 and
+            # `regularMarketTime` sat exactly 15.0 minutes behind the clock.
+            "price_as_of": info.get("regularMarketTime"),
+            "price_delayed_by_minutes": info.get("exchangeDataDelayedBy"),
         },
         "enterprise_value": round(ev * conv),
         "net_debt": net_debt * conv,

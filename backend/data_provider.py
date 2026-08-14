@@ -180,6 +180,81 @@ def fx_rate(from_ccy: str | None, to_ccy: str | None) -> float | None:
     return rate
 
 
+# ticker -> (monotonic fetch time, price, as_of epoch seconds)
+_PRICE_CACHE: dict[str, tuple[float, float, float | None]] = {}
+PRICE_TTL_S = 60
+
+# What the vendor states about its own latency, forwarded rather than assumed.
+# Measured on 0700.HK 2026-08-14: exchangeDataDelayedBy 15, quoteSourceName
+# "Delayed Quote", and regularMarketTime exactly 15.0 minutes behind the clock.
+DEFAULT_QUOTE_DELAY_MIN = 15
+
+
+def live_price(ticker: str) -> tuple[float, float | None] | None:
+    """(price, as_of epoch) fresher than the fundamentals cache, or None.
+
+    `get_fundamentals` is cached for 15 minutes because statements do not change
+    within a quarter, and the price rides along in the same payload. Stacked on
+    the vendor's own 15-minute delay that put the valuation screen up to **30
+    minutes** behind the market, while the Tracker — which calls the uncached
+    `get_quote` — was half that. Only the second 15 is ours to remove.
+
+    Cached for 60 seconds rather than not at all, which is the whole reason this
+    is separate from `get_quote`: a single page view fires several endpoints at
+    once (a Scorecard load hits `/score`, `/peers` and `/comps`), so an uncached
+    fetch would cost three or four quote calls to answer one question. 60s is far
+    inside the vendor's delay, so it costs no freshness that exists to be had.
+
+    `get_quote` stays uncached regardless — a live tracker must stay live.
+
+    Returns None on any failure, and the failure is deliberately not cached (same
+    rule as `risk_free_rate` and `fx_rate` above). Callers keep the snapshot
+    price: a quote outage should cost freshness, never the valuation.
+    """
+    now = time.monotonic()
+    hit = _PRICE_CACHE.get(ticker.upper())
+    if hit and now - hit[0] < PRICE_TTL_S:
+        return hit[1], hit[2]
+    try:
+        info = yf.Ticker(ticker).info or {}
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        price = float(price)
+    except Exception:
+        return None
+    if not (math.isfinite(price) and price > 0):
+        return None
+    as_of = info.get("regularMarketTime")
+    _PRICE_CACHE[ticker.upper()] = (now, price, as_of)
+    return price, as_of
+
+
+def with_fresh_price(f: dict) -> dict:
+    """`f` with its price refreshed, as a copy.
+
+    Copied rather than mutated because `get_fundamentals` output is TTL-cached
+    and shared between requests — its decorator's docstring requires callers to
+    treat it as read-only, and writing a price into the shared object would hand
+    a later request a payload whose price and statements came from different
+    fetches without anything saying so.
+
+    **Only the price moves. `marketCap` deliberately does not.** Market cap feeds
+    the WACC weights, so refreshing it would make fair value drift intraday with
+    no filing having changed — a valuation that will not reproduce minute to
+    minute. Leaving it also keeps every market-cap-derived multiple (P/E, P/B,
+    EV/EBITDA, `fcf_yield`) mutually consistent as of one snapshot rather than
+    half-refreshed. The cost is that recomputing P/E from the displayed price
+    gives a marginally different answer, which is why the age is labelled.
+    """
+    fresh = live_price(f["ticker"])
+    if fresh is None:
+        return f
+    price, as_of = fresh
+    info = {**f["info"], "currentPrice": price, "regularMarketPrice": price}
+    if as_of is not None:
+        info["regularMarketTime"] = as_of
+    return {**f, "info": info}
+
+
 class YFinanceProvider:
     def get_quote(self, ticker: str) -> dict:
         info = yf.Ticker(ticker).info or {}
@@ -414,6 +489,11 @@ class YFinanceProvider:
                 "longName", "sector", "industry", "currency", "financialCurrency",
                 "marketCap",
                 "currentPrice", "regularMarketPrice", "sharesOutstanding", "beta",
+                # What the vendor says about its own latency. Forwarded so the
+                # price can carry its age like every other model input carries
+                # its provenance — it is the denominator of the headline upside
+                # and was the only input on screen with no label at all.
+                "regularMarketTime", "exchangeDataDelayedBy",
                 "trailingPE", "forwardPE", "priceToBook", "enterpriseValue",
                 "enterpriseToEbitda", "enterpriseToRevenue", "pegRatio",
                 "dividendYield", "payoutRatio", "returnOnEquity", "returnOnAssets",

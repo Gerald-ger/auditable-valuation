@@ -7,10 +7,14 @@ live behaviour they encode was measured 2026-08-07 and is recorded in each test.
 from __future__ import annotations
 
 import asyncio
+import unittest.mock as mock
 
 import pytest
 
+from conftest import load_fundamentals
+
 import data_provider
+import financial_models as fm
 import main
 import search
 
@@ -265,3 +269,112 @@ def test_health_reports_whether_the_source_moved():
     body = asyncio.run(main.health())
     assert body["status"] == "ok"
     assert body["source_changed_since_start"] is False
+
+
+# ── price freshness ──────────────────────────────────────────────────
+#
+# The statements are cached for fifteen minutes because they change quarterly;
+# the price rode along in the same payload and does not have that luxury. Stacked
+# on the vendor's own fifteen-minute delay, the valuation screen ran up to half an
+# hour behind the market. Only our half is removable, and these pin how.
+
+def test_refreshing_the_price_does_not_touch_the_cached_payload():
+    """The one change here that could corrupt shared state. `get_fundamentals`
+    output is TTL-cached and handed to every request in the window, so writing a
+    price into it would give a later caller statements and a price from different
+    fetches with nothing saying so."""
+    original = load_fundamentals("AAPL")
+    snapshot = original["info"]["currentPrice"]
+
+    with mock.patch.object(data_provider, "live_price", lambda t: (snapshot * 2, 1234)):
+        out = data_provider.with_fresh_price(original)
+
+    assert out["info"]["currentPrice"] == snapshot * 2      # the copy moved
+    assert original["info"]["currentPrice"] == snapshot     # the original did not
+    assert out["info"] is not original["info"]              # and it is a real copy
+
+
+def test_a_quote_outage_keeps_the_snapshot_price():
+    """Freshness is worth a network call; a valuation is not worth losing to one.
+    Same rule as `risk_free_rate` and `fx_rate` — degrade the number, never the
+    endpoint."""
+    f = load_fundamentals("AAPL")
+    with mock.patch.object(data_provider, "live_price", lambda t: None):
+        out = data_provider.with_fresh_price(f)
+    assert out is f
+
+
+def test_a_fresher_price_moves_the_upside_but_never_the_fair_value():
+    """Pins the market-cap decision. Only the price is refreshed, deliberately:
+    market cap feeds the WACC weights, so refreshing it too would make fair value
+    drift intraday with no filing having changed — a valuation that will not
+    reproduce minute to minute."""
+    low, high = load_fundamentals("AAPL"), load_fundamentals("AAPL")
+    low["info"]["currentPrice"] = 100.0
+    high["info"]["currentPrice"] = 200.0
+
+    a, b = fm.dcf_valuation(low), fm.dcf_valuation(high)
+    assert a["fair_value_per_share"] == b["fair_value_per_share"]
+    assert a["upside_pct"] != b["upside_pct"]
+    assert a["assumptions"]["wacc"] == b["assumptions"]["wacc"]
+
+
+def test_the_price_carries_its_own_provenance():
+    """It is the denominator of the headline upside and was the only input on the
+    screen with no label. Both figures are the vendor's, not estimates."""
+    f = load_fundamentals("AAPL")
+    f["info"]["regularMarketTime"] = 1_755_000_000
+    f["info"]["exchangeDataDelayedBy"] = 15
+
+    a = fm.dcf_valuation(f)["assumptions"]
+    assert a["price_as_of"] == 1_755_000_000
+    assert a["price_delayed_by_minutes"] == 15
+
+
+def test_the_price_cache_holds_for_its_window_and_does_not_cache_failures():
+    """60 seconds, not uncached: one page view fires several endpoints at once, so
+    an uncached fetch would cost three or four quote calls to answer one question.
+    A failure must not pin the ticker for that window."""
+    data_provider._PRICE_CACHE.clear()
+    calls = []
+
+    class Stub:
+        def __init__(self, ticker):
+            calls.append(ticker)
+
+        @property
+        def info(self):
+            return {"currentPrice": 123.0, "regularMarketTime": 99}
+
+    with mock.patch.object(data_provider.yf, "Ticker", Stub):
+        assert data_provider.live_price("AAPL") == (123.0, 99)
+        assert data_provider.live_price("AAPL") == (123.0, 99)
+    assert len(calls) == 1, "second call inside the window must be served from cache"
+
+    data_provider._PRICE_CACHE.clear()
+    failures = []
+
+    class Boom:
+        def __init__(self, ticker):
+            failures.append(ticker)
+
+        @property
+        def info(self):
+            raise RuntimeError("quote feed down")
+
+    with mock.patch.object(data_provider.yf, "Ticker", Boom):
+        assert data_provider.live_price("AAPL") is None
+        assert data_provider.live_price("AAPL") is None
+    assert len(failures) == 2, "a failure must not be cached"
+
+
+def test_the_batch_screener_keeps_the_snapshot_price():
+    """A fifteen-minute-old quote cannot reorder a ranking, and a fetch per ticker
+    would roughly double the network work of a fifty-name run."""
+    with mock.patch.object(main.provider, "get_fundamentals",
+                           lambda t: load_fundamentals("AAPL")) as _, \
+         mock.patch.object(main, "with_fresh_price") as refresh:
+        main._fundamentals("AAPL", fresh_price=False)
+        refresh.assert_not_called()
+        main._fundamentals("AAPL")
+        refresh.assert_called_once()

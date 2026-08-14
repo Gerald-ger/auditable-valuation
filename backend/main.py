@@ -29,7 +29,7 @@ import scoring
 import search
 import sector_weights
 import store
-from data_provider import home_index, provider
+from data_provider import home_index, provider, with_fresh_price
 
 # yfinance is IO-bound but throttles bursts, so batch work fans out narrowly
 # rather than one thread per ticker.
@@ -86,6 +86,22 @@ def _peer_beta_inputs(f: dict) -> list[dict] | None:
     if beta is not None and financial_models.BETA_MIN <= beta <= financial_models.BETA_MAX:
         return None
     return comps.peer_beta_inputs(f["ticker"])
+
+
+def _fundamentals(ticker: str, fresh_price: bool = True) -> dict:
+    """Fundamentals, with the price brought up to date by default.
+
+    The statements are TTL-cached for fifteen minutes because they only change
+    quarterly. The price rides in the same payload and does not have that luxury,
+    and stacked on the vendor's own fifteen-minute delay it left the valuation
+    screen up to half an hour behind the market.
+
+    `fresh_price=False` is for the batch screener, which ranks up to fifty
+    companies: a stale quote cannot reorder a ranking, and a fetch per ticker
+    would roughly double that run's network work.
+    """
+    f = provider.get_fundamentals(ticker)
+    return with_fresh_price(f) if fresh_price else f
 
 
 def _market_bars(ticker: str) -> tuple[list[dict], list[dict]] | None:
@@ -288,7 +304,7 @@ def events(ticker: str):
 
 @app.get("/api/stock/{ticker}/analysis")
 def analysis(ticker: str):
-    f = _guard(provider.get_fundamentals, ticker)
+    f = _guard(_fundamentals, ticker)
     return _guard(financial_models.full_analysis, f, peers=_peer_beta_inputs(f),
                   market_bars=_market_bars(ticker))
 
@@ -307,7 +323,7 @@ class DcfAssumptions(BaseModel):
 
 @app.post("/api/stock/{ticker}/dcf")
 def custom_dcf(ticker: str, assumptions: DcfAssumptions):
-    f = _guard(provider.get_fundamentals, ticker)
+    f = _guard(_fundamentals, ticker)
     return financial_models.dcf_valuation(
         f,
         growth_rate=assumptions.growth_rate,
@@ -329,7 +345,7 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
     """peer_list: comma-separated tickers; empty uses suggestions."""
     tickers = [p.strip().upper() for p in peer_list.split(",") if p.strip()] \
         or comps.suggest_peers(ticker)
-    f = _guard(provider.get_fundamentals, ticker)
+    f = _guard(_fundamentals, ticker)
     result = comps.comps_analysis(f, tickers)
     peer_betas = _peer_beta_inputs(f)
     bars = _market_bars(ticker)
@@ -383,13 +399,13 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
 
 # ── scoring ──────────────────────────────────────────────────────────
 
-def _score_and_record(ticker: str) -> dict:
+def _score_and_record(ticker: str, fresh_price: bool = True) -> dict:
     """Score a ticker and persist the result. Every score becomes an observation.
 
     The recorded price is what makes the scoring engine falsifiable later — see
     store.record_score.
     """
-    f = provider.get_fundamentals(ticker)
+    f = _fundamentals(ticker, fresh_price)
     # resolve the DCF here so the valuation pillar sees the same peer-corrected
     # beta the Financial Models tab shows; score_company would otherwise compute
     # its own with the raw reported beta
@@ -512,7 +528,10 @@ def score_batch(req: BatchRequest):
 
 def _safe_score(ticker: str):
     try:
-        return _screener_row(_score_and_record(ticker))
+        # Snapshot price on purpose: a 15-minute-old quote cannot change a
+        # *ranking*, and a quote fetch per ticker would roughly double the
+        # network work of a fifty-name run.
+        return _screener_row(_score_and_record(ticker, fresh_price=False))
     except Exception as e:  # one bad ticker must not fail the whole batch
         return e
 

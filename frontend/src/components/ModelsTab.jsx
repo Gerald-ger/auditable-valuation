@@ -1,6 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { get, post } from '../api';
 import { num, big, pct, scoreColor } from '../format';
+import { DISPLAY_TZ_LABEL, DISPLAY_TZ_OFFSET_S } from '../charttime';
+
+/**
+ * Epoch seconds as a wall clock in the app's display timezone.
+ *
+ * Reuses the chart's GMT+8 offset rather than the browser's locale, for the
+ * reason `charttime.js` gives: one timeline for both markets, so a Hong Kong
+ * reader sees HK times read naturally. A quote stamp shown in a different zone
+ * from the chart directly above it would be worse than showing no stamp.
+ */
+function priceClock(epochSeconds) {
+  if (typeof epochSeconds !== 'number') return null;
+  return new Date((epochSeconds + DISPLAY_TZ_OFFSET_S) * 1000)
+    .toISOString()
+    .slice(11, 16);
+}
 
 /**
  * A ratio row can carry a third element: the scoring-engine metric key.
@@ -217,6 +233,21 @@ function DcfAudit({ dcf }) {
             <span className="muted-note">
               {' '}· statements in <b>{a.reporting_currency}</b>, converted to{' '}
               <b>{a.currency}</b> at {num(a.fx_rate_used, 4)}
+            </span>
+          )}
+          {/* The price is the denominator of the upside above and was the only
+              input here carrying no provenance. The delay is the vendor's own
+              figure, not an estimate — a free feed is 15 minutes behind the
+              exchange and says so. Market-cap multiples are not refreshed with
+              it, so the note says which figures moved and which did not. */}
+          {(a.price_as_of || a.price_delayed_by_minutes) && (
+            <span className="muted-note">
+              {' '}· price{' '}
+              {a.price_as_of && <>as of <b>{priceClock(a.price_as_of)}</b> {DISPLAY_TZ_LABEL}</>}
+              {a.price_delayed_by_minutes
+                ? `, feed delayed ${a.price_delayed_by_minutes} min`
+                : ''}
+              {' '}(multiples below are as of {a.fcf_period})
             </span>
           )}
         </span>
