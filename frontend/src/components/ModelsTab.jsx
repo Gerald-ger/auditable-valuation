@@ -162,8 +162,16 @@ function DcfAudit({ dcf }) {
         <span>
           beta <b>{num(a.beta, 2)}</b>
           <span className={`src-tag ${a.beta_source}`}>{a.beta_source.replace('_', ' ')}</span>
-          {a.beta_source !== 'reported' && a.beta_reported !== null && (
-            <span className="muted-note"> (reported {num(a.beta_reported, 2)}, not credible)</span>
+          {/* Two different statements that used to share one sentence. Before a
+              measured beta existed, not using the vendor's figure always meant
+              it had failed the credibility band. Now it usually means we simply
+              had a better source, and calling a perfectly ordinary vendor beta
+              "not credible" would be an accusation the data does not support. */}
+          {a.beta_source !== 'reported' && a.beta_reported != null && (
+            <span className="muted-note">
+              {' '}(vendor {num(a.beta_reported, 2)}
+              {a.beta_reported_credible === false && ', not credible'})
+            </span>
           )}
           {' · '}WACC <b>{pct(a.wacc_used)}</b>
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>

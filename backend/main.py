@@ -27,12 +27,18 @@ import scoring
 import search
 import sector_weights
 import store
-from data_provider import provider
+from data_provider import home_index, provider
 
 # yfinance is IO-bound but throttles bursts, so batch work fans out narrowly
 # rather than one thread per ticker.
 BATCH_WORKERS = 4
 MAX_BATCH_TICKERS = 50
+
+# The window behind the computed beta and relative strength. Weekly rather than
+# daily is the conventional beta sampling, and five years is the upper end of
+# the conventional two-to-five — long enough that one unusual quarter cannot set
+# the slope, short enough that the company is still recognisably itself.
+BETA_PERIOD, BETA_INTERVAL = "5y", "1wk"
 
 
 @asynccontextmanager
@@ -80,6 +86,27 @@ def _peer_beta_inputs(f: dict) -> list[dict] | None:
     return comps.peer_beta_inputs(f["ticker"])
 
 
+def _market_bars(ticker: str) -> tuple[list[dict], list[dict]] | None:
+    """(company weekly closes, home-index weekly closes) for the beta regression
+    and the relative-strength metric, or None if either leg is unavailable.
+
+    Best-effort by design. These feed a beta that has three fallbacks below it
+    and a momentum metric that falls back to the vendor scalars, so a history
+    outage should degrade both rather than 502 a whole scorecard — the same rule
+    the peer fetch above already follows.
+
+    Both legs are TTL-cached in the provider, so a screening run pays for each
+    index once rather than once per company.
+    """
+    try:
+        bars = provider.get_history(ticker, BETA_PERIOD, BETA_INTERVAL)
+        index_bars = provider.get_history(home_index(ticker),
+                                          BETA_PERIOD, BETA_INTERVAL)
+    except Exception:
+        return None
+    return (bars, index_bars) if bars and index_bars else None
+
+
 def _ndjson(events: AsyncIterator[dict]) -> StreamingResponse:
     """Serialize an async event stream as newline-delimited JSON.
 
@@ -101,7 +128,8 @@ def _ndjson(events: AsyncIterator[dict]) -> StreamingResponse:
 async def _analysis_with_beta(f: dict) -> dict:
     """full_analysis off the event loop — _peer_beta_inputs can hit the network."""
     return await asyncio.to_thread(
-        lambda: financial_models.full_analysis(f, peers=_peer_beta_inputs(f)))
+        lambda: financial_models.full_analysis(
+            f, peers=_peer_beta_inputs(f), market_bars=_market_bars(f["ticker"])))
 
 
 async def _text_stream(messages: list[dict], context: str) -> AsyncIterator[dict]:
@@ -223,7 +251,8 @@ def events(ticker: str):
 @app.get("/api/stock/{ticker}/analysis")
 def analysis(ticker: str):
     f = _guard(provider.get_fundamentals, ticker)
-    return _guard(financial_models.full_analysis, f, peers=_peer_beta_inputs(f))
+    return _guard(financial_models.full_analysis, f, peers=_peer_beta_inputs(f),
+                  market_bars=_market_bars(ticker))
 
 
 class DcfAssumptions(BaseModel):
@@ -248,6 +277,7 @@ def custom_dcf(ticker: str, assumptions: DcfAssumptions):
         wacc_override=assumptions.wacc_override,
         tax_rate=assumptions.tax_rate,
         peers=_peer_beta_inputs(f),
+        market_bars=_market_bars(ticker),
     )
 
 
@@ -264,7 +294,8 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
     f = _guard(provider.get_fundamentals, ticker)
     result = comps.comps_analysis(f, tickers)
     peer_betas = _peer_beta_inputs(f)
-    dcf = financial_models.dcf_valuation(f, peers=peer_betas)
+    bars = _market_bars(ticker)
+    dcf = financial_models.dcf_valuation(f, peers=peer_betas, market_bars=bars)
     # The football field refuses to draw a DCF bar for a company type the model
     # does not fit, so the classification has to be resolved here — the same
     # statement-verified FCF the scorer uses, for the same reason (see
@@ -324,8 +355,9 @@ def _score_and_record(ticker: str) -> dict:
     # resolve the DCF here so the valuation pillar sees the same peer-corrected
     # beta the Financial Models tab shows; score_company would otherwise compute
     # its own with the raw reported beta
-    dcf = financial_models.dcf_valuation(f, peers=_peer_beta_inputs(f))
-    card = scoring.score_company(f, dcf=dcf)
+    bars = _market_bars(f["ticker"])
+    dcf = financial_models.dcf_valuation(f, peers=_peer_beta_inputs(f), market_bars=bars)
+    card = scoring.score_company(f, dcf=dcf, market_bars=bars)
     # attached to the card, deliberately outside score_company: these are
     # reported beside the composite, never folded into it (see forensics.py)
     card["forensics"] = forensics.forensic_checks(f, card["classification"])

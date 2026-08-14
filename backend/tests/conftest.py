@@ -27,6 +27,31 @@ def load_fundamentals(stem: str) -> dict:
     return json.loads(FIXTURES[stem].read_text(encoding="utf-8"))
 
 
+BARS_DIR = FIXTURE_DIR / "bars"
+
+# Which index each fixture's relative strength and beta are measured against.
+# Mirrors data_provider.home_index rather than importing it, so a change to that
+# rule has to be made deliberately here too — these fixtures were captured
+# against a specific index and silently re-pointing them would compare a
+# company's returns to an index its stored bars were never aligned with.
+HOME_INDEX = {"0700_HK": "_HSI"}
+
+
+def load_bars(stem: str) -> list[dict]:
+    """Weekly closes for one fixture, oldest first."""
+    return json.loads((BARS_DIR / f"{stem}.json").read_text(encoding="utf-8"))
+
+
+def load_market_bars(stem: str) -> tuple[list[dict], list[dict]]:
+    """(company bars, home-index bars) shaped for `market_bars=`.
+
+    Injected the same way peers are, and for the same reason: `dcf_valuation`
+    and `score_company` are pure functions of their arguments, so the tests hand
+    them a series instead of letting anything reach for the network.
+    """
+    return load_bars(stem), load_bars(HOME_INDEX.get(stem, "_GSPC"))
+
+
 @pytest.fixture(autouse=True)
 def pinned_risk_free_rate(monkeypatch):
     """Pin the CAPM risk-free rate for every test.

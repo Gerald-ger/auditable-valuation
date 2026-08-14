@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import financial_models as fm
+import market_series
 import sector_weights
 
 # Anchor tables: ascending x, linear interpolation, clipped at the ends.
@@ -84,7 +85,9 @@ def _clamp(v, lo, hi):
     return None if v is None else max(lo, min(hi, v))
 
 
-def extract_metrics(f: dict) -> tuple[dict, list[str]]:
+def extract_metrics(f: dict,
+                    market_bars: tuple[list[dict], list[dict]] | None = None
+                    ) -> tuple[dict, list[str]]:
     """Raw metric values from the fundamentals dict. None = unreported;
     bad values (negative earnings/FCF) are computed, not skipped."""
     info = f["info"]
@@ -265,8 +268,36 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
                                   if price and two_hundred else None, -1, 3)
     lo, hi = info.get("fiftyTwoWeekLow"), info.get("fiftyTwoWeekHigh")
     m["range_52w_pos"] = (price - lo) / (hi - lo) if price and lo and hi and hi > lo else None
-    w52, sp52 = info.get("52WeekChange"), info.get("SandP52WeekChange")
-    m["rel_52w_change"] = _clamp(w52 - sp52 if w52 is not None and sp52 is not None else None, -3, 3)
+    # Relative strength against the index the company actually trades on,
+    # measured from closes rather than read from the vendor's scalars.
+    #
+    # Two separate reasons, both measured 2026-08-14. The benchmark was wrong:
+    # `SandP52WeekChange` is the S&P for every ticker, so 0700.HK was scored
+    # against an index it does not trade on. And the obvious fix — read
+    # `52WeekChange` off `^HSI` — is not available, because that field is
+    # unusable: `^GSPC` reports it in percent (20.918) while `^HSI` reports it
+    # in decimal (0.500), and the HSI value matches neither its own price
+    # history (-1.41%) nor any unit reading of it. Trusting it would have
+    # scored Tencent at -63.7% relative instead of -23.8%, making the defect
+    # worse. The per-stock scalar is no better: 0700.HK's own `52WeekChange`
+    # says -13.7% where its closes say -24.2%.
+    #
+    # Falls back to the old pair when no bars are supplied, so a history outage
+    # degrades this metric rather than dropping the momentum pillar below its
+    # availability threshold.
+    stock_bars, index_bars = market_bars or (None, None)
+    rel = None
+    if stock_bars and index_bars:
+        own = market_series.change_over(stock_bars)
+        bench = market_series.change_over(index_bars)
+        if own is not None and bench is not None:
+            rel = own - bench
+    if rel is None:
+        w52, sp52 = info.get("52WeekChange"), info.get("SandP52WeekChange")
+        rel = w52 - sp52 if w52 is not None and sp52 is not None else None
+        if rel is not None:
+            flags.append("rel_52w_change_from_vendor_scalars")
+    m["rel_52w_change"] = _clamp(rel, -3, 3)
     n_analysts = info.get("numberOfAnalystOpinions") or 0
     tgt = info.get("targetMeanPrice")
     m["analyst_upside"] = _clamp(tgt / price - 1 if tgt and price and n_analysts >= 4 else None, -1, 3)
@@ -274,7 +305,8 @@ def extract_metrics(f: dict) -> tuple[dict, list[str]]:
     return m, flags
 
 
-def score_company(f: dict, dcf: dict | None = None) -> dict:
+def score_company(f: dict, dcf: dict | None = None,
+                  market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
     info = f["info"]
     # The profile decides which metrics are scored and how they are weighted, so
     # the classifier must not read info["freeCashflow"] — see classify's docstring.
@@ -282,12 +314,16 @@ def score_company(f: dict, dcf: dict | None = None) -> dict:
     classification = sector_weights.classify(
         info, statement_fcf[1] if statement_fcf else None)
     profile = sector_weights.get_profile(classification)
-    raw, flags = extract_metrics(f)
+    raw, flags = extract_metrics(f, market_bars)
 
     active = [x for lst in profile["metrics"].values() for x in lst]
     # DCF upside only where the model is applicable (profile includes it)
     if "dcf_upside_pct" in active:
-        dcf = dcf if dcf is not None else fm.dcf_valuation(f)
+        # The bars go into this fallback too. Callers that already ran the DCF
+        # pass it in (main.py does, with the same series), but a caller relying
+        # on this branch would otherwise score a valuation built on a *different*
+        # beta from the one the Models tab shows for the same company.
+        dcf = dcf if dcf is not None else fm.dcf_valuation(f, market_bars=market_bars)
         raw["dcf_upside_pct"] = None if dcf.get("error") else dcf.get("upside_pct")
     if "ffo_yield" in active and raw.get("ffo_yield") is not None:
         flags.append("ffo_yield_is_proxy")

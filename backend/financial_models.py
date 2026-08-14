@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from statistics import median
 
+import market_series
 from data_provider import fx_rate, risk_free_rate
 
 # Assumption defaults (user-overridable via the API)
@@ -380,11 +381,30 @@ def _debt_to_equity(debt, market_cap, fx: float | None = 1.0) -> float | None:
 
 
 def resolve_beta(info: dict, peers: list[dict] | None = None,
-                 tax_rate: float = DEFAULT_TAX_RATE) -> tuple[float, str]:
-    """(beta, source). Reported beta wins when it is credible; peers break the tie.
+                 tax_rate: float = DEFAULT_TAX_RATE,
+                 bars: list[dict] | None = None,
+                 index_bars: list[dict] | None = None) -> tuple[float, str]:
+    """(beta, source). A measured beta wins; the vendor's is the cross-check.
 
-    `peers` is injected by the caller — this function never fetches. Each entry
-    is a peer snapshot: `beta`, `market_cap`, `total_debt`.
+    `peers`, `bars` and `index_bars` are injected by the caller — this function
+    never fetches. Each peer entry is a snapshot: `beta`, `market_cap`,
+    `total_debt`. The bars are weekly closes for the company and for its home
+    index, and when there are enough of them the beta is *regressed* rather than
+    read: cov(stock, index) / var(index) over the overlapping weeks.
+
+    Why regression sits above the reported figure rather than beside it. The
+    vendor's beta is a number computed by an undisclosed method against an
+    undisclosed index, and its errors are not random — measured 2026-08-06 the
+    whole energy sector was implausible at once (XOM 0.173, CVX 0.488, COP
+    0.123, SHEL -0.218, BP -0.212). A credibility band catches the extremes but
+    passes anything merely wrong, and a sector-wide break defeats peer
+    substitution too, which is how XOM ended up at a neutral 1.0 — the least
+    informative answer available, applied to the company with the most
+    distinctive risk profile in the fixture set.
+
+    Everything below the computed tier is unchanged, deliberately: when there is
+    no series to regress, a credible beta for *this company* is still better
+    evidence than a median of its peers, so the existing ladder keeps its order.
 
     When a peer's leverage is known, its beta is **unlevered before the median
     and re-levered to the target's own capital structure** (reference doc
@@ -405,6 +425,19 @@ def resolve_beta(info: dict, peers: list[dict] | None = None,
     inside the same credibility band applied to a reported beta, so a heavily
     levered target cannot re-lever its way to an absurd number.
     """
+    if bars and index_bars:
+        computed, _observations = market_series.beta(bars, index_bars)
+        if computed is not None:
+            # The band still applies. It was written for a figure that could not
+            # be checked, and a regression over 100+ weeks largely can be — but
+            # a thin or halted series can still produce nonsense, and clamping
+            # costs nothing when the measurement is sound. Worth watching that
+            # it does not silently become load-bearing: on the committed
+            # fixtures it already binds once, pulling XOM's measured 0.289 up to
+            # 0.30, which is a hint the floor is calibrated for equities in
+            # general rather than for a sector that genuinely decouples.
+            return round(min(max(computed, BETA_MIN), BETA_MAX), 4), "computed"
+
     raw = info.get("beta")
     if raw is not None and BETA_MIN <= raw <= BETA_MAX:
         return raw, "reported"
@@ -512,9 +545,14 @@ def ratio_analysis(f: dict) -> dict:
     }
 
 
-def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
+def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
+          market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
     info = f["info"]
-    beta, beta_source = resolve_beta(info, peers, tax_rate)
+    # (company weekly closes, home-index weekly closes) — one parameter because
+    # the two are useless apart, and threading two through five call sites that
+    # only pass them along would be noise.
+    bars, index_bars = market_bars or (None, None)
+    beta, beta_source = resolve_beta(info, peers, tax_rate, bars, index_bars)
     # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy.
     # Known to be the weaker half of this pair — 0700.HK reports CNY, which is
     # not pegged, so its cash flows and its discount rate are in different
@@ -544,6 +582,13 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None) -> dict:
         "beta": beta,
         "beta_source": beta_source,
         "beta_reported": info.get("beta"),
+        # Whether the vendor's own figure would have passed the band. Decided
+        # here rather than in the UI so the credibility rule lives in one place:
+        # once a computed beta can outrank a perfectly credible reported one,
+        # "we did not use it" and "it was not believable" stop being the same
+        # statement, and only the backend knows which applies.
+        "beta_reported_credible": (None if info.get("beta") is None
+                                   else BETA_MIN <= info["beta"] <= BETA_MAX),
         "equity_risk_premium": round(erp, 4),
         "equity_risk_premium_source": erp_source,
         "equity_risk_premium_market": erp_market,
@@ -569,7 +614,8 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
                   terminal_growth: float | None = None,
                   wacc_override: float | None = None,
                   tax_rate: float | None = None,
-                  peers: list[dict] | None = None) -> dict:
+                  peers: list[dict] | None = None,
+                  market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
     info = f["info"]
     if tax_rate is None:
         tax_rate = tax_rate_for(info)
@@ -619,7 +665,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
         # what the primary source published, kept so a rejection is visible
         growth_rate_published = fwd if fwd is not None else trailing
 
-    wacc_parts = _wacc(f, tax_rate, peers)
+    wacc_parts = _wacc(f, tax_rate, peers, market_bars)
     wacc = wacc_override if wacc_override is not None else wacc_parts["wacc"]
 
     # Terminal growth: the platform's policy, or exactly what the caller asked
@@ -1131,7 +1177,9 @@ def base_year_context(f: dict, period: str | None) -> dict:
 
 def solve_for_fair_value(f: dict, target_value: float, param: str,
                          lo: float, hi: float, peers: list[dict] | None = None,
-                         rising: bool = True) -> float | None:
+                         rising: bool = True,
+                         market_bars: tuple[list[dict], list[dict]] | None = None
+                         ) -> float | None:
     """The value of `param` at which the DCF's fair value equals `target_value`.
 
     Fair value is monotone in each of the three assumptions the model exposes —
@@ -1143,7 +1191,7 @@ def solve_for_fair_value(f: dict, target_value: float, param: str,
     there" is exactly what makes a gap irreconcilable rather than merely large.
     """
     def fair_value(x: float):
-        out = dcf_valuation(f, peers=peers, **{param: x})
+        out = dcf_valuation(f, peers=peers, market_bars=market_bars, **{param: x})
         return None if out.get("error") else out.get("fair_value_per_share")
 
     f_lo, f_hi = fair_value(lo), fair_value(hi)
@@ -1296,13 +1344,14 @@ def revenue_trend(f: dict) -> list[dict]:
             for p, v in _series(f["income_statement"], "Total Revenue")]
 
 
-def full_analysis(f: dict, peers: list[dict] | None = None) -> dict:
+def full_analysis(f: dict, peers: list[dict] | None = None,
+                  market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
     return {
         "ticker": f["ticker"],
         "company": {k: f["info"].get(k) for k in
                     ["longName", "sector", "industry", "currency", "marketCap",
                      "targetMeanPrice", "recommendationKey", "numberOfAnalystOpinions"]},
         "ratios": ratio_analysis(f),
-        "dcf": dcf_valuation(f, peers=peers),
+        "dcf": dcf_valuation(f, peers=peers, market_bars=market_bars),
         "revenue_trend": revenue_trend(f),
     }

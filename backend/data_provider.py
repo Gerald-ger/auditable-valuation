@@ -22,20 +22,25 @@ import yfinance as yf
 # get_quote is deliberately NOT cached — a live tracker must stay live.
 CACHE_TTL_S = 900  # 15 minutes
 
-_cache: dict[tuple[str, str], tuple[float, object]] = {}
+_cache: dict[tuple, tuple[float, object]] = {}
 _cache_lock = Lock()
 
 
 def _ttl_cached(fn):
-    """Cache a provider method keyed on its ticker argument.
+    """Cache a provider method keyed on its ticker *and its other arguments*.
 
     Callers must treat the returned structure as read-only — it is shared
     between requests for the TTL window. Nothing in the app mutates provider
     output today; keep it that way rather than paying for a deep copy per hit.
+
+    The key used to be the ticker alone, which was fine while every cached
+    method took nothing else. `get_history` takes `period` and `interval`, so on
+    the old key a 5y weekly series and the chart's 1y hourly one would collide
+    and whichever landed first would be served to both.
     """
     @wraps(fn)
     def wrapper(self, ticker: str, *args, **kwargs):
-        key = (fn.__name__, ticker.upper())
+        key = (fn.__name__, ticker.upper(), args, tuple(sorted(kwargs.items())))
         now = time.monotonic()
         with _cache_lock:
             hit = _cache.get(key)
@@ -47,6 +52,20 @@ def _ttl_cached(fn):
         return value
 
     return wrapper
+
+
+def home_index(ticker: str) -> str:
+    """The index a ticker's relative performance should be read against.
+
+    One definition, three consumers: the macro news feed, the beta regression
+    and the momentum pillar's relative strength. It was inlined in `get_news`
+    while it had a single caller; a second copy would be the kind of drift that
+    lets news say Hang Seng while scoring says S&P 500 for the same company.
+
+    Suffix-based, like the EDGAR skip below, and it inherits the same limit —
+    a US-listed ADR of a Chinese company still reads as `^GSPC`.
+    """
+    return "^HSI" if ticker.upper().endswith(".HK") else "^GSPC"
 
 
 def cache_stats() -> dict:
@@ -180,7 +199,12 @@ class YFinanceProvider:
             "fifty_two_week_low": _clean(info.get("fiftyTwoWeekLow")),
         }
 
+    @_ttl_cached
     def get_history(self, ticker: str, period: str = "1y", interval: str = "1d") -> list[dict]:
+        # Cached because the valuation path now asks for a long weekly series
+        # per ticker *and* per home index, and a screening run would otherwise
+        # refetch the same index bars once per name. Keyed on period and
+        # interval as well, so this does not collide with the chart's requests.
         df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
         # intraday bars need epoch timestamps; daily+ bars use date strings
         intraday = interval.endswith(("m", "h"))
@@ -202,7 +226,7 @@ class YFinanceProvider:
         """Company news blended with macro/policy headlines from the ticker's
         home-market index (full world-news feeds arrive with OpenBB)."""
         items = self._parse_news(yf.Ticker(ticker).news or [], "company", limit)
-        macro_symbol = "^HSI" if ticker.upper().endswith(".HK") else "^GSPC"
+        macro_symbol = home_index(ticker)
         try:
             seen = {n["title"] for n in items}
             items += [n for n in self._parse_news(yf.Ticker(macro_symbol).news or [], "macro", limit)

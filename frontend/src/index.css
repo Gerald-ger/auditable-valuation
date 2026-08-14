@@ -869,12 +869,20 @@ nav button.active {
   vertical-align: 1px;
 }
 
+/* Neutral, not celebratory: a regressed beta is the expected path now, and the
+   gold below is reserved for the substitutes that mean "we could not measure
+   this company, so here is something else". */
+.src-tag.computed,
 .src-tag.reported {
   color: var(--muted);
   background: rgba(139, 152, 165, 0.14);
 }
 
+/* `peer_median_relevered` is listed because the class is the whole source
+   string — `.peer_median` does not match it, so that tag has been rendering
+   unstyled since the re-levering tier was added. */
 .src-tag.peer_median,
+.src-tag.peer_median_relevered,
 .src-tag.default {
   color: var(--gold);
   background: rgba(240, 185, 11, 0.14);

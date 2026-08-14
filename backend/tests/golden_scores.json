@@ -1,7 +1,7 @@
 {
  "0700_HK": {
   "classification": "communication_svcs",
-  "composite_score": 73,
+  "composite_score": 70,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -31,9 +31,9 @@
     "metrics": {
      "price_vs_200dma": 30,
      "range_52w_pos": 32,
-     "rel_52w_change": 11
+     "rel_52w_change": 21
     },
-    "score": 24
+    "score": 28
    },
    "quality": {
     "insufficient": false,
@@ -49,12 +49,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 80,
+     "dcf_upside_pct": 28,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 43,
      "fcf_yield": 68
     },
-    "score": 69
+    "score": 56
    }
   },
   "tier": "A"
@@ -93,9 +93,9 @@
     "metrics": {
      "price_vs_200dma": 82,
      "range_52w_pos": 81,
-     "rel_52w_change": 86
+     "rel_52w_change": 74
     },
-    "score": 83
+    "score": 79
    },
    "quality": {
     "insufficient": false,
@@ -149,9 +149,9 @@
     "metrics": {
      "price_vs_200dma": 87,
      "range_52w_pos": 97,
-     "rel_52w_change": 57
+     "rel_52w_change": 66
     },
-    "score": 80
+    "score": 83
    },
    "quality": {
     "insufficient": false,
@@ -205,9 +205,9 @@
     "metrics": {
      "price_vs_200dma": 83,
      "range_52w_pos": 73,
-     "rel_52w_change": 18
+     "rel_52w_change": 20
     },
-    "score": 58
+    "score": 59
    },
    "quality": {
     "insufficient": false,
@@ -266,9 +266,9 @@
     "metrics": {
      "price_vs_200dma": 60,
      "range_52w_pos": 62,
-     "rel_52w_change": 41
+     "rel_52w_change": 43
     },
-    "score": 54
+    "score": 55
    },
    "quality": {
     "insufficient": false,
@@ -318,9 +318,9 @@
     "metrics": {
      "price_vs_200dma": 47,
      "range_52w_pos": 41,
-     "rel_52w_change": 75
+     "rel_52w_change": 69
     },
-    "score": 54
+    "score": 52
    },
    "quality": {
     "insufficient": false,
@@ -342,7 +342,7 @@
  },
  "XOM": {
   "classification": "energy",
-  "composite_score": 70,
+  "composite_score": 74,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -372,9 +372,9 @@
     "metrics": {
      "price_vs_200dma": 77,
      "range_52w_pos": 70,
-     "rel_52w_change": 89
+     "rel_52w_change": 93
     },
-    "score": 79
+    "score": 80
    },
    "quality": {
     "insufficient": false,
@@ -390,12 +390,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 0,
+     "dcf_upside_pct": 57,
      "earnings_yield_fwd": 76,
      "ev_ebitda": 72,
      "fcf_yield": 58
     },
-    "score": 51
+    "score": 66
    }
   },
   "tier": "A"

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FIXTURES, load_fundamentals
+from conftest import FIXTURES, load_fundamentals, load_market_bars
 
 import financial_models as fm
 import scoring
@@ -54,7 +54,11 @@ def _load_golden() -> dict:
 
 @pytest.mark.parametrize("stem", sorted(FIXTURES))
 def test_golden_score_snapshot(stem):
-    card = scoring.score_company(load_fundamentals(stem))
+    # Bars injected, never fetched — the suite stays offline, and these now
+    # drive both the beta regression and the relative-strength metric, so a
+    # golden taken without them would pin the fallback path instead.
+    card = scoring.score_company(load_fundamentals(stem),
+                                 market_bars=load_market_bars(stem))
     actual = _summary(card)
     golden = _load_golden()
 
@@ -143,8 +147,8 @@ def test_fcf_falls_back_to_info_with_a_flag(empty_fundamentals):
 
 @pytest.mark.parametrize("stem", sorted(FIXTURES))
 def test_identical_input_gives_identical_score(stem):
-    a = scoring.score_company(load_fundamentals(stem))
-    b = scoring.score_company(load_fundamentals(stem))
+    a = scoring.score_company(load_fundamentals(stem), market_bars=load_market_bars(stem))
+    b = scoring.score_company(load_fundamentals(stem), market_bars=load_market_bars(stem))
     a.pop("as_of"), b.pop("as_of")
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
