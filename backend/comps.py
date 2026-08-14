@@ -325,6 +325,34 @@ def _dcf_band(dcf: dict) -> tuple[float, float, str] | None:
             basis += " + growth (downside only)"
         elif extended_high:
             basis += " + growth (upside only)"
+
+    # The base year is the third assumption in the bar, and until now the only
+    # one it did not carry. Both sweeps above move a *rate* while holding the
+    # level they are applied to fixed, so neither can express what the starting
+    # year being unrepresentative would do — and a level error in base FCF is
+    # undamped, since fair value is homogeneous of degree one in it.
+    #
+    # This is the union, not a substitution: the tick stays on the reported-year
+    # answer, and `enterprise_value(..., base=normalised)` is the other end of a
+    # band the platform declines to choose between. Measured on the fixtures
+    # (risk-free pinned at 4.3%) it widens upward for XOM 71.75 -> 102.17 and
+    # MSFT 248.51 -> 321.75, and *downward* for 0700.HK 663.32 -> 628.00. That
+    # it is not one-directional is the whole reason it can be shown without
+    # taking a view: a rule that only ever raised the value would be price
+    # tuning wearing a band's clothes.
+    normalised = ((dcf.get("diagnostics") or {}).get("base_year") or {}).get(
+        "fair_value_normalised")
+    # `> 0` for the same reason price_gap_bridge uses it: a normalised
+    # enterprise value below net debt gives a negative per-share figure, and a
+    # bar stretched to it would be unreadable rather than merely wide.
+    if normalised is not None and normalised > 0:
+        # One value can only ever reach one side, so the growth sweep's
+        # two-sided wording does not transfer. Naming it only when it actually
+        # widened the bar keeps the same rule: the basis lists what moved the
+        # edges, and a normalised figure already inside the band moved nothing.
+        if normalised < low or normalised > high:
+            basis += " + base year"
+        low, high = min(low, normalised), max(high, normalised)
     return round(low, 2), round(high, 2), basis
 
 

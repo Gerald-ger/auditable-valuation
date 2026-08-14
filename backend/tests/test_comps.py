@@ -382,6 +382,121 @@ def test_growth_sensitivity_is_absent_without_harm():
     assert (bar["low"], bar["high"]) == (round(q1, 2), round(q3, 2))
 
 
+# ── the base year is the third assumption in the bar ─────────────────
+#
+# Both sweeps above move a *rate*. Neither can say what the starting year being
+# unrepresentative would do, and that error is undamped: fair value is
+# homogeneous of degree one in base FCF, so a 30% level error is a permanent
+# 30%. These pin the union — and, in the two directions below, pin that it is a
+# band rather than a thumb on the scale.
+
+def _bar(dcf):
+    return next(r for r in comps.football_field(target(), dcf, {})
+                if r["method"].startswith("DCF"))
+
+
+def _with_normalised(dcf: dict, value) -> dict:
+    dcf["diagnostics"] = {"base_year": {"fair_value_normalised": value}}
+    return dcf
+
+
+def test_the_dcf_bar_widens_up_to_a_normalised_base_year():
+    """XOM's newest year ran at 0.711x its own four-year average FCF margin, so
+    normalising raises the value: 71.75 -> 102.17 on the fixture."""
+    values = [float(v) for v in range(50, 75)]
+    without = _bar(_dcf_with_grid(values))
+    with_base = _bar(_with_normalised(_dcf_with_grid(values), 140.0))
+
+    assert with_base["high"] == 140.0
+    assert with_base["low"] == without["low"]      # only the reached side moves
+    assert "base year" in with_base["method"]
+
+
+def test_the_dcf_bar_widens_down_when_the_base_year_ran_hot():
+    """The direction is the argument. 0700.HK's newest year ran *above* its own
+    average (1.057x), so the same rule lowers its value, 663.32 -> 628.00. A
+    step that only ever raised the number would be price tuning in a band's
+    clothes, and this is what stops that being true.
+
+    Stubbed rather than taken from 0700.HK, because on that fixture 628.00 lands
+    *inside* the grid band and widens nothing — the downward path is real but
+    unexercised by the seven fixtures, which is exactly why it needs a test.
+    """
+    values = [float(v) for v in range(50, 75)]
+    without = _bar(_dcf_with_grid(values))
+    with_base = _bar(_with_normalised(_dcf_with_grid(values), 20.0))
+
+    assert with_base["low"] == 20.0
+    assert with_base["high"] == without["high"]
+    assert "base year" in with_base["method"]
+
+
+def test_a_normalised_base_inside_the_band_is_not_named():
+    """The basis lists what moved the edges. A normalised figure the band
+    already covers moved nothing, and naming it would imply a stress the bar
+    does not carry — the same rule the growth sweep's one-sided wording follows.
+    """
+    values = [float(v) for v in range(50, 75)]
+    without = _bar(_dcf_with_grid(values))
+    inside = (without["low"] + without["high"]) / 2
+    with_base = _bar(_with_normalised(_dcf_with_grid(values), inside))
+
+    assert (with_base["low"], with_base["high"]) == (without["low"], without["high"])
+    assert "base year" not in with_base["method"]
+
+
+@pytest.mark.parametrize("bad", [None, 0, -12.4])
+def test_a_non_positive_normalised_base_is_ignored(bad):
+    """A normalised enterprise value below net debt gives a negative per-share
+    figure. `price_gap_bridge` drops its step for the same reason: a bar
+    stretched to -12.4 is unreadable rather than merely wide."""
+    values = [float(v) for v in range(50, 75)]
+    without = _bar(_dcf_with_grid(values))
+    with_bad = _bar(_with_normalised(_dcf_with_grid(values), bad))
+
+    assert (with_bad["low"], with_bad["high"]) == (without["low"], without["high"])
+    assert "base year" not in with_bad["method"]
+
+
+def test_the_tick_stays_on_the_reported_year_answer():
+    """Union, not substitution. The band gains the normalised end; the headline
+    the tick marks is still the reported-year fair value, which is the contract
+    `financial_models` states where it builds the block."""
+    bar = _bar(_with_normalised(
+        _dcf_with_grid([float(v) for v in range(50, 75)], fair_value=61.5), 140.0))
+    assert bar["mid"] == 61.5
+
+
+def test_the_xom_bar_spans_both_bases_end_to_end():
+    """Through the real model rather than a stub: the bar a reader sees must
+    contain both the number the platform leads with and the one it shows
+    beside it, or the chart and the Models tab disagree on screen."""
+    dcf = fm.dcf_valuation(load_fundamentals("XOM"))
+    normalised = dcf["diagnostics"]["base_year"]["fair_value_normalised"]
+    bar = _bar(dcf)
+
+    assert bar["low"] <= dcf["fair_value_per_share"] <= bar["high"]
+    assert bar["low"] <= normalised <= bar["high"]
+
+
+def test_widening_the_bar_does_not_move_conviction():
+    """Conviction compares midpoints, and the DCF's midpoint is the model's own
+    answer rather than the band's centre — so a wider bar must change the
+    overlap zone and nothing else. Pinned because reading the centre instead
+    would silently make every conviction grade a function of bar width."""
+    values = [float(v) for v in range(50, 75)]
+    peers = {"implied_values": {"peer_pe": 80.0, "peer_ev_ebitda": 90.0}}
+
+    narrow = comps.triangulate(comps.football_field(
+        target(), _dcf_with_grid(values, fair_value=61.5), peers))
+    wide = comps.triangulate(comps.football_field(
+        target(), _with_normalised(
+            _dcf_with_grid(values, fair_value=61.5), 140.0), peers))
+
+    assert wide["conviction"] == narrow["conviction"]
+    assert wide["midpoint_spread"] == narrow["midpoint_spread"]
+
+
 # ── triangulation: where the methods agree, and what to do when they don't ──
 
 def _row(method, low, high, mid=None, **extra):
