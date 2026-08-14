@@ -6,6 +6,8 @@ frontend/dist/
 # local score history + watchlist — your data, never committed
 backend/data/
 .ruff_cache/
+# personal working reminder, not project documentation — TODOLIST.md is the public list
+NEXT-STEPS.md
 # local Claude Code tooling, not part of the platform. settings.local.json was previously
 # protected only by a machine-global ignore, so any other clone would have staged it.
 **/.claude/settings.local.json
