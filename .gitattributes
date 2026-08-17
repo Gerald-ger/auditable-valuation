@@ -1,0 +1,11 @@
+# Shell scripts must keep LF endings. With CRLF, macOS/Linux fails at the
+# shebang with "bad interpreter: /usr/bin/env bash^M" — an error that names a
+# line ending nowhere and sends people looking at the wrong thing.
+#
+# This repo is developed on Windows with core.autocrlf=true, which does the
+# right thing on its own; the rule is here so the guarantee does not depend on
+# each contributor's local git config.
+*.sh text eol=lf
+
+# The Windows batch launcher wants CRLF for the same reason, in reverse.
+*.bat text eol=crlf
