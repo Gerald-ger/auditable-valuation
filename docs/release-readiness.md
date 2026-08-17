@@ -43,6 +43,24 @@ the backend allowed exactly two origins. The page rendered normally, with no dat
 message. That is close to undiagnosable for a first-time user, and it is why the fix is a proxy
 rather than adding 5174 to the CORS list.
 
+### Local tooling removed from git history — 2026-08-17
+
+38 `.claude/agents/*.md` files were committed in the first commit and deleted later, but a
+deletion only adds a "these are gone now" entry to the chain — it does not reach back into the
+commit that introduced them. Anyone who cloned the repo could still read every one of them with
+a single `git show`. They were removed from the whole history with `git filter-repo` and the
+result force-pushed.
+
+The content was agent role definitions in markdown — no secrets, no credentials, no personal
+data — so this was housekeeping, not an incident.
+
+**What a rewrite does and does not do.** It removes the files from every commit going forward
+from the rewrite, and it changes every commit hash after the first affected commit. It does
+*not* undo the exposure: the files were public from 2026-07-31 to 2026-08-17 and anything that
+cloned, forked, cached or scraped the repo in that window still has them. GitHub also keeps
+unreachable objects addressable by their old SHA for a period after a force-push; only GitHub
+Support can force immediate garbage collection. Treat already-published content as published.
+
 ---
 
 ## Not done — needs the GitHub web UI
@@ -76,14 +94,6 @@ There is no `gh` CLI on the development machine, so these are manual:
       Before publishing, check each image for anything you would not put on a public page —
       other browser tabs, bookmarks, real portfolio values, or an account name in the window
       chrome. Capture the page region rather than the whole desktop.
-
-## Needs a decision
-
-- [ ] **`.claude/agents/*` is recoverable from public git history.** Commit `32a19c3` removed
-      the directory, but `7edf9cf` added it, so a clone still carries it. The content is agent
-      definition markdown — **not secrets, not credentials**. Removing it means another
-      `git filter-repo` history rewrite and a force-push. Recorded rather than acted on; the
-      cost/benefit is a judgement call.
 
 ---
 
