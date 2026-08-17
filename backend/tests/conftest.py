@@ -8,13 +8,9 @@ without a network call — which is what makes them runnable in CI.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-BACKEND = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BACKEND))
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -61,7 +57,7 @@ def pinned_risk_free_rate(monkeypatch):
     through OpenBB. Left alone, every golden score would drift with the treasury
     market and this 'offline' suite would quietly require a network call.
     """
-    import financial_models
+    from backend import financial_models
     monkeypatch.setattr(financial_models, "risk_free_rate",
                         lambda fallback: financial_models.RISK_FREE_RATE)
 
@@ -83,11 +79,11 @@ def pinned_fx_rate(monkeypatch):
     would drift with the currency market — exactly the reason the risk-free rate
     is pinned above.
 
-    Patched on `financial_models` because that module does `from data_provider
-    import fx_rate`, binding the name at import; every other caller reaches it
-    through `financial_models.statement_to_market_fx`.
+    Patched on `financial_models` because that module does `from
+    backend.data_provider import fx_rate`, binding the name at import; every
+    other caller reaches it through `financial_models.statement_to_market_fx`.
     """
-    import financial_models
+    from backend import financial_models
     rates = {("CNY", "HKD"): TEST_CNY_HKD}
 
     def fake_fx_rate(from_ccy, to_ccy):
@@ -112,7 +108,7 @@ def empty_fundamentals():
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     """Point store at a throwaway database so tests never touch backend/data."""
-    import store
+    from backend import store
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
     store.init()
     return store

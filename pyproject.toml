@@ -1,0 +1,19 @@
+# Packaging metadata only — no dependency list here on purpose.
+# The runtime set lives in backend/requirements.txt and the CI set in
+# backend/requirements-test.txt; restating them here would put the same pins in
+# two places, which is the problem this change is undoing.
+#
+# Its job is to make `backend` an importable package rather than a directory
+# that only works because uvicorn was started with --app-dir and the test
+# conftest edited sys.path. Install with:  pip install -e .
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "financial-model-analyse"
+version = "0.1.0"
+requires-python = ">=3.14"
+
+[tool.setuptools]
+packages = ["backend"]

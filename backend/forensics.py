@@ -18,7 +18,7 @@ rather than a number that looks computed.
 """
 from __future__ import annotations
 
-import financial_models as fm
+from backend import financial_models as fm
 
 # Altman (1968), original public-company Z. Zones are Altman's own.
 Z_SAFE, Z_DISTRESS = 2.99, 1.81

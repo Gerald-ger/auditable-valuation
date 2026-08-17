@@ -1,6 +1,8 @@
 """FastAPI backend for the stock analysis platform.
 
-Run:  backend\\.venv\\Scripts\\python.exe -m uvicorn main:app --app-dir backend --port 8000
+Run (from the repo root):
+    Windows       backend\\.venv\\Scripts\\python.exe -m uvicorn backend.main:app --port 8000
+    macOS/Linux   backend/.venv/bin/python -m uvicorn backend.main:app --port 8000
 """
 from __future__ import annotations
 
@@ -20,16 +22,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import ai_client
-import comps
-import drawings as drawings_model
-import financial_models
-import forensics
-import scoring
-import search
-import sector_weights
-import store
-from data_provider import home_index, provider, with_fresh_price
+from backend import ai_client
+from backend import comps
+from backend import drawings as drawings_model
+from backend import financial_models
+from backend import forensics
+from backend import scoring
+from backend import search
+from backend import sector_weights
+from backend import store
+from backend.data_provider import home_index, provider, with_fresh_price
 
 # yfinance is IO-bound but throttles bursts, so batch work fans out narrowly
 # rather than one thread per ticker.

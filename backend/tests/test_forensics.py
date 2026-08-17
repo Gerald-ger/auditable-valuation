@@ -13,9 +13,9 @@ import pytest
 
 from conftest import FIXTURES, load_fundamentals
 
-import forensics
-import scoring
-import sector_weights
+from backend import forensics
+from backend import scoring
+from backend import sector_weights
 
 
 def _classification(stem: str) -> str:

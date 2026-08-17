@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from statistics import median, quantiles
 
-import financial_models as fm
-import sector_weights
-from data_provider import provider
+from backend import financial_models as fm
+from backend import sector_weights
+from backend.data_provider import provider
 
 PEER_SUGGESTIONS = {
     # US mega-cap tech

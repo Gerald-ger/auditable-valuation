@@ -13,10 +13,10 @@ import pytest
 
 from conftest import load_fundamentals
 
-import data_provider
-import financial_models as fm
-import main
-import search
+from backend import data_provider
+from backend import financial_models as fm
+from backend import main
+from backend import search
 
 
 @pytest.fixture(autouse=True)

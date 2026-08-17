@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-import main
+from backend import main
 
 
 def test_a_zero_cost_basis_has_a_gain_but_no_percentage_return():

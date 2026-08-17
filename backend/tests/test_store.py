@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from conftest import load_fundamentals
 
-import scoring
+from backend import scoring
 
 
 def _card(stem="MSFT"):

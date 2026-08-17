@@ -17,8 +17,8 @@ import json
 from pathlib import Path
 from statistics import median
 
-import market_series
-from data_provider import fx_rate, risk_free_rate
+from backend import market_series
+from backend.data_provider import fx_rate, risk_free_rate
 
 # Assumption defaults (user-overridable via the API)
 RISK_FREE_RATE = 0.043      # fallback only — WACC uses the live US 10Y when reachable

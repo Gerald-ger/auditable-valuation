@@ -11,9 +11,9 @@ import pytest
 
 from conftest import load_bars, load_fundamentals, load_market_bars
 
-import financial_models as fm
-import market_series as ms
-import scoring
+from backend import financial_models as fm
+from backend import market_series as ms
+from backend import scoring
 
 
 def _bars(closes, start=0):

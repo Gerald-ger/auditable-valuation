@@ -18,8 +18,8 @@ import pytest
 
 from conftest import load_fundamentals
 
-import comps
-import financial_models as fm
+from backend import comps
+from backend import financial_models as fm
 
 
 class StubProvider:
@@ -743,7 +743,7 @@ def test_a_missing_price_yields_no_bridge():
 @pytest.fixture
 def wired_endpoint(monkeypatch):
     """The comps endpoint with both providers stubbed. No network."""
-    import main
+    from backend import main
 
     def fundamentals(ticker):
         return load_fundamentals(ticker.replace(".", "_"))

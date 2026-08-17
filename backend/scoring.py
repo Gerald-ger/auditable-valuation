@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import financial_models as fm
-import market_series
-import sector_weights
+from backend import financial_models as fm
+from backend import market_series
+from backend import sector_weights
 
 # Anchor tables: ascending x, linear interpolation, clipped at the ends.
 # Values grounded in financial-models-reference.md §4.1 / Appendix B.

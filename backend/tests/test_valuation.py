@@ -13,7 +13,7 @@ import pytest
 
 from conftest import TEST_CNY_HKD, load_fundamentals
 
-import financial_models as fm
+from backend import financial_models as fm
 
 
 # ── beta resolution (item 1) ─────────────────────────────────────────

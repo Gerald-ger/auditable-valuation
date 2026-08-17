@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 import yfinance as yf
 
-import financial_models as fm
-from data_provider import fx_rate, provider
+from backend import financial_models as fm
+from backend.data_provider import fx_rate, provider
 
 pytestmark = pytest.mark.network
 

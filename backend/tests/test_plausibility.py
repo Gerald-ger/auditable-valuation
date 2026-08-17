@@ -26,7 +26,7 @@ import pytest
 
 from conftest import load_fundamentals
 
-import scoring
+from backend import scoring
 
 # S/A/B/C/D are tiers 1-5 in §5.2's numbering, which is what the doc's
 # "Tier 3-5" and "Tier 1-2" expectations are written against.

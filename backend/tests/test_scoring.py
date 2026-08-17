@@ -19,9 +19,9 @@ import pytest
 
 from conftest import FIXTURES, load_fundamentals, load_market_bars
 
-import financial_models as fm
-import scoring
-import sector_weights
+from backend import financial_models as fm
+from backend import scoring
+from backend import sector_weights
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "golden_scores.json"
 UPDATING = os.environ.get("UPDATE_GOLDEN") == "1"

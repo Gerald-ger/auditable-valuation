@@ -13,9 +13,9 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from data_provider import provider  # noqa: E402
+from backend.data_provider import provider  # noqa: E402
 
 # ticker -> the classification branch it is here to cover
 TICKERS = {

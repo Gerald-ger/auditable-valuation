@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-import drawings
+from backend import drawings
 
 DAY = 86400
 T0 = 1_786_000_000
