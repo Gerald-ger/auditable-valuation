@@ -53,8 +53,29 @@ There is no `gh` CLI on the development machine, so these are manual:
       on a branch named after an experiment. `main` is 1 commit behind and needs merging first.
 - [ ] **Repo description** — currently a keyword dump; should be one sentence.
 - [ ] **Topics** — empty.
-- [ ] **A screenshot or GIF.** The only image in the repo is `frontend/public/favicon.svg`. For
-      a UI project this is the single highest-value addition to the README.
+- [ ] **Screenshots.** The only image in the repo is `frontend/public/favicon.svg`. For a UI
+      project this is the highest-value addition to the README. The section is already written
+      in README.md, commented out so nothing renders broken; uncommenting it is the last step.
+
+      These cannot be automated: the tab and ticker are React state, not URL parameters, so a
+      headless browser can only ever reach the Tracker tab on its default ticker. Every shot
+      needs a real click.
+
+      | File in `docs/images/` | Tab | What the shot must contain |
+      |---|---|---|
+      | `scorecard.png` | Scorecard | The composite score and tier, all five pillar bars expanded, and the football field visible. This is the lead image — pick a company with full coverage, e.g. AAPL or MSFT. |
+      | `models.png` | Financial Models | The DCF audit panel with assumptions visible, and the equity bridge. |
+      | `tracker.png` | Tracker | Candles with at least one indicator on, SEC filing markers, and the news list. |
+      | `screener.png` | Screener | Several tickers scored and grouped by classification — enough rows to show ranking. |
+      | `portfolio.png` | Portfolio | Holdings with weights and the concentration readout. Use fake positions; do not publish real holdings. |
+
+      Capture settings: browser window ~1600 px wide (a Retina/HiDPI display doubles this and
+      looks noticeably sharper), PNG, browser zoom at 100%. GitHub renders README images at
+      about 890 px wide, so a 1600-1800 px capture stays crisp without being wasteful.
+
+      Before publishing, check each image for anything you would not put on a public page —
+      other browser tabs, bookmarks, real portfolio values, or an account name in the window
+      chrome. Capture the page region rather than the whole desktop.
 
 ## Needs a decision
 

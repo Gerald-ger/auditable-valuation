@@ -18,6 +18,43 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 > under [AGPL-3.0](LICENSE); see [Licence and data provenance](#licence-and-data-provenance)
 > for what the licence does *not* cover.
 
+<!--
+  SCREENSHOTS — this whole block is commented out so nothing renders as a broken
+  image while the files are missing. Drop the five PNGs into docs/images/ using the
+  names below, then delete this line and the closing arrow at the end of the block.
+  The shot list and capture settings are in docs/release-readiness.md.
+
+## What it looks like
+
+![Scorecard tab: composite score, pillar breakdown and valuation range](docs/images/scorecard.png)
+
+**Scorecard** — every company gets a 0-100 composite built from five weighted pillars, with
+each metric's raw value and its score shown side by side. The weights change with the
+company's classification, so a bank is not judged on the ratios that suit a software firm.
+The football field underneath places today's price against DCF, comps and analyst ranges.
+
+![Financial Models tab: ratio analysis, DCF audit and equity bridge](docs/images/models.png)
+
+**Financial Models** — a two-stage FCFF DCF you can audit rather than trust: every assumption
+is shown with the source it came from, and the equity bridge itemises each step from
+enterprise value to value per share.
+
+![Tracker tab: price chart with indicators, SEC filing markers and news](docs/images/tracker.png)
+
+**Tracker** — candles with moving averages, RSI and MACD, SEC filing markers on the timeline,
+and the news that explains a move. Drawings persist and are fed to the AI as context.
+
+![Screener tab: many tickers scored and ranked in one pass](docs/images/screener.png)
+
+**Screener** — the same deterministic engine run over a watchlist, grouped by classification
+so like is compared with like.
+
+![Portfolio tab: holdings, weights and concentration](docs/images/portfolio.png)
+
+**Portfolio** — holdings and watchlist with position weights and concentration.
+
+-->
+
 ## Prerequisites
 
 | | |
