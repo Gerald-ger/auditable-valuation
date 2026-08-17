@@ -75,7 +75,7 @@ Each carries the condition that would reopen it.
 | Docker / docker-compose | The install is four commands; a container mainly hides the Python 3.14 requirement rather than solving it | Someone asks for a reproducible environment, or CI needs to test the runtime set |
 | Git tags, semver, GitHub Releases | There are no consumers pinning a version | Someone depends on a specific version |
 | `CONTRIBUTING.md`, `SECURITY.md`, issue/PR templates | Single author, no inbound contributions | A first external issue or PR arrives |
-| Relaxing Python below 3.14 | `pandas==3.0.5` / `numpy==2.5.1` publish no wheels for earlier versions. Widening means re-resolving every pin and re-validating the numerics — a project in itself, not a config tweak | Someone is actually blocked, or a dependency drops the 3.14 floor |
+| Relaxing Python below 3.14 | The floor is `requires-python = ">=3.14"` in `pyproject.toml`, chosen to match the only tested configuration (3.14.6 locally, 3.14 in CI) — **not** a dependency constraint. Checked against PyPI: `pandas==3.0.5` ships wheels back to cp311 and declares `>=3.11`; `numpy==2.5.1` ships back to cp312 and declares `>=3.12`. So 3.12/3.13 would plausibly work; lowering the floor honestly means running the suite there first, which is a task, not a config edit | Someone is actually blocked — then test on 3.12 and 3.13 and lower the floor to what passes |
 | CI OS / version matrix | One Linux runner already catches import and logic regressions | The Windows-only launchers break, or a platform bug ships |
 | Backend `.env` / env-var config | Local single-user tool; module constants are legible and the real defect was the same literal repeated in six files, which the proxy change removed | The app needs to run anywhere other than localhost |
 | `index.css` split (2,033 lines), `ModelsTab.jsx` (1,033) / `ScorecardTab.jsx` (761) decomposition | Real single-contributor risks, but there are no component tests, so the diff would be unverifiable | A second contributor joins, or component tests exist |
@@ -96,6 +96,15 @@ Each carries the condition that would reopen it.
   installed, so only the offline degradation path is verified. The Vite proxy pipes responses
   rather than buffering them, but progressive NDJSON delivery through the proxy is unverified
   end-to-end for the same reason.
+- **`start.sh` has never been run on its target platforms.** Development is on Windows, so what
+  is verified is: it parses (`bash -n`), the missing-virtualenv guard exits 1 with a pointer to
+  the README, `npm --prefix frontend run dev` is a valid invocation, and the file ships mode
+  `100755` with LF endings. What is *not* verified is the Ctrl-C path — a control experiment
+  showed that even the minimal textbook `trap` + `kill` pattern fails to reap a background child
+  under Git Bash, so this environment cannot distinguish a script bug from an MSYS signal-
+  emulation artifact. The script is therefore shaped to need as little of that behaviour as
+  possible: Vite runs in the *foreground* so Ctrl-C reaches it through the terminal directly,
+  leaving the trap responsible only for a single backend process with no children.
 - **yfinance is personal-use-only.** Running it locally for yourself is fine; hosting it or
   offering it as a service is a blocker, not a bug. See
   [data-sources-review.md](data-sources-review.md) §3 — decision taken 2026-08-14 to record it

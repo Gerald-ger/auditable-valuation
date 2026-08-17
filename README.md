@@ -22,8 +22,8 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 
 | | |
 |---|---|
-| **Python 3.14** | A hard requirement, not a preference. `backend/requirements.txt` pins `pandas==3.0.5` and `numpy==2.5.1`, which publish no wheels for earlier interpreters. `pyproject.toml` declares `requires-python = ">=3.14"`, so pip refuses with a clear message instead of failing halfway through a source build. |
-| **Node 22+** | Declared in `engines` in [frontend/package.json](frontend/package.json). |
+| **Python 3.14** | Enforced by `requires-python = ">=3.14"` in `pyproject.toml`, so `pip install -e .` stops with a clear version message rather than failing obscurely later. The floor is deliberate but *not* dependency-imposed: it matches the only configuration this project is ever run on (3.14.6 locally, 3.14 in CI). The heaviest pins are looser than that — `pandas==3.0.5` publishes wheels back to cp311 and `numpy==2.5.1` back to cp312 — so 3.12 or 3.13 may well work. Nobody has tried, which is exactly why the declared floor does not pretend otherwise. |
+| **Node 22+** | Declared in `engines` in [frontend/package.json](frontend/package.json). npm warns rather than refuses unless you set `engine-strict`. |
 | Ollama | Optional. The AI features disable cleanly without it and everything else works — see [Install guidance](#install-guidance). |
 | FMP API key | Optional, free tier. Without one you lose automatic peer discovery and nothing else — see [Credentials](#credentials). |
 
@@ -263,12 +263,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ## Tests
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest          # 408 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 409 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 46 tests
 ```
 
-Of the 424 collected, 16 are `network`-marked and deselected by default.
+Of the 425 collected, 16 are `network`-marked and deselected by default.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -441,7 +441,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for nine symbols, kept because
-  the 408-test suite runs entirely offline against them. Provenance and capture dates in
+  the 409-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
