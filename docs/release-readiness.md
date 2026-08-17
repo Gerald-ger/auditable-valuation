@@ -57,20 +57,67 @@ data — so this was housekeeping, not an incident.
 **What a rewrite does and does not do.** It removes the files from every commit going forward
 from the rewrite, and it changes every commit hash after the first affected commit. It does
 *not* undo the exposure: the files were public from 2026-07-31 to 2026-08-17 and anything that
-cloned, forked, cached or scraped the repo in that window still has them. GitHub also keeps
-unreachable objects addressable by their old SHA for a period after a force-push; only GitHub
-Support can force immediate garbage collection. Treat already-published content as published.
+cloned, forked, cached or scraped the repo in that window still has them. Treat already-published
+content as published.
+
+**Verified, not assumed: GitHub still serves the removed files.** A force-push makes old commits
+unreachable from any branch; it does not make GitHub collect them. Immediately after the rewrite,
+both of these still returned data for the pre-rewrite commit `7edf9cf` (a hash that no longer
+exists in this repository):
+
+```
+GET repos/:owner/:repo/commits/7edf9cf
+GET repos/:owner/:repo/contents/.claude/agents/<file>.md?ref=7edf9cf
+```
+
+So the rewrite works for anyone who clones, and does nothing against anyone who requests an old
+SHA directly. Only GitHub Support can force garbage collection.
+
+**Decision, 2026-08-17: stop here.** Deliberate, and taken after measuring rather than guessing:
+
+- *Nothing sensitive is in the files.* 62,544 words of agent role-definition markdown. A scan for
+  credential patterns returned 141 hits, all false positives — CSS `design tokens` and LLM
+  billing `tokens`. The only API key is the placeholder `'YOUR_SEARCH_API_KEY'`. No credentials,
+  no personal data, nothing about this project's systems.
+- *Reading it requires already knowing the 40-character SHA.* That hash appears in no file in
+  this repository, in no commit message, and in no entry of the repo's public events API. The
+  one surviving route is GH Archive's BigQuery corpus of historical GitHub events, which takes a
+  deliberate query aimed at this repository. Nobody arrives there by accident.
+- *The one real issue is provenance, not security.* Those files are a third-party agent pack in a
+  repository licensed AGPL-3.0. They are no longer in the tree, so today's licence grant does not
+  reach them — a loose end in attribution, not an incident.
+- *It cannot recur.* [.gitignore](../.gitignore) covers `.claude/agents/` and
+  `**/.claude/settings.local.json`.
+
+The hash is written out above on purpose. Omitting it would not make the content harder to reach
+— it is in the public event archive either way — and would leave a future reader unable to check
+any of this.
+
+**Reopen if** the content turns up redistributed somewhere, or the pack's author raises a licence
+claim. The options then are a GitHub Support ticket, or deleting and recreating the repository —
+the latter is total and instant, and unusually cheap here: stars, forks, watchers and issues are
+all zero, and the URL is unchanged by a same-name recreation. The cost is the 2026-07-31 creation
+date and the traffic history.
 
 ---
 
-## Not done — needs the GitHub web UI
+## Repository settings — done 2026-08-17
 
-There is no `gh` CLI on the development machine, so these are manual:
+Done with the `gh` CLI once it was installed and authenticated:
 
-- [ ] **Change the default branch from `openBB-testing` to `main`.** A visitor currently lands
-      on a branch named after an experiment. `main` is 1 commit behind and needs merging first.
-- [ ] **Repo description** — currently a keyword dump; should be one sentence.
-- [ ] **Topics** — empty.
+- [x] **Default branch is `main`.** It was `openBB-testing`, so visitors landed on a branch named
+      after an experiment. `main` was fast-forwarded to the current tip (no merge commit, no
+      divergence), made default, and `openBB-testing` deleted after confirming both refs pointed
+      at the same commit.
+- [x] **Description** rewritten from a keyword dump into a sentence describing what the project
+      is. The keywords it used to carry became topics, which is where GitHub actually searches
+      them.
+- [x] **14 topics** set.
+
+---
+
+## Still open
+
 - [ ] **Screenshots.** The only image in the repo is `frontend/public/favicon.svg`. For a UI
       project this is the highest-value addition to the README. The section is already written
       in README.md, commented out so nothing renders broken; uncommenting it is the last step.
