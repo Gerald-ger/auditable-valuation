@@ -261,6 +261,25 @@ raise it on a portfolio that was not mixed at all. It now reads the same set the
 uses to build `held`. That fixed when the warning fires; the summation it warns about is
 still unconverted, which is why this item stays open.
 
+### 🟡 CI proves the tests, not the install
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) installs `backend/requirements-test.txt`
+— six entries — then runs ruff and pytest. It never installs `backend/requirements.txt`, so
+the path the README actually tells a stranger to follow (107 pins, including `openbb` and its
+30 subpackages) is proven on one Windows 3.14.6 machine and nowhere else. A broken runtime
+pin, or a runtime dependency that stops resolving, passes CI green.
+
+Not a suspected break, an unexercised one: `openbb`, `openbb-core` and `openbb-sec` all
+declare `requires-python >=3.10,<4`, with `pandas>=3.11` and `numpy>=3.12`, so nothing in the
+set excludes 3.14. The README's "CI runs the whole suite on Linux" is true of the tests and
+says nothing about the install, which is the part a first-time user hits first.
+
+**Trigger: the first report of an install that fails, or any edit to a runtime pin.** The fix
+is a CI job that installs `requirements.txt` and `-e .` and then runs nothing — the install
+*is* the assertion. The cost is downloading the full set on every push, which is the reason it
+is not already there. First recorded as a warning inside the 2026-08-17 Done entry; promoted
+here so it is not lost inside a dated one.
+
 ### 🟡 Cosmetic
 
 Line references re-verified 2026-08-09.
@@ -421,6 +440,41 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-17 (d) — the README's instructions, followed literally
+
+Full detail in `CHANGELOG.md` under 2026-08-17 (d). Summarised here because it changed no
+application code and because one open item came out of it.
+
+An audit of every command the README gives a first-time user, checked against what the repo
+actually ships. **No application code changed** — 409 backend, 46 frontend, ruff and oxlint
+clean, `vite build` green, identical before and after.
+
+One instruction was broken outright: **`pytest` was installed by no documented step**, while
+§Tests told you to run it. It exists in exactly one place in the repo, `requirements-test.txt`,
+which the README described as what *CI* installs — framing it as someone else's file. Verified
+in a fresh 3.14.6 venv rather than the working one, which has had `pytest` all along and is
+precisely why this survived so long.
+
+The rest were true statements that had stopped being true. The Node floor said `>=22` while
+the toolchain wants `^20.19.0 || >=22.12.0` — wrong in both directions, since 22.0–22.11
+satisfied the document and failed the tools, and 20.19+ worked and was excluded. `.\start.ps1`
+was offered as a peer of `start.bat` without noting that a stock Windows policy refuses to run
+it. And `pip install -e .` ran *after* the 107-package install despite being the only step that
+reads `requires-python`, so a wrong interpreter was rejected at the end of the download instead
+of 8.8 s in. `start.bat` and `start.ps1` also gained the venv guard `start.sh` already had.
+
+Worth carrying forward as a warning rather than an achievement:
+
+- **Nothing in the suite reads the README.** CI gates the code four ways — ruff, pytest, oxlint,
+  build — and gates the instructions not at all. Every defect above coexisted with 409 green
+  tests, because no test has any opinion about what the documentation claims. The install path
+  *is* documentation, and documentation is the one part of this repo with no automated reader.
+  The same shape as the `backend/__init__.py` warning below: a green suite that is structurally
+  incapable of seeing the thing that is broken.
+
+The CI-never-installs-the-runtime-set gap noted in the entry below is unchanged, and is now
+tracked as its own item under *Next* rather than living only inside a dated entry.
 
 ### ✅ 2026-08-17 — the project became something a stranger can clone and run
 
