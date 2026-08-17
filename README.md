@@ -55,7 +55,7 @@ shown are fabricated for the screenshot.
 | | |
 |---|---|
 | **Python 3.14** | Enforced by `requires-python = ">=3.14"` in `pyproject.toml`, so `pip install -e .` stops with a clear version message rather than failing obscurely later. The floor is deliberate but *not* dependency-imposed: it matches the only configuration this project is ever run on (3.14.6 locally, 3.14 in CI). The heaviest pins are looser than that — `pandas==3.0.5` publishes wheels back to cp311 and `numpy==2.5.1` back to cp312 — so 3.12 or 3.13 may well work. Nobody has tried, which is exactly why the declared floor does not pretend otherwise. |
-| **Node 22+** | Declared in `engines` in [frontend/package.json](frontend/package.json). npm warns rather than refuses unless you set `engine-strict`. |
+| **Node 20.19+ or 22.12+** | The odd-looking floor is the toolchain's own, not a preference: Vite 8, oxlint and `@vitejs/plugin-react` all declare `^20.19.0 \|\| >=22.12.0`. Mirrored in `engines` in [frontend/package.json](frontend/package.json). npm warns rather than refuses unless you set `engine-strict`, so on 22.0–22.11 `npm install` still reports success and you find out later, if at all. Nobody has run that range — developed on 24, CI on 22 (which resolves to a 22.12+ release), so it is untested rather than known-broken. |
 | Ollama | Optional. The AI features disable cleanly without it and everything else works — see [Install guidance](#install-guidance). |
 | FMP API key | Optional, free tier. Without one you lose automatic peer discovery and nothing else — see [Credentials](#credentials). |
 
@@ -68,8 +68,8 @@ git clone https://github.com/Gerald-ger/finance-analysis-platform.git
 cd finance-analysis-platform
 
 python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 backend\.venv\Scripts\python.exe -m pip install -e .
+backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 
 cd frontend; npm install; cd ..
 ```
@@ -81,8 +81,8 @@ git clone https://github.com/Gerald-ger/finance-analysis-platform.git
 cd finance-analysis-platform
 
 python3 -m venv backend/.venv
-backend/.venv/bin/python -m pip install -r backend/requirements.txt
 backend/.venv/bin/python -m pip install -e .
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
 
 (cd frontend && npm install)
 ```
@@ -96,17 +96,26 @@ runs the whole suite on Linux.
 `from backend import scoring` work from anywhere — a script, a notebook, a scheduled job — rather
 than only from inside the directory. Without it the app still runs, but only from the repo root.
 
-**Which requirements file:** `requirements.txt` is the runtime set — a pip freeze of a working
-venv, so it also lists dev tools like `ruff`. `requirements-test.txt` is the smaller set CI
-installs to lint and run the suite offline. OpenBB is already pinned in `requirements.txt`;
-there is nothing extra to install for it.
+**Why it goes first:** `requires-python` is the version gate, and `-e .` is the step that reads
+it. Run first, a wrong interpreter is rejected in seconds — measured on 3.11, 8.8 s to
+`ERROR: Package 'finance-analysis-platform' requires a different Python: 3.11.3 not in '>=3.14'`.
+Run last, you pay the whole 107-package install before that same message arrives. It needs
+nothing from `requirements.txt` to build: into an empty venv it installs exactly one
+distribution, itself.
+
+**Which requirements file:** `requirements.txt` is the runtime set — pinned, and it also carries
+`ruff`, so the pre-push lint below works straight from it. It does **not** carry `pytest`:
+`requirements-test.txt` is the only place that lives, and it is what both CI and you install to
+run the suite — see [Tests](#tests). Layering it over `requirements.txt` changes nothing else;
+every other entry is already satisfied, so nothing is upgraded or downgraded. OpenBB is already
+pinned in `requirements.txt`; there is nothing extra to install for it.
 
 ## Run it
 
 | | |
 |---|---|
-| Windows | double-click **`start.bat`**, or `.\start.ps1` from PowerShell |
-| macOS / Linux | `./start.sh` — both servers run in that terminal and stop together on Ctrl-C |
+| Windows | double-click **`start.bat`**. `.\start.ps1` does the same from PowerShell, but a default Windows install refuses to run unsigned scripts — if you get `running scripts is disabled on this system`, either use `start.bat` or run `powershell -ExecutionPolicy Bypass -File .\start.ps1`. |
+| macOS / Linux | `./start.sh` — both servers run in that terminal, and Ctrl-C is meant to stop them together. That last part is **unverified**: the trap could not be exercised from this machine's Git Bash, so if a backend survives Ctrl-C, kill it by hand and please open an issue. |
 
 or manually, in two terminals, **from the repo root**:
 
@@ -294,7 +303,11 @@ Your data lives in `backend/data/app.db` and is gitignored.
 
 ## Tests
 
+`pytest` is not in `requirements.txt` — install the test set once, then run:
+
 ```powershell
+backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
+
 backend\.venv\Scripts\python.exe -m pytest          # 409 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 46 tests

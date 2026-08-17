@@ -7,6 +7,76 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-17 (d) — the README's own instructions, followed literally
+
+An audit of every command the README tells a stranger to run, checked against what the repo
+actually ships. **No application code changed** — backend **409 passing** (16 network-deselected),
+frontend 46, `ruff` and `oxlint` clean, `vite build` green, all of it unchanged before and after.
+One instruction was broken outright; the rest were true statements that stopped being true.
+
+### Fixed
+
+- **`pytest` was not installed by any documented step, and the Tests section told you to run it.**
+  Install brings `backend/requirements.txt` (107 packages) and `pip install -e .`; neither carries
+  `pytest`. It exists in exactly one place in the repo, `requirements-test.txt` (6 entries), which
+  the README described as what *CI* installs — framing it as someone else's file. So the documented
+  sequence ended at `No module named pytest`, reproduced in a clean venv rather than assumed.
+
+  §Tests now installs it first. Verified the way it had to be — a **fresh 3.14.6 venv**, given only
+  `pip install -e .` and `pip install -r backend/requirements-test.txt`, then `pytest`:
+  **409 passed, 16 deselected**. Testing this in the existing venv would have proved nothing, since
+  that venv has had `pytest` all along, which is why the gap survived this long.
+
+  Layering the test set over `requirements.txt` is a measured no-op — `pip --dry-run` reports zero
+  installs, zero upgrades, zero downgrades, zero conflicts — so it cannot disturb the `fastapi` /
+  `uvicorn` ceiling OpenBB pins.
+
+- **The Node floor was wrong in both directions.** README and `engines` both said `>=22`. The
+  toolchain says `^20.19.0 || >=22.12.0` — Vite 8.2.0, oxlint 1.76.0 and `@vitejs/plugin-react`
+  6.0.5 all declare it. So 22.0–22.11 satisfied the documented requirement while failing the real
+  one, and 20.19+ was excluded despite working. Both files now carry the toolchain's own range;
+  `package.json` and `package-lock.json` had to move together or `npm ci` refuses to run at all.
+
+  Untested rather than known-broken, and the README now says so: nothing has ever run in the
+  22.0–22.11 window. Development is on 24, and CI's `node-version: "22"` resolved to **v22.23.2**
+  with no `EBADENGINE` warnings — read out of the run log, not inferred.
+
+- **`.\start.ps1` fails on a stock Windows install**, which the README offered as a peer of
+  `start.bat` with no caveat. A default client policy blocks unsigned scripts; this machine only
+  runs it because `CurrentUser` is `RemoteSigned`, and that setting does not travel with a clone.
+  The README now quotes the actual refusal — `running scripts is disabled on this system` — and
+  gives the two ways out. Both the failure and the documented workaround were run to confirm the
+  wording is verbatim.
+
+- **`start.bat` and `start.ps1` launched blind; `start.sh` had always checked.** Double-clicking
+  before installing opened two windows that each died on a missing interpreter — worst first
+  impression on the platform the README leads with. Both now carry the guard `start.sh` already
+  had. Exercised in **both** directions with the launch calls stubbed: absent venv → one readable
+  line, exit 1, nothing spawned; present venv → falls through to both launches with the paths
+  correctly interpolated. `start.ps1` also stops naming the interpreter path twice, so the guard
+  and the command it guards can no longer drift apart.
+
+### Changed
+
+- **`pip install -e .` now runs before the dependency install.** `requires-python` is the version
+  gate and `-e .` is the only step that reads it, so ordering it last meant paying for 107 packages
+  before being told the interpreter was wrong. Measured on Python 3.11: **8.8 s** to
+  `ERROR: Package 'finance-analysis-platform' requires a different Python: 3.11.3 not in '>=3.14'`.
+  Safe because `-e .` needs nothing from `requirements.txt` — into an empty venv it installs
+  exactly one distribution, itself.
+
+- **The `./start.sh` Ctrl-C claim is now hedged like every other uncertain claim here.** It was
+  stated as fact; the record says the trap could never be exercised from this machine's Git Bash.
+  Every other unverified thing in this README carries a caveat, and this one now does too.
+
+### Not done, deliberately
+
+- **CI still never installs `requirements.txt`.** It installs the 6-entry test set, so the README's
+  real install path — 107 pins including OpenBB and its 30 subpackages — remains proven on one
+  Windows 3.14.6 machine only. No metadata conflict exists (`openbb`, `openbb-core` and
+  `openbb-sec` all declare `>=3.10,<4`; `pandas>=3.11`; `numpy>=3.12`), so this is an untested
+  path rather than a suspected one. Closing it means a CI job that installs and does nothing else.
+
 ## 2026-08-17 (c) — two warnings that were not telling the truth
 
 Backend **409 passing** (16 network-deselected), frontend 46. `npm run lint` is now clean; it
