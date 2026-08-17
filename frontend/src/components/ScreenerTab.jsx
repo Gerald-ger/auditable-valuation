@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { post } from '../api';
-
-const TIER_COLORS = { S: '#2ebd85', A: '#3b82f6', B: '#f0b90b', C: '#f97316', D: '#f6465d' };
-const PILLARS = ['valuation', 'quality', 'health', 'growth', 'momentum'];
-
-const scoreColor = (s) =>
-  s === null || s === undefined ? 'var(--muted)' : s >= 65 ? '#2ebd85' : s >= 50 ? '#f0b90b' : '#f6465d';
+import { PILLARS, scoreColor, TIER_COLORS } from '../format';
 
 /**
  * Rank many companies with the same deterministic engine that scores one.

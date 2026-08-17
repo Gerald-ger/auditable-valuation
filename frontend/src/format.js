@@ -24,3 +24,13 @@ export function scoreColor(s) {
   if (s >= 50) return 'var(--gold)';
   return 'var(--down)';
 }
+
+/**
+ * Tier badge colours, shared by the Scorecard, Screener and Portfolio tabs.
+ * Hex rather than CSS vars: S/B/D match --up/--gold/--down, but A and C have no
+ * palette entry, and adding two vars just to make this uniform is not worth it.
+ */
+export const TIER_COLORS = { S: '#2ebd85', A: '#3b82f6', B: '#f0b90b', C: '#f97316', D: '#f6465d' };
+
+/** Pillar order as the scoring engine emits it — mirrors store.PILLARS. */
+export const PILLARS = ['valuation', 'quality', 'health', 'growth', 'momentum'];

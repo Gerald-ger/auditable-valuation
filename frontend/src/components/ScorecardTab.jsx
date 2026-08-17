@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import { get, post, stream } from '../api';
-import { num, big, pct, scoreColor } from '../format';
+import { num, big, pct, scoreColor, TIER_COLORS } from '../format';
 import ScoreHistory from './ScoreHistory';
 import Debate from './Debate';
-
-const TIER_COLORS = { S: '#2ebd85', A: '#3b82f6', B: '#f0b90b', C: '#f97316', D: '#f6465d' };
 
 /**
  * A plain-language read of the card, composed from the pillars themselves.

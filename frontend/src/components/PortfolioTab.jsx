@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
-import { big, num } from '../format';
-
-const TIER_COLORS = { S: '#2ebd85', A: '#3b82f6', B: '#f0b90b', C: '#f97316', D: '#f6465d' };
+import { big, num, TIER_COLORS } from '../format';
 
 /**
  * Watchlist and holdings.
