@@ -7,6 +7,196 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-17 (c) — two warnings that were not telling the truth
+
+Backend **409 passing** (16 network-deselected), frontend 46. `npm run lint` is now clean; it
+had emitted one warning on every build.
+
+### Fixed
+
+- **The portfolio's mixed-currency warning fired on portfolios that were not mixed.** It read the
+  currency of every row, including watchlist entries, but the sentence it prints is about the
+  *totals* — and a watchlist row has no market value, so it is absent from every total. Five USD
+  holdings listed beneath one watched HK name produced a red warning about an FX problem that did
+  not exist. The published `docs/images/portfolio.png` is a picture of exactly that.
+
+  It now reads the same set the backend uses to build `held` — truthy `market_value` — which also
+  excludes a held row whose quote failed, for the same reason: it is not in the totals either.
+  Verified in both directions against the running app, because a warning that never appears would
+  also have passed a test that only checked it was gone: five USD holdings → hidden; give the HK
+  name shares → shown; take them away → hidden.
+
+  The underlying limitation is untouched and still open — totals really do add HKD and USD at
+  face value. Only the trigger was wrong.
+
+- **`ScorecardTab` emitted an `exhaustive-deps` warning on every build.** `loadComps` was a plain
+  function, rebuilt each render, so listing it in the effect's dependencies would have refetched
+  on every render and omitting it was the warning. It is now `useCallback` keyed on `ticker`, the
+  only input it reads, so its identity changes exactly when the effect's own dependency does —
+  same behaviour, one fewer suppression. This is the pattern `PortfolioTab` already used.
+
+  Deliberately *not* the `eslint-disable-line` used at `PriceChart.jsx:344`: that one marks an
+  effect that must not list `pinned` because it sets `pinned` and would loop. Nothing here loops;
+  suppressing it would have hidden a fixable problem behind a comment meant for an unfixable one.
+
+### Added
+
+- **`docs/currency-consistent-discounting.md`** — the written analysis TODOLIST set as the trigger
+  for the HK risk-free-rate item, with a worked 0700.HK example. No code changed. It resolves the
+  spot-versus-forward question (spot is correct; the concern as recorded was inverted, and a
+  forward rate on top of a local-currency discount rate would count the interest differential
+  twice), and corrects the recorded sizing: measured with every leg moving, the effect is **+50.5%**
+  (680.99 → 1,024.98), not the "roughly doubles" previously recorded from moving the WACC alone.
+
+  It also reports why: `terminal_growth = min(TERMINAL_GROWTH, rf)`, so lowering the rate lowers
+  the growth cap with it and the terminal spread `WACC − g` is almost invariant once the cap binds
+  (5.25% → 3.49% → 3.50% across 4.30% / 1.70% / 1.10%). That makes the contestable half of the
+  change — whether to net off the sovereign default spread — worth 1.8%, while the well-supported
+  half is worth +50%.
+
+  The item stays open, on a better-posed question: adopting a 1.1–1.7% CNY risk-free rate also
+  asserts that Tencent grows at 1.1–1.7% in perpetuity, which the cap imports silently. That is a
+  macro forecast arriving through the back door, and it has to be settled before any rate changes.
+
+---
+
+## 2026-08-17 (b) — the README shows the product
+
+### Added
+
+- **Five screenshots, one per tab**, under *What it looks like*, directly beneath the disclaimer
+  so a visitor sees the product before the install steps.
+
+  Financial Models and Scorecard are cropped. GitHub renders README images at about 890 px wide,
+  so the full 1400 px captures landed at 63% and their body text was unreadable; each is cut to
+  the part that carries the argument. Cut lines were chosen by scanning each row for text and
+  cutting inside a blank band rather than by eye — `models.png` 1263 → 578 px and 245 → 105 KB,
+  `scorecard.png` 1294 → 724 px and 272 → 130 KB.
+
+  The demo portfolio is fabricated and the README says so. Its first version used a cost basis of
+  999 for XOM against a price near 160, showing −84% and dragging the total to −35%; on a project
+  whose pitch is auditable valuation, a number that could not have happened reads as a defect. At
+  175 the position shows −8.5% in red against a +41.6% total in green, exercising both states of
+  the P&L styling.
+
+### Not done, deliberately
+
+- **The screenshots were not automated.** The tab and ticker are React state, not URL parameters,
+  so a headless browser only ever reaches the Tracker tab on its default ticker. Every shot needs
+  a real click.
+- **The AI panels show "offline" and were left that way.** Ollama is not installed here, and the
+  README's own limitations section says so. A screenshot showing the documented state is more
+  honest than one staged around it.
+
+---
+
+## 2026-08-17 (a) — a stranger can clone it and run it
+
+Backend **408 → 409 passing** (16 network-deselected), frontend 46. Scope changed from
+*portfolio piece only* (2026-08-14) to **a runnable source project**: Docker and binary releases
+remain out.
+
+### Changed
+
+- **`backend/` is a real Python package.** The modules imported each other flat (`import comps`),
+  which worked only because uvicorn was launched with `--app-dir backend` and the test conftest
+  edited `sys.path`. Nothing outside `backend/` could import the code, and generic names —
+  `search.py`, `store.py`, `main.py` — sat directly on `sys.path` beside site-packages.
+
+  Adds `pyproject.toml` and `backend/__init__.py`, rewrites sibling imports to
+  `from backend import …`, and drops the `sys.path` insert. Install with `pip install -e .`; the
+  launchers now run `backend.main:app` from the repo root with no `--app-dir`.
+
+  The import *form* is preserved deliberately — `from backend.data_provider import fx_rate`, never
+  `from backend import data_provider` plus attribute access. Two autouse fixtures monkeypatch
+  `financial_models.fx_rate` and `.risk_free_rate` to pin the FX rate and treasury yield, and
+  those patches bind because `from X import name` copies the name onto the importing module.
+  Attribute access would have made both fixtures inert, the "offline" suite would have started
+  hitting the network, and every golden score would drift with the market — silently, with nothing
+  turning red. Proved by poisoning `RISK_FREE_RATE` and confirming the golden snapshot fails.
+
+  `backend/__init__.py` is empty and must stay: deleting it keeps all 409 tests green through the
+  namespace-package fallback while breaking `pip install -e .`. The suite does not protect it.
+
+- **Three requirements files became one runtime set.** None was named `requirements.txt`, which
+  forced a documented workaround in CI, and two of them pinned `fastapi` to different versions.
+  `requirements.post-openbb.txt` → `requirements.txt`; the pre-OpenBB rollback snapshot deleted
+  (the README recorded that it will not boot the app — it omits `aiohttp`); ruff's pin moved out of
+  the workflow into `requirements-test.txt`. CI now also runs `pip install -e .`.
+
+- **The frontend talks to `/api` on its own origin.** Vite proxies it to port 8000, so CORS is not
+  involved in development at all. Before this, Vite silently moved to 5174 when 5173 was taken
+  while the backend allowed exactly two origins: the page rendered normally, with no data and no
+  error anywhere, which is close to undiagnosable for a first-time user. `strictPort` now turns
+  that collision into a loud startup failure. Better than adding 5174 to the allow list, which
+  only moves the trap one port along.
+
+- **README leads with install.** Prerequisites, Install and Run moved from line ~206 to the top,
+  and macOS/Linux gets a full install path rather than a paragraph telling it to substitute the
+  interpreter throughout.
+
+### Added
+
+- **`start.sh`** for macOS/Linux. Both existing launchers are Windows-only — `start.ps1` calls
+  `powershell`, which does not exist off Windows. Vite runs in the *foreground* so Ctrl-C reaches
+  it through the terminal, leaving the trap responsible only for a single childless backend
+  process. `.gitattributes` pins its line endings, because CRLF would fail at the shebang with an
+  error that names no line ending.
+- **`engines: { node: ">=22" }`**, which existed only in prose and CI before.
+- **A test guarding the methodology document `ai_client` reads at runtime.**
+  `_reference_excerpt` swallows `OSError` and returns `""` — correct at runtime, but it means
+  reorganising `docs/` would quietly strip the methodology out of every AI answer with no error
+  and no log line.
+- **`docs/release-readiness.md`** — what is done, what is deliberately not, and the limitations a
+  reader deserves up front, including that CI never installs the runtime requirements set, so a
+  broken runtime pin passes green.
+
+### Fixed
+
+- **The staleness banner printed a launch command that no longer works.** The banner shown when
+  the backend is running older code told the user to restart with
+  `uvicorn main:app --app-dir backend`, which fails under the new packaging. The one piece of UI
+  whose entire job is to get the user unstuck was handing them a broken instruction. Nothing
+  caught it because it is a string in JSX: the suite verifies that the app runs, not that it tells
+  people the truth about how to run it.
+- **A false claim about the Python floor.** The README said `pandas==3.0.5` and `numpy==2.5.1`
+  "publish no wheels for earlier interpreters", presenting 3.14 as dependency-imposed. Checked
+  against PyPI: pandas ships wheels back to cp311 and declares `>=3.11`; numpy back to cp312 and
+  `>=3.12`. The real floor is `requires-python` in `pyproject.toml`, set to match the only tested
+  configuration. Both documents now say that instead of inventing a constraint.
+- **The tier palette had three copies.** `TIER_COLORS` was defined identically in three
+  components and `ScreenerTab` reimplemented `scoreColor` with raw hex instead of the CSS
+  variables the rest of the app uses, so the screener would have drifted from every other tab the
+  first time the theme changed. Verified no-op: its literals were exactly `--up` / `--gold` /
+  `--down`.
+
+### Not done, deliberately
+
+- **No `.env` or env-var config.** Port 8000 was hardcoded in six places, but the real defect was
+  the repetition, which the proxy change removed. Module constants stay.
+- **`index.css` (2,033 lines) and the two largest tab components were not split.** Real
+  single-contributor risks, but there are no component tests, so the diff would be unverifiable.
+- **The Python floor was not lowered.** 3.12/3.13 would plausibly work; lowering it honestly means
+  running the suite there first, which is a task, not a config edit.
+
+### Repository
+
+- Local tooling removed from git history. 38 `.claude/agents/*.md` files were committed in the
+  first commit and deleted later, but a deletion only adds a "these are gone now" entry — anyone
+  who cloned could still read every one with a single `git show`. Removed from the whole history
+  with `git filter-repo`; the tree hash was byte-identical before and after, which is the proof it
+  changed no current content.
+
+  Verified, not assumed: **GitHub still serves the removed files to a direct request for the old
+  SHA** after a force-push, because that does not trigger garbage collection. Recorded rather than
+  chased — the content was agent role definitions with no credentials and no personal data, and
+  the hash appears in no file, no commit message and no entry of the repo's public events API.
+- Default branch `openBB-testing` → `main`, the experiment branch deleted, description rewritten
+  from a keyword dump into a sentence, 14 topics set. Project name aligned across the repo slug,
+  `pyproject.toml` and the README title.
+
+---
+
 ## 2026-08-14 (f) — the price is as fresh as the feed allows, and says how fresh
 
 Backend **402 → 408 passing** (16 network-deselected), frontend 46.

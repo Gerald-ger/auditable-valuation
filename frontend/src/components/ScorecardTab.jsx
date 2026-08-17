@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { get, post, stream } from '../api';
 import { num, big, pct, scoreColor, TIER_COLORS } from '../format';
 import ScoreHistory from './ScoreHistory';
@@ -498,10 +498,15 @@ export default function ScorecardTab({ ticker, aiOnline }) {
   const [history, setHistory] = useState([]);
   const [watched, setWatched] = useState(false);
 
-  async function loadComps(peers) {
+  // useCallback so the effect below can depend on it honestly. As a plain
+  // function it was rebuilt every render, so listing it would have re-fetched on
+  // every render and leaving it out was the lint warning this file shipped with.
+  // Its only changing input is `ticker`, so the identity now moves exactly when
+  // the effect's own dependency does — same behaviour, one fewer suppression.
+  const loadComps = useCallback(async (peers) => {
     const q = peers ? `?peer_list=${encodeURIComponent(peers)}` : '';
     setComps(await get(`/stock/${ticker}/comps${q}`));
-  }
+  }, [ticker]);
 
   useEffect(() => {
     if (!ticker) return;
@@ -531,7 +536,7 @@ export default function ScorecardTab({ ticker, aiOnline }) {
         setLoading(false);
       }
     })();
-  }, [ticker]);
+  }, [ticker, loadComps]);
 
   async function explain() {
     setNarrativeBusy(true);

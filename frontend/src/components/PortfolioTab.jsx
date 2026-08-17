@@ -62,7 +62,15 @@ export default function PortfolioTab({ onPick }) {
   const rows = data?.rows ?? [];
   const totals = data?.totals ?? {};
   const conc = data?.concentration ?? {};
-  const currencies = [...new Set(rows.map((r) => r.currency).filter(Boolean))];
+  // Only the rows that reach the totals, because the warning below is about the
+  // totals. Truthy market_value is the same test main.portfolio() uses to build
+  // `held`, so it excludes a watchlist row (no shares) and an unpriced one alike;
+  // either would otherwise contribute a currency to a sum it is absent from. Read
+  // over every row, this fired on a portfolio of five USD holdings because a
+  // watched HK name was listed beneath them.
+  const currencies = [
+    ...new Set(rows.filter((r) => r.market_value).map((r) => r.currency).filter(Boolean)),
+  ];
 
   return (
     <div>

@@ -1,8 +1,10 @@
 # TODO
 
-Open work, ranked. Each item records the **trigger** (when it becomes worth doing) so
+Open work, ranked. Open items record the **trigger** (when it becomes worth doing) so
 nothing gets done too early — and the deferred items record *why*, so the decision does
-not get re-litigated.
+not get re-litigated. Three of the four entries under *Deliberately not doing* carry no
+trigger, which is deliberate: they are settled rather than waiting, and inventing a
+reopening condition for them would suggest otherwise.
 
 Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliberately deferred
 
@@ -249,9 +251,15 @@ import it or recompute, and re-measuring every verdict.
 
 ### 🟡 Portfolio totals ignore FX
 
-Holdings in USD and HKD are summed at face value. The UI warns when more than one
-currency is present, but the total is wrong, not merely imprecise.
+Holdings in USD and HKD are summed at face value. The UI warns when the totals really do
+span more than one currency, but the total is wrong, not merely imprecise.
 **Trigger: actually holding both.** Needs a rate source; `obb.currency` is free.
+
+*Narrowed 2026-08-17:* the warning used to read the currency of **every** row, so a
+watchlist entry — which carries no market value and is therefore in no total — could
+raise it on a portfolio that was not mixed at all. It now reads the same set the backend
+uses to build `held`. That fixed when the warning fires; the summation it warns about is
+still unconverted, which is why this item stays open.
 
 ### 🟡 Cosmetic
 
@@ -266,12 +274,18 @@ Line references re-verified 2026-08-09.
   choices when they were `height / 2` pills written as numbers.
 - The footer metadata strip uses two middle dots on one line where the house rule allows
   one. Same category as above: real, cosmetic, unactioned.
-- `ScorecardTab.jsx:225` carries an unsuppressed `exhaustive-deps` lint warning on
-  `loadComps` (pre-existing, emitted by oxlint on every build). Separately,
-  [PriceChart.jsx:398](frontend/src/components/PriceChart.jsx#L398) *disables* the same
+- ~~`ScorecardTab.jsx` carries an unsuppressed `exhaustive-deps` lint warning on
+  `loadComps`~~ — **done 2026-08-17**, see the Done entry below. `loadComps` is now
+  `useCallback` keyed on `ticker`, so the effect can list it honestly; `npm run lint` is
+  clean. The line number this item carried (`:225`) had drifted and pointed at chart
+  scaling. Separately,
+  [PriceChart.jsx:344](frontend/src/components/PriceChart.jsx#L344) *disables* the same
   rule on `visibleGroups` deliberately — rebuilding the chart on a marker-filter change
-  would discard the user's zoom. (An earlier revision of this list called the
-  ScorecardTab warning miscatalogued; the linter does emit it — that claim was wrong.)
+  would discard the user's zoom — and that remains the right call there, because the
+  effect sets the state it would have to depend on. (An earlier revision of this list
+  called the ScorecardTab warning miscatalogued; the linter did emit it — that claim was
+  wrong. The `PriceChart.jsx:398` reference it also carried was wrong: the disable is at
+  line 344.)
 
 **Done since:** `assumptions.fcf_source` and `assumptions.risk_free_rate` are now
 surfaced in the DCF panel alongside `beta_source`
@@ -337,11 +351,30 @@ parity implies a low-rate currency trades at a forward premium, so the conversio
 needs a forward rate rather than spot. Today's treatment is wrong in a *named* way; the
 naive fix would be wrong in an *unnamed* way, which is worse.
 
-**Trigger: the spot-versus-forward question settled in writing, with a worked 0700.HK
-example.** Not a data problem any more — the HKMA publishes Exchange Fund yields free and
-official (unverified from this machine, 502 on 2026-08-14), and China's ten-year is widely
-published. It is a modelling question, and doubling a valuation on an unexamined FX
-assumption is exactly what this platform exists to avoid.
+**Trigger discharged 2026-08-17** — the analysis is
+[docs/currency-consistent-discounting.md](docs/currency-consistent-discounting.md). Spot is
+correct; the worry recorded above was inverted. Discounting in the cash-flow currency and
+translating the *result* at spot is algebraically identical to translating each cash flow at
+its forward rate and discounting at the target-currency rate, so the interest differential
+enters exactly once. Applying a forward rate on top of a local-currency discount rate would
+count it twice. Method A is already the shape the code uses.
+
+**Two numbers in this entry are wrong, corrected by measurement.** The baseline is 680.99,
+not 624.90 — the base-year and ERP work moved it. And the effect is **+50.5%** (680.99 →
+1,024.98), not "roughly double": `terminal_growth = min(TERMINAL_GROWTH, rf)`, so lowering
+the rate lowers the growth cap with it, and the recorded figure came from moving the WACC
+alone. The terminal spread `WACC − g` is almost invariant once the cap binds (5.25% → 3.49%
+→ 3.50% at rf 4.30% / 1.70% / 1.10%), which also makes netting off the sovereign default
+spread worth only 1.8% — the contestable half of the change is the cheap half.
+
+**New trigger: what the terminal-growth ceiling means in a low-nominal-rate currency.**
+Adopting a 1.1–1.7% CNY risk-free rate does not only change a discount rate — through the
+cap it asserts that Tencent's cash flows grow at 1.1–1.7% in perpetuity, which is a macro
+forecast arriving through the back door. The terminal share rises 62.96% → 73.4% with it, so
+more of the answer rests on the assumption that just became questionable. The analysis lists
+three candidate resolutions and picks none. Data is not the blocker: China's ten-year is
+widely published and HKMA publishes Exchange Fund yields free (unverified from this machine,
+502 on 2026-08-14).
 
 *(Distinct from the reporting-currency mismatch fixed 2026-08-10. That was a units bug —
 CNY cash flows compared against an HKD price. This is a choice of discount-rate inputs,
@@ -388,6 +421,33 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-17 — the project became something a stranger can clone and run
+
+Full detail in `CHANGELOG.md` under 2026-08-17 (a), (b) and (c). Summarised here because
+three entries above changed as a result.
+
+Scope changed from *portfolio piece only* (2026-08-14) to **a runnable source project**;
+Docker and binary releases stay out. `backend/` is now a real Python package installed with
+`pip install -e .`, the three requirements files became one, the frontend reaches the backend
+through a Vite proxy on a pinned port, `start.sh` covers macOS/Linux, and the README leads
+with install and shows five screenshots. Backend **408 → 409 passing**, frontend 46,
+`npm run lint` clean for the first time.
+
+Two things worth carrying forward as warnings rather than achievements:
+
+- **The suite does not protect `backend/__init__.py`.** Deleting that empty file keeps all
+  409 tests green — pytest puts the repo root on `sys.path`, so `backend` still resolves as a
+  namespace package — while silently breaking `pip install -e .`. Anyone tidying 0-byte files
+  gets an all-green signal on a broken install.
+- **CI never installs the runtime requirements set.** It installs `requirements-test.txt`. A
+  broken runtime pin, or a missing runtime dependency such as `openbb`, passes CI green.
+
+Also: 38 `.claude/agents/*.md` files were removed from the whole git history with
+`git filter-repo` (tree hash byte-identical before and after). Measured afterwards and worth
+knowing generally — **GitHub still serves removed files to a direct request for the old SHA**
+after a force-push, because that does not trigger garbage collection. Recorded, not chased;
+the content held no credentials and no personal data.
 
 ### ✅ 2026-08-14 (f) — the price is as fresh as the feed allows, and says how fresh
 
