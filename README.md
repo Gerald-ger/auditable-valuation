@@ -18,6 +18,102 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 > under [AGPL-3.0](LICENSE); see [Licence and data provenance](#licence-and-data-provenance)
 > for what the licence does *not* cover.
 
+## Prerequisites
+
+| | |
+|---|---|
+| **Python 3.14** | A hard requirement, not a preference. `backend/requirements.txt` pins `pandas==3.0.5` and `numpy==2.5.1`, which publish no wheels for earlier interpreters. `pyproject.toml` declares `requires-python = ">=3.14"`, so pip refuses with a clear message instead of failing halfway through a source build. |
+| **Node 22+** | Declared in `engines` in [frontend/package.json](frontend/package.json). |
+| Ollama | Optional. The AI features disable cleanly without it and everything else works — see [Install guidance](#install-guidance). |
+| FMP API key | Optional, free tier. Without one you lose automatic peer discovery and nothing else — see [Credentials](#credentials). |
+
+## Install
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/Gerald-ger/finance-analysis-platform.git
+cd finance-analysis-platform
+
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+backend\.venv\Scripts\python.exe -m pip install -e .
+
+cd frontend; npm install; cd ..
+```
+
+**macOS / Linux**
+
+```bash
+git clone https://github.com/Gerald-ger/finance-analysis-platform.git
+cd finance-analysis-platform
+
+python3 -m venv backend/.venv
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
+backend/.venv/bin/python -m pip install -e .
+
+(cd frontend && npm install)
+```
+
+The only difference between the two is the interpreter path — `backend\.venv\Scripts\python.exe`
+on Windows, `backend/.venv/bin/python` elsewhere. Command examples further down use the Windows
+form; substitute throughout. The Python and JavaScript themselves are platform-neutral, and CI
+runs the whole suite on Linux.
+
+**Why `pip install -e .`:** it puts `backend` on the path as a real package, which is what lets
+`from backend import scoring` work from anywhere — a script, a notebook, a scheduled job — rather
+than only from inside the directory. Without it the app still runs, but only from the repo root.
+
+**Which requirements file:** `requirements.txt` is the runtime set — a pip freeze of a working
+venv, so it also lists dev tools like `ruff`. `requirements-test.txt` is the smaller set CI
+installs to lint and run the suite offline. OpenBB is already pinned in `requirements.txt`;
+there is nothing extra to install for it.
+
+## Run it
+
+| | |
+|---|---|
+| Windows | double-click **`start.bat`**, or `.\start.ps1` from PowerShell |
+| macOS / Linux | `./start.sh` — both servers run in that terminal and stop together on Ctrl-C |
+
+or manually, in two terminals, **from the repo root**:
+
+```powershell
+# terminal 1 — backend
+backend\.venv\Scripts\python.exe -m uvicorn backend.main:app --port 8000
+
+# terminal 2 — frontend
+cd frontend; npm run dev
+```
+
+Then open http://localhost:5173.
+
+**The dev server owns port 5173 and will not move.** Vite is configured with `strictPort`, so a
+port collision fails loudly at startup rather than sliding to 5174 — which used to leave the page
+rendering normally with no data and no error, because the backend's CORS list named 5173 only.
+The browser now talks to `/api` on its own origin and Vite proxies that to port 8000, so CORS is
+not involved in development at all. Serving `dist/` from anywhere other than `npm run preview`
+means supplying your own reverse proxy for `/api`.
+
+**The backend does not hot-reload — restart it after changing any `backend/*.py`.** Vite
+handles the frontend, so a JSX edit appears immediately and a Python edit does not, which is
+the asymmetry that makes this easy to forget. The symptom is silence rather than an error: a
+field added after the server booted is simply absent from responses, and a panel that reads
+it renders nothing, which looks exactly like a feature that was never built.
+
+`--reload` is **not** recommended here. Tried 2026-08-14: WatchFiles logged
+`detected changes in 'backend\main.py'. Reloading...`, the replacement worker never started,
+and the old process kept serving — with the log claiming it had reloaded. It also leaves an
+orphaned child holding port 8000 after the parent dies, so the next start fails with
+`WinError 10048` and the port has to be freed by hand.
+
+Instead the app tells you. `GET /api/health` returns `source_changed_since_start`, a digest of
+`backend/*.py` captured at import and re-checked per call, and the page shows a banner when it
+flips. The digest reads text rather than bytes so a line-ending change — `git checkout` on this
+repo rewrites LF as CRLF — does not raise a false alarm.
+
+---
+
 ## Architecture
 
 ```
@@ -203,73 +299,6 @@ Fixtures themselves are regenerated with `backend\tests\capture_fixtures.py`.
 The `network`-marked tests are deselected by default and exist to tell you when
 yfinance changes shape — it has already shipped two different news payloads.
 
-## Prerequisites
-
-| | |
-|---|---|
-| Python | **3.14** — what CI runs; `pandas==3.0.5` / `numpy==2.5.1` narrow the workable range |
-| Node | **22** |
-| Ollama | optional — the AI features disable cleanly without it, everything else works |
-
-## Install
-
-```powershell
-git clone https://github.com/Gerald-ger/finance-analysis-platform.git
-cd finance-analysis-platform
-
-python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.post-openbb.txt
-
-cd frontend
-npm install
-cd ..
-```
-
-**Which requirements file:** install `requirements.post-openbb.txt` — that is the runtime set.
-`requirements.lock.txt` is the pre-OpenBB rollback target and **will not boot the app**: it
-omits `aiohttp`, which [backend/ai_client.py](backend/ai_client.py) imports at module scope.
-`requirements-test.txt` is the minimal set CI installs to run the suite offline.
-
-**On macOS/Linux** a venv puts its interpreter at `backend/.venv/bin/python` — substitute that
-for `backend\.venv\Scripts\python.exe` throughout, and use `start.ps1`'s two commands directly
-rather than `start.bat`. The Python and JavaScript are platform-neutral; only the launcher
-scripts and the command examples below are Windows-shaped.
-
-## Run it
-
-Double-click **`start.bat`** (or run `.\start.ps1` from PowerShell).
-
-or manually, in two terminals:
-
-```powershell
-# terminal 1 — backend
-backend\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --port 8000
-
-# terminal 2 — frontend
-cd frontend; npm run dev
-```
-
-Then open http://localhost:5173.
-
-**The backend does not hot-reload — restart it after changing any `backend/*.py`.** Vite
-handles the frontend, so a JSX edit appears immediately and a Python edit does not, which is
-the asymmetry that makes this easy to forget. The symptom is silence rather than an error: a
-field added after the server booted is simply absent from responses, and a panel that reads
-it renders nothing, which looks exactly like a feature that was never built.
-
-`--reload` is **not** recommended here. Tried 2026-08-14: WatchFiles logged
-`detected changes in 'backend\main.py'. Reloading...`, the replacement worker never started,
-and the old process kept serving — with the log claiming it had reloaded. It also leaves an
-orphaned child holding port 8000 after the parent dies, so the next start fails with
-`WinError 10048` and the port has to be freed by hand.
-
-Instead the app tells you. `GET /api/health` returns `source_changed_since_start`, a digest of
-`backend/*.py` captured at import and re-checked per call, and the page shows a banner when it
-flips. The digest reads text rather than bytes so a line-ending change — `git checkout` on this
-repo rewrites LF as CRLF — does not raise a false alarm.
-
----
-
 ## Install guidance
 
 The model choices below are sized for **CPU-only inference on ~16 GB RAM**, no dedicated GPU.
@@ -296,12 +325,36 @@ activate automatically (green dot in the chat panel). To use a different model, 
 
 ### 2. OpenBB Platform *(required — v4.7.2)*
 
+**Nothing to install.** `openbb==4.7.2` and its subpackages are already pinned in
+`backend/requirements.txt`, so the Install step above brought them in. This section is
+background on what OpenBB does here and how to give it a key.
+
 | | |
 |---|---|
-| Install | `backend\.venv\Scripts\python.exe -m pip install openbb` — 41 MB / 66 wheels into the existing venv. pandas & numpy are already present, so the download is small and needs no C compiler. **Stop the servers first** or Windows file locks break the install. |
-| Side effect | Downgrades `fastapi` 0.141.1 → 0.136.3 and `uvicorn` 0.52.0 → 0.40.0. Verified harmless here. Roll back with `backend\requirements.lock.txt`; the post-install state is `backend\requirements.post-openbb.txt`. |
-| Import cost | `from openbb import obb` takes ~4–5 s. Never import it at module scope in the request path — every call site defers it into the function that needs it, and the symbol index is cached to disk so a warm start never pays it at all. |
-| Credentials | `~/.openbb_platform/user_settings.json` — outside the repo, never committed. There is **no** `obb.account.save()` in 4.7.2, so edit that JSON directly. Only `equity.compare.peers` needs a key (FMP, free tier); the other three calls run without one. |
+| Import cost | `from openbb import obb` takes ~4–5 s. Never import it at module scope in the request path — every call site defers it into the function that needs it, and the symbol index is cached to disk so a warm start never pays it at all. The first search, first DCF and first peer lookup after a cold start each pay it once. |
+| Version note | The pinned `fastapi==0.136.3` / `uvicorn==0.40.0` are OpenBB's ceiling, not arbitrary. Raising them independently will break the install. |
+
+### Credentials
+
+Only one of the four OpenBB calls needs a key: `equity.compare.peers`, which uses
+Financial Modeling Prep's free tier. **Skipping this is fine** — peer discovery falls back to
+the built-in `PEER_SUGGESTIONS` table in [backend/comps.py](backend/comps.py) and everything
+else runs unchanged.
+
+To add one: get a free key at https://site.financialmodelingprep.com, then create
+`~/.openbb_platform/user_settings.json` (on Windows, `%USERPROFILE%\.openbb_platform\`):
+
+```json
+{
+  "credentials": {
+    "fmp_api_key": "your key here"
+  }
+}
+```
+
+That file lives outside the repo and is never committed. Edit it by hand — OpenBB 4.7.2 has
+no `obb.account.save()`. The other three calls (`treasury_rates`, `equity.search`,
+`equity.fundamental.filings`) need no key at all.
 
 **What OpenBB is actually used for today** — four calls, all on the free tier, all with a
 fallback when the fetch fails:
@@ -356,18 +409,21 @@ backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models
             data/app.db               your data — gitignored
             data/ticker_index.json    cached SEC symbol list — gitignored
             tests/                    pytest suite + committed fixtures + goldens
-            requirements.lock.txt     pre-OpenBB state — the rollback target
-            requirements.post-openbb.txt   runtime state
-            requirements-test.txt     minimal set for CI
+            requirements.txt          runtime set
+            requirements-test.txt     minimal set for CI (tests + lint)
 frontend/   React (Vite) UI: Tracker, Financial Models, Scorecard, Screener, Portfolio
+            vite.config.js            fixed port 5173 + /api proxy to the backend
 docs/       financial-models-reference.md (the AI's methodology playbook)
             scoring-system-design.md (scoring architecture & rationale)
+            release-readiness.md (what is done and what is deliberately not, for running it yourself)
             quant-review-2026-08-06.md (methodology review that drove the 08-07 fixes)
 .github/workflows/ci.yml   CI on every push: ruff + pytest, oxlint + vitest + vite build
 CHANGELOG.md   what changed, with measured before/after
 TODOLIST.md    open work, ranked, with the trigger for each deferred item
+pyproject.toml packaging metadata — what makes `backend` an importable package
 pytest.ini     test config; network tests deselected by default
-start.bat / start.ps1   one-click cold start (backend + frontend + browser)
+start.bat / start.ps1   one-click cold start on Windows (backend + frontend + browser)
+start.sh                the same on macOS/Linux
 LICENSE        GNU AGPL-3.0
 ```
 
