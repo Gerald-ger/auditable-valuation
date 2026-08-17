@@ -1,4 +1,7 @@
-const BASE = 'http://localhost:8000/api';
+// Relative on purpose: Vite proxies /api to the backend (see vite.config.js), so
+// these are same-origin requests and no CORS handshake is involved. Pointing this
+// at an absolute host is what made a shifted dev-server port fail silently.
+const BASE = '/api';
 
 async function handle(res) {
   const body = await res.json().catch(() => ({}));
