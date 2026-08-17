@@ -2,9 +2,11 @@
 
 Open work, ranked. Open items record the **trigger** (when it becomes worth doing) so
 nothing gets done too early — and the deferred items record *why*, so the decision does
-not get re-litigated. Three of the four entries under *Deliberately not doing* carry no
-trigger, which is deliberate: they are settled rather than waiting, and inventing a
-reopening condition for them would suggest otherwise.
+not get re-litigated. Entries under *Deliberately not doing* carry no trigger, which is
+deliberate: they are settled rather than waiting, and inventing a reopening condition for
+them would suggest otherwise. The one exception is the TestClient item, which names the
+change that would reopen it. (Stated as a rule and an exception rather than as a count,
+because a count goes stale every time an entry is added — it already had, twice.)
 
 Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliberately deferred
 
@@ -315,6 +317,24 @@ is a CI job that installs `requirements.txt` and `-e .` and then runs nothing �
 is not already there. First recorded as a warning inside the 2026-08-17 Done entry; promoted
 here so it is not lost inside a dated one.
 
+### 🟡 EMA overlay — near-free, and not obviously worth it
+
+Raised 2026-08-17 (f). `emaArray` already exists as MACD's helper, so exposing an EMA
+overlay is an `export` and a toggle. It asserts nothing, so there is no harm case. The
+question is whether it is a feature or a checkbox.
+
+Measured against the SMA20 already drawn: level correlation **0.9991**, first-difference
+correlation 0.854, and **14% more price crossings** (higher on 9 of 10 names, tied on one).
+Derived exactly: EMA(N) and SMA(N) share an identical mean lag of (N−1)/2 and identical
+iid-noise suppression of 1/N, differing only in weight shape — 3× lag variance and ~1.9×
+weight on the newest bar. So it is not "faster"; it is the same average with a different
+memory profile, producing more whipsaw for the same information.
+
+**Trigger: a user asking for it by name, or a second EMA-based indicator that would make
+the helper worth exposing anyway.** If added, the tooltip should state the lag and noise
+equivalence — that sentence is the only thing that makes it worth having over the SMA, and
+no commercial charting package tells its users.
+
 ### 🟡 Cosmetic
 
 Line references re-verified 2026-08-09.
@@ -475,6 +495,37 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-17 (f) — a dispersion band, and two indicators tested rather than argued
+
+Full detail in `CHANGELOG.md` under 2026-08-17 (f). Frontend **46 → 54 passing**; no
+backend code touched. Three of the six candidate indicators were decided by running a test
+on real data, and two of those tests killed the candidate.
+
+- **Added a ±2 SD band**, off by default, centred on the MA20 already drawn — deliberately
+  not called Bollinger Bands, because `%B` is an exact affine transform of a z-score
+  (`0.5 + z/2k`, pinned to ten decimal places) and the eponymous name would import a
+  trading claim. It fills the chart's only real gap: nothing else displayed dispersion.
+  Not sent to the AI, structurally — it is computed in the browser and never reaches the
+  backend.
+- **Fibonacci and the Stochastic were rejected by measurement**, and moved to
+  *Deliberately not doing* with the figures, so neither gets re-argued.
+- **Fixed a README claim** that described indicator windows as measured in trading days,
+  which `09ee627` changed to bars on 2026-08-13.
+
+Two things worth carrying forward:
+
+- **A test caught an error that review did not.** The z-score ceiling for a window of *n*
+  points is `sqrt(n-1)` under the population divisor and `(n-1)/sqrt(n)` under the sample
+  one. Both this list's author and the analysis it was built on had them swapped. It
+  survived because the largest deviation ever observed in the measured data was 4.00,
+  which sits below both candidate ceilings — **the empirical check could not have
+  distinguished them.** Only a test deriving the bound from the most extreme possible
+  window did. Where a measurement cannot separate two hypotheses, derive.
+- **Two of these decisions cost an afternoon of measurement and are now permanent.**
+  Arguing about Fibonacci is unbounded; a permutation test on 12,461 bars is not. The same
+  shape as the plausibility tests: replace an opinion with a number and the question stops
+  coming back.
 
 ### ✅ 2026-08-17 (e) — three things the model said that the world does not
 
@@ -1243,6 +1294,52 @@ alignment, `sharesOutstanding` vs `marketCap/price`, and the `revenue_cagr_3y` w
 ---
 
 ## Deliberately not doing
+
+### ⚪ Fibonacci retracement, and candlestick pattern detection
+
+Tested 2026-08-17 (f) on ten names, five years of daily OHLCV, 12,461 bars. A permutation
+test asked whether the Fibonacci level set catches more retracement terminations than a
+random level set of the same size: **p = 0.415 / 0.326 / 0.226** at ZigZag thresholds of
+5% / 8% / 10%. Not significant anywhere, and the test was built to favour Fibonacci — the
+random levels were drawn from a range including a near-empty region the Fibonacci ratios
+avoid. Terminations are near-flat from 0.4 to 1.0.
+
+The decisive argument is internal rather than statistical: **the drawn horizontal levels
+already shipping are the honest version of this.** They report how many bars actually
+touched a line, so a reader who believes in 61.8% can draw it and be told. Auto-drawn
+levels would replace that measurement with an assertion.
+
+Candlestick patterns fail for a different reason: they are defined by relationships
+*within* a bar, and a bar here is 1m to 1wk depending on the period dropdown, so the
+detected set would change with no change in the company. There is no trading-day
+expression of "a hammer" the way there is of "a 50-day average".
+
+### ⚪ Stochastic oscillator
+
+Measured 2026-08-17 (f) against the RSI(14) already shipping, on true intraday high/low.
+Level correlation **0.845** — but the containment is what settles it: `%K<20` holds
+**93.9%** of every `RSI<30` event while firing **9.0× as often** (AAPL 236 against 29;
+NVDA 198 against 11). Not a second opinion; the same opinion with roughly eight extra
+false alarms each time.
+
+It also has a defect RSI does not. Its denominator is the window's min and max, the least
+robust order statistics available, so **%K moves when price has not** — purely because the
+bar that set an extremum rolled out of the lookback. An indicator that changes state in the
+absence of an event is a poor fit for a platform that withholds numbers it cannot justify.
+
+### ⚪ VWAP
+
+Session VWAP is well-defined on 2 of the 9 periods this app offers (1d, 5d) and undefined
+on 2 more (5y, max — a bar is a day or a week, so there is no session to anchor to). On the
+1h intervals a US session is seven bars whose last is only 30 minutes long while carrying
+the closing auction, which makes the average **systematically close-biased** — a number
+that would look plausible and be wrong.
+
+Anchored VWAP is computable on daily bars but its selling point is false: it is read as the
+average cost basis of everyone who bought since the anchor, which assumes every share
+traded is still held. A six-month anchor accumulates volume equal to roughly half of a
+mega-cap's shares outstanding, and several multiples of a high-turnover name's. The anchor
+is also a free parameter with no selection rule, chosen after the outcome is visible.
 
 ### ⚪ Full `get_fundamentals` migration to OpenBB
 

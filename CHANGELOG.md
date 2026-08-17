@@ -7,6 +7,114 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-17 (f) — a dispersion band, and two indicators tested rather than argued
+
+A review of which technical indicators are worth adding. Frontend **46 → 54 passing**,
+backend 423 unchanged — no backend code was touched. The decisions were made by running
+tests on real data rather than by weighing opinions, and two of the three candidates were
+rejected by their own measurements.
+
+### Added
+
+- **A ±2 SD dispersion band on the price chart**, off by default, centred on the MA20
+  already drawn. It fills the one real gap: price, MAs, RSI, MACD and volume all describe
+  level or momentum, and nothing answered "is today's move large for this name lately?".
+
+  **Deliberately not called Bollinger Bands.** `%B`, the signal usually read off them, is
+  an exact affine transform of a z-score — `%B = 0.5 + z/2k` — which the suite pins to ten
+  decimal places, so a band tag carries nothing beyond "price is *z* standard deviations
+  from its own recent mean". The plain name describes the lines; the eponymous one imports
+  a trading claim. Nothing here needs validating against forward returns because nothing is
+  asserted — the same reasoning that let the beta confidence interval ship.
+
+  Two measured facts sit on the tooltip so it is not read as a signal: **88.5%** of closes
+  fall inside (12,461 daily bars, ten names — not the 95.4% a normal distribution implies,
+  because σ is estimated in-sample from the very window containing the price), so tags run
+  at about **28 a year**.
+
+  Not sent to the AI, and structurally so: the band is computed in the browser and never
+  reaches the backend, and the AI context carries only `user_chart_drawings` plus model
+  outputs. No indicator of any kind crosses that boundary today.
+
+  Methodology, each decided by measurement rather than preference: period 20 so the centre
+  coincides exactly with the MA20 already on the chart; the **population** divisor (÷n) to
+  match charting convention, the sample form being 2.60% wider and lifting containment to
+  ~90.0%; emission from bar `period-1` so it aligns with `smaSeries` bar-for-bar, which a
+  test asserts; and a two-pass variance, taken because it is free rather than because it
+  was needed — the one-pass form was measured at a maximum relative error of **1.5e-12**
+  even at BRK.A price levels.
+
+### Fixed
+
+- **The README described indicator windows that no longer exist.** It said windows were
+  measured in trading days, so MA50 meant 50 days on every period. `09ee627` (2026-08-13)
+  changed them to count bars — because a 50-day average does not exist inside a one-day
+  chart at any bar size, so MA, RSI and MACD simply vanished on the short periods — and
+  the README was never updated. It now describes what ships, including why the trading-day
+  scheme was abandoned and how the ambiguity is paid for in the UI instead.
+
+- **A z-score ceiling stated the wrong way round.** For a window of *n* points the maximum
+  distance any close can sit from its own mean is `sqrt(n-1)` under the population divisor
+  and `(n-1)/sqrt(n)` under the sample one. The first draft had them swapped, quoting 4.25
+  where the population form gives **4.3589** at n=20. Caught by the test, not by review,
+  and only because that test derives the bound from the most extreme window possible
+  instead of asserting a remembered formula — the largest deviation ever observed in the
+  measured set was 4.00, which sits below both values and could never have distinguished
+  them.
+
+### Not done, deliberately
+
+- **Fibonacci retracement — tested and rejected on this repo's own data.** Ten names, five
+  years of daily OHLCV, 12,461 bars. For each ZigZag threshold, a permutation test asked
+  whether the Fibonacci level set captures more retracement terminations than a random
+  level set of the same size:
+
+  | ZigZag | retracements | Fib captures | random | z | p |
+  |---|---|---|---|---|---|
+  | 5% | 1,737 | 244 (14.0%) | 229.9 ± 52.9 | +0.27 | 0.415 |
+  | 8% | 663 | 100 (15.1%) | 89.4 ± 20.5 | +0.52 | 0.326 |
+  | 10% | 364 | 58 (15.9%) | 48.9 ± 11.3 | +0.81 | 0.226 |
+
+  Not significant at any threshold, and the test was **biased in Fibonacci's favour** —
+  the random levels were drawn from [0.15, 0.85], which includes a near-empty region the
+  Fibonacci ratios avoid. Terminations are near-flat from 0.4 to 1.0. This matches the
+  published direct test (Batchelor & Ramyar on the Dow) but no longer rests on it.
+
+  The stronger argument is internal: **the drawn horizontal levels already shipping are the
+  honest version of this feature.** They report how many bars actually touched a line, so a
+  user who believes in 61.8% can draw it and find out. Auto-drawn Fibonacci would replace a
+  measurement with an assumption.
+
+- **Stochastic oscillator — redundant with the RSI already shipping, and noisier.**
+  Measured on true intraday high/low across the same ten names: level correlation with
+  RSI(14) is **0.845**. More decisive than the correlation is the containment: `%K<20`
+  holds **93.9%** of all `RSI<30` events while firing **9.0× as often** (AAPL 236 against
+  29; NVDA 198 against 11). It is not a second opinion, it is the same opinion with roughly
+  eight extra false alarms each time.
+
+  It also has a defect RSI does not: its denominator is built from the window's min and max,
+  the least robust order statistics, so **%K can move when the price has not** — purely
+  because the bar that set an extremum rolled out of the lookback.
+
+- **EMA as an overlay — deferred, not rejected.** `emaArray` already exists as MACD's
+  helper so the cost is near zero, and it asserts nothing. But EMA(N) and SMA(N) have an
+  identical mean lag of (N−1)/2 and identical iid-noise suppression of 1/N — verified
+  exactly — differing only in weight shape (3× lag variance, ~1.9× weight on the newest
+  bar). Measured level correlation with the SMA20 already drawn is **0.9991**, while
+  producing **14% more price crossings** (higher on 9 of 10 names, tied on one). More
+  whipsaw for the same information. Left out until there is a reason beyond parity with
+  other tools.
+
+- **VWAP, and candlestick pattern detection.** Session VWAP is well-defined on 2 of the 9
+  periods this app offers and undefined on 2 more; on the 1h intervals a US session is
+  seven bars whose last is only 30 minutes long and carries the closing auction, which
+  makes the average systematically close-biased. Anchored VWAP is sold as the average
+  holder's cost basis, which fails at real turnover — a six-month anchor accumulates volume
+  equal to roughly half of a mega-cap's shares outstanding and several multiples of a
+  high-turnover name's. Candlestick patterns are defined by relationships *within* a bar,
+  and a bar here is 1m to 1wk depending on a dropdown, so the detected set would change with
+  no change in the company.
+
 ## 2026-08-17 (e) — three things the model said that the world does not
 
 A review of the valuation engine against reality, run by executing the model over every

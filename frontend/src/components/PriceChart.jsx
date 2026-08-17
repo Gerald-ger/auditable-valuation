@@ -7,7 +7,7 @@ import {
   HistogramSeries,
   createSeriesMarkers,
 } from 'lightweight-charts';
-import { smaSeries, rsiSeries, macdSeries, windowSpan } from '../indicators';
+import { smaSeries, rsiSeries, macdSeries, rollingSdBand, windowSpan } from '../indicators';
 import { toChartTime, fromChartTime } from '../charttime';
 import { eventStamp, groupEventsByBar, toDateStr } from '../events';
 import { DrawingsPrimitive } from '../drawingPrimitive';
@@ -31,6 +31,14 @@ const RSI_PERIOD = 14;
 const MACD_FAST = 12;
 const MACD_SLOW = 26;
 const MACD_SIGNAL = 9;
+// Dispersion band. 20 bars deliberately matches MA20 above, so the band is
+// centred on a line the chart already draws instead of implying a second,
+// invisible average. Only the edges are drawn for the same reason.
+// Neutral grey on purpose: the MA colours mark lines you are meant to read as
+// levels, and this is context rather than a level.
+const SD_PERIOD = 20;
+const SD_K = 2;
+const SD_COLOR = 'rgba(148, 163, 184, 0.55)';
 // lightweight-charts PriceScaleMode: 0 normal, 1 logarithmic, 2 percentage
 const SCALE_MODES = [
   ['Lin', 0, 'Linear price scale'],
@@ -90,7 +98,9 @@ export default function PriceChart({
   const [pinned, setPinned] = useState(null); // {x, date, items} — clickable
   const [chartType, setChartType] = useState('candles');
   const [scaleMode, setScaleMode] = useState(0);
-  const [show, setShow] = useState({ ma: true, volume: true, rsi: true, macd: false });
+  // sd defaults off: it is new, and a band that appears unannounced on a chart
+  // people already read would be a change of meaning rather than an addition.
+  const [show, setShow] = useState({ ma: true, volume: true, rsi: true, macd: false, sd: false });
   const [types, setTypes] = useState(DEFAULT_TYPES);
 
   // ── drawings ──────────────────────────────────────────────────────
@@ -208,6 +218,18 @@ export default function PriceChart({
         const data = smaSeries(bars, period);
         if (!data.length) continue;
         chart.addSeries(LineSeries, { color, lineWidth: 1.5, ...OVERLAY_OPTS }).setData(data);
+      }
+    }
+
+    // Both edges share one period with MA20, so they start on the same bar and
+    // the band cannot drift half a bar away from the line it is centred on.
+    if (show.sd) {
+      const { upper, lower } = rollingSdBand(bars, SD_PERIOD, SD_K);
+      for (const data of [upper, lower]) {
+        if (!data.length) continue;
+        chart
+          .addSeries(LineSeries, { color: SD_COLOR, lineWidth: 1, ...OVERLAY_OPTS })
+          .setData(data);
       }
     }
 
@@ -351,6 +373,7 @@ export default function PriceChart({
     const missing = MA_CONFIG.filter(([p]) => bars.length <= p);
     if (missing.length) unavailable.push(missing.map(([p]) => `MA${p}`).join('/'));
   }
+  if (show.sd && bars.length && bars.length <= SD_PERIOD) unavailable.push(`±${SD_K} SD(${SD_PERIOD})`);
   if (show.rsi && bars.length && bars.length <= RSI_PERIOD) unavailable.push(`RSI(${RSI_PERIOD})`);
   if (show.macd && bars.length && bars.length <= MACD_SLOW) {
     unavailable.push(`MACD(${MACD_FAST},${MACD_SLOW},${MACD_SIGNAL})`);
@@ -513,12 +536,25 @@ export default function PriceChart({
         </span>
         <span className="seg-group">
           {[
-            ['ma', 'MA'],
-            ['volume', 'Volume'],
-            ['rsi', 'RSI'],
-            ['macd', 'MACD'],
-          ].map(([key, label]) => (
-            <button key={key} className={`seg ${show[key] ? 'active' : ''}`} onClick={() => toggle(key)}>
+            ['ma', 'MA', null],
+            ['volume', 'Volume', null],
+            ['rsi', 'RSI', null],
+            ['macd', 'MACD', null],
+            // Named for what it is. "Bollinger Bands" would carry a
+            // trading-signal claim; these lines only say how far price sits
+            // from its own recent mean.
+            ['sd', '±2 SD',
+              `Price ±${SD_K} standard deviations of the last ${SD_PERIOD} bars, ` +
+              `centred on MA${SD_PERIOD}. A measure of how wide this name has been ` +
+              `trading lately, not a signal: about 88% of closes sit inside, so a ` +
+              `touch happens roughly twice a month and means little on its own.`],
+          ].map(([key, label, title]) => (
+            <button
+              key={key}
+              title={title ?? undefined}
+              className={`seg ${show[key] ? 'active' : ''}`}
+              onClick={() => toggle(key)}
+            >
               {label}
             </button>
           ))}

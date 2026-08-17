@@ -187,16 +187,34 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
     actually watching it. The cost is inherent — a US trading day straddles midnight and
     so spans two calendar dates on the chart. Daily and weekly bars are dates and pass
     through untouched;
-  - **indicator windows measured in trading days, not bars**, so MA50 means 50 days
-    on every period (350 bars on an hourly chart). A window longer than the period
-    holds is not drawn — one session cannot produce a 50-day average — and the chart
-    says so;
+  - **indicator windows count bars**, the convention every mainstream charting platform
+    uses, so MA50 is 50 minutes on the 1d chart and 50 days on the 5y one. They were
+    briefly scaled to trading days instead, so that MA50 meant 50 days everywhere; that
+    read well and made the short periods unusable, because a 50-day average does not
+    exist inside a one-day chart at any bar size and MA, RSI and MACD simply vanished
+    there. The ambiguity that scaling was avoiding is now paid for in the UI rather than
+    the maths: the legend names the unit (`bars @ 1h`) and every window states the time
+    it actually covers. An indicator is dropped only when the chart holds fewer bars than
+    its window, and the chip says how many it needed;
   - chart types: **Candles / Line / OHLC**;
   - toggleable technical indicators, computed locally — **MA10/20/50** overlays,
     **volume** histogram, **RSI(14)** pane with 30/70 bands, **MACD(12,26,9)** pane. The
     maths lives in [frontend/src/indicators.js](frontend/src/indicators.js); the window
     set and the volume histogram are assembled in
     [frontend/src/components/PriceChart.jsx](frontend/src/components/PriceChart.jsx);
+  - a **±2 SD** dispersion band (off by default), centred on the MA20 already drawn.
+    These are Bollinger Bands and are deliberately not called that: `%B`, the usual
+    signal read off them, is an exact affine transform of a z-score — `0.5 + z/2k`,
+    which the test suite pins to ten decimal places — so a band tag says nothing beyond
+    "price is *z* standard deviations from its own recent mean". The plain name
+    describes the lines; the eponymous one would import a trading claim this project is
+    not making. It exists because the chart had **no dispersion display at all**: price,
+    MAs, RSI, MACD and volume all describe level or momentum, and none of them answers
+    "is today's 2% move large for this name lately?". Two measured facts are on the
+    tooltip so the band is not read as a signal: **88.5%** of closes sit inside it
+    (measured over 12,461 daily bars across ten names, not the 95.4% a normal
+    distribution implies, because σ is estimated in-sample from the same window),
+    so tags run at roughly **28 a year**. It is not sent to the AI;
   - interaction: scroll to zoom, drag to pan, double-click (or **Reset**) to fit,
     zoom ±, **Lin / Log / %** price-scale modes, and a magnet crosshair that snaps to
     OHLC;

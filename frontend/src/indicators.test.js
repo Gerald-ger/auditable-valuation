@@ -14,7 +14,7 @@
  * formula in "New Concepts in Technical Trading Systems".
  */
 import { describe, it, expect } from 'vitest';
-import { macdSeries, rsiSeries, smaSeries, windowSpan } from './indicators';
+import { macdSeries, rollingSdBand, rsiSeries, smaSeries, windowSpan } from './indicators';
 
 const bars = (closes) => closes.map((close, i) => ({ time: i, close }));
 const values = (series) => series.map((p) => p.value);
@@ -209,5 +209,91 @@ describe('macdSeries — EMA construction and alignment', () => {
     const { macd, signal } = macdSeries(ramp(40), 3, 6, 4);
     expect(macd[0].time).toBe(5);        // slow - 1
     expect(signal[0].time).toBe(5 + 3);  // + (signalPeriod - 1)
+  });
+});
+
+describe('rollingSdBand', () => {
+  // Written out rather than taken from the implementation: closes 1..5 with
+  // period 5 give mean 3 and population variance (4+1+0+1+4)/5 = 2, so
+  // sd = sqrt(2) and the band is 3 ± 2·sqrt(2).
+  it('matches arithmetic done by hand', () => {
+    const { upper, lower } = rollingSdBand(bars([1, 2, 3, 4, 5]), 5, 2);
+    expect(upper).toHaveLength(1);
+    expect(upper[0].value).toBeCloseTo(3 + 2 * Math.SQRT2, 12);
+    expect(lower[0].value).toBeCloseTo(3 - 2 * Math.SQRT2, 12);
+  });
+
+  it('uses the population divisor, not the sample one', () => {
+    // sample sd of 1..5 is sqrt(10/4)=1.5811; population is sqrt(10/5)=1.4142.
+    const { upper } = rollingSdBand(bars([1, 2, 3, 4, 5]), 5, 1);
+    expect(upper[0].value).toBeCloseTo(3 + Math.SQRT2, 12);
+    expect(upper[0].value).not.toBeCloseTo(3 + 1.5811388, 4);
+  });
+
+  // The band has to sit on the same bars as the average it is centred on, or
+  // it starts a bar early and every reading is against the wrong mean.
+  it('starts on exactly the bar smaSeries starts on', () => {
+    const b = bars(Array.from({ length: 40 }, (_, i) => 100 + i));
+    const ma = smaSeries(b, 20);
+    const { upper, lower } = rollingSdBand(b, 20);
+    expect(upper[0].time).toBe(ma[0].time);
+    expect(upper).toHaveLength(ma.length);
+    expect(lower).toHaveLength(ma.length);
+    expect(upper.at(-1).time).toBe(ma.at(-1).time);
+  });
+
+  it('is centred on the moving average of the same period', () => {
+    const b = bars(Array.from({ length: 60 }, (_, i) => 100 + Math.sin(i / 5) * 8));
+    const ma = smaSeries(b, 20);
+    const { upper, lower } = rollingSdBand(b, 20);
+    ma.forEach((m, i) => {
+      expect((upper[i].value + lower[i].value) / 2).toBeCloseTo(m.value, 10);
+    });
+  });
+
+  // The claim the feature rests on: %B carries nothing a z-score does not.
+  it('is an exact affine map of a z-score, so %B adds no information', () => {
+    const b = bars(Array.from({ length: 80 }, (_, i) => 100 + Math.sin(i / 7) * 12));
+    const k = 2;
+    const { upper, lower } = rollingSdBand(b, 20, k);
+    const ma = smaSeries(b, 20);
+    upper.forEach((u, i) => {
+      const price = b[i + 19].close;
+      const percentB = (price - lower[i].value) / (u.value - lower[i].value);
+      const sd = (u.value - ma[i].value) / k;
+      const z = (price - ma[i].value) / sd;
+      expect(percentB).toBeCloseTo(0.5 + z / (2 * k), 10);
+    });
+  });
+
+  // Because sigma comes from the same window as the price, a close cannot sit
+  // arbitrarily far from its own mean. For the POPULATION divisor used here the
+  // ceiling is sqrt(n-1) — 4.3589 at n=20 — not the (n-1)/sqrt(n) = 4.2485 that
+  // belongs to the sample divisor. The two are easy to state the wrong way
+  // round, so this derives the bound from the most extreme window possible
+  // (n-1 identical closes and one arbitrarily large outlier) rather than
+  // asserting a remembered formula.
+  it('cannot be escaped beyond the arithmetic ceiling', () => {
+    const n = 20;
+    for (const outlier of [1e6, 1e9, 1e12]) {
+      const spike = Array.from({ length: n }, (_, i) => (i === n - 1 ? outlier : 100));
+      const { upper } = rollingSdBand(bars(spike), n, 1);
+      const ma = smaSeries(bars(spike), n);
+      const sd = upper[0].value - ma[0].value;
+      const z = (outlier - ma[0].value) / sd;
+      expect(z).toBeCloseTo(Math.sqrt(n - 1), 6);
+      expect(z).not.toBeCloseTo((n - 1) / Math.sqrt(n), 3);
+    }
+  });
+
+  it('draws nothing when the chart holds fewer bars than the window', () => {
+    expect(rollingSdBand(bars([1, 2, 3]), 20).upper).toEqual([]);
+    expect(rollingSdBand(bars([]), 20).lower).toEqual([]);
+  });
+
+  it('collapses to the mean when the window is flat', () => {
+    const { upper, lower } = rollingSdBand(bars(Array(30).fill(50)), 20);
+    expect(upper.every((p) => p.value === 50)).toBe(true);
+    expect(lower.every((p) => p.value === 50)).toBe(true);
   });
 });
