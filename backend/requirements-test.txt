@@ -1,7 +1,7 @@
-# Minimum needed to run backend/tests offline.
-# Not the app's runtime set — that is requirements.post-openbb.txt. yfinance is
-# here only because data_provider imports it at module scope, and
-# financial_models imports data_provider; the tests themselves never call it.
+# What CI installs: the minimum needed to lint and to run backend/tests offline.
+# Not the app's runtime set — that is requirements.txt. yfinance is here only
+# because data_provider imports it at module scope, and financial_models imports
+# data_provider; the tests themselves never call it.
 #
 # fastapi and aiohttp are here for the same reason: test_search_and_history.py
 # imports main for PERIOD_INTERVALS and _bars_per_day, and main imports fastapi
@@ -12,3 +12,8 @@ yfinance
 pandas
 fastapi
 aiohttp
+# Pinned, and pinned here rather than inline in the CI workflow so the version
+# has one home: unpinned, a new ruff release fails lint on a commit that changed
+# nothing. (requirements.txt also lists ruff — that file is a pip freeze of the
+# dev venv and lists everything installed, which is not a second source of truth.)
+ruff==0.15.22
