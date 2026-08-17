@@ -90,7 +90,7 @@ export default function App() {
             <b>The backend is running older code than this project folder.</b> Python
             files changed after the server started, so new fields are missing from
             its responses and any panel that reads one will simply not appear.
-            Restart it — <code>-m uvicorn main:app --app-dir backend --port 8000</code>
+            Restart it — <code>-m uvicorn backend.main:app --port 8000</code>
             {' '}— then reload this page.
           </div>
         )}
