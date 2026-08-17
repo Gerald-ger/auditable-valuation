@@ -18,12 +18,6 @@ the methodology in [docs/financial-models-reference.md](docs/financial-models-re
 > under [AGPL-3.0](LICENSE); see [Licence and data provenance](#licence-and-data-provenance)
 > for what the licence does *not* cover.
 
-<!--
-  SCREENSHOTS — this whole block is commented out so nothing renders as a broken
-  image while the files are missing. Drop the five PNGs into docs/images/ using the
-  names below, then delete this line and the closing arrow at the end of the block.
-  The shot list and capture settings are in docs/release-readiness.md.
-
 ## What it looks like
 
 ![Scorecard tab: composite score, pillar breakdown and valuation range](docs/images/scorecard.png)
@@ -33,11 +27,13 @@ each metric's raw value and its score shown side by side. The weights change wit
 company's classification, so a bank is not judged on the ratios that suit a software firm.
 The football field underneath places today's price against DCF, comps and analyst ranges.
 
-![Financial Models tab: ratio analysis, DCF audit and equity bridge](docs/images/models.png)
+![Financial Models tab: a two-stage FCFF DCF with every assumption and its source, and the trust checks that test the result](docs/images/models.png)
 
-**Financial Models** — a two-stage FCFF DCF you can audit rather than trust: every assumption
-is shown with the source it came from, and the equity bridge itemises each step from
-enterprise value to value per share.
+**Financial Models** — a two-stage FCFF DCF you can audit rather than trust. Every assumption
+carries the source it came from, down to the vintage of the equity risk premium. The trust
+checks then turn the model on itself: how much of the value sits in the terminal year, what
+exit multiple that implies, and what perpetual growth rate today's price would require —
+7.3% here, against an economy that grows 4%.
 
 ![Tracker tab: price chart with indicators, SEC filing markers and news](docs/images/tracker.png)
 
@@ -51,9 +47,8 @@ so like is compared with like.
 
 ![Portfolio tab: holdings, weights and concentration](docs/images/portfolio.png)
 
-**Portfolio** — holdings and watchlist with position weights and concentration.
-
--->
+**Portfolio** — holdings and watchlist with position weights and concentration. The positions
+shown are fabricated for the screenshot.
 
 ## Prerequisites
 

@@ -116,31 +116,32 @@ Done with the `gh` CLI once it was installed and authenticated:
 
 ---
 
-## Still open
+### Screenshots — done 2026-08-17
 
-- [ ] **Screenshots.** The only image in the repo is `frontend/public/favicon.svg`. For a UI
-      project this is the highest-value addition to the README. The section is already written
-      in README.md, commented out so nothing renders broken; uncommenting it is the last step.
+Five captures in `docs/images/`, one per tab, live in the README under *What it looks like*,
+directly beneath the disclaimer so a visitor sees the product before the install steps.
 
-      These cannot be automated: the tab and ticker are React state, not URL parameters, so a
-      headless browser can only ever reach the Tracker tab on its default ticker. Every shot
-      needs a real click.
+They could not be automated: the tab and ticker are React state rather than URL parameters, so
+a headless browser only ever reaches the Tracker tab on its default ticker. Every shot needed a
+real click. If these are ever refreshed, three things are worth repeating:
 
-      | File in `docs/images/` | Tab | What the shot must contain |
-      |---|---|---|
-      | `scorecard.png` | Scorecard | The composite score and tier, all five pillar bars expanded, and the football field visible. This is the lead image — pick a company with full coverage, e.g. AAPL or MSFT. |
-      | `models.png` | Financial Models | The DCF audit panel with assumptions visible, and the equity bridge. |
-      | `tracker.png` | Tracker | Candles with at least one indicator on, SEC filing markers, and the news list. |
-      | `screener.png` | Screener | Several tickers scored and grouped by classification — enough rows to show ranking. |
-      | `portfolio.png` | Portfolio | Holdings with weights and the concentration readout. Use fake positions; do not publish real holdings. |
+- **Verify content, not filenames.** The first attempt had `portfolio.png` and `screener.png`
+  holding each other's screenshot, and a later one arrived as `protfolio.png`. Both passed a
+  file-exists check and both were wrong. Open each image.
+- **Crop the two dense tabs.** Financial Models and Scorecard are long, and GitHub renders
+  README images at about 890 px wide — a 1400 px capture lands at 63% and its body text becomes
+  unreadable. They are cropped to the part that carries the argument (`models.png` ends after
+  the trust checks, `scorecard.png` after the unexplained-gap line). The cut lines were chosen
+  by scanning each row for text and cutting inside a blank band, not by eye. If a crop changes
+  what is visible, **the caption has to change with it** — the Financial Models caption used to
+  describe an equity bridge that the crop removed.
+- **Keep the demo portfolio plausible.** The first version used a cost basis of 999 for XOM,
+  which trades near 160, so the position showed −84% and dragged the total to −35%. On a project
+  whose pitch is auditable valuation, a number that could not have happened reads as a defect.
+  The published version uses 175: XOM shows −8.5% in red, the total +41.6% in green, and both
+  states of the P&L styling are visible.
 
-      Capture settings: browser window ~1600 px wide (a Retina/HiDPI display doubles this and
-      looks noticeably sharper), PNG, browser zoom at 100%. GitHub renders README images at
-      about 890 px wide, so a 1600-1800 px capture stays crisp without being wasteful.
-
-      Before publishing, check each image for anything you would not put on a public page —
-      other browser tabs, bookmarks, real portfolio values, or an account name in the window
-      chrome. Capture the page region rather than the whole desktop.
+Positions in the screenshot are fabricated, and the README says so beneath the image.
 
 ---
 
