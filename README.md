@@ -1,4 +1,4 @@
-# Financial-model-analyse — Stock Analysis Platform
+# Finance Analysis Platform
 
 A local website for tracking stocks, explaining price moves with news, chatting with a
 local AI financial expert, and running investment-banking financial models — powered by
