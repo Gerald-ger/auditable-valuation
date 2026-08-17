@@ -18,6 +18,7 @@ from pathlib import Path
 from statistics import median
 
 from backend import market_series
+from backend import sector_weights
 from backend.data_provider import fx_rate, risk_free_rate
 
 # Assumption defaults (user-overridable via the API)
@@ -95,6 +96,12 @@ GROWTH_SENSITIVITY_FLOOR = -0.5
 # a country field through get_fundamentals' whitelist, and currency is a reliable
 # proxy for the listing's tax regime for the markets this app covers.
 TAX_RATE_BY_CURRENCY = {"HKD": 0.165, "USD": 0.21}
+
+# A REIT distributes its taxable income and deducts the distribution, so there
+# is almost no corporate tax and almost no interest tax shield. Not a lower rate
+# for the same reason other companies pay less than statutory — a different
+# structure. See tax_rate_for.
+REIT_TAX_RATE = 0.0
 
 # A reported beta outside this band is not credible for a listed operating
 # company — yfinance returned 0.173 for XOM, which alone swung its DCF upside by
@@ -351,7 +358,32 @@ def _fcff_interest_addback(cash_flow: dict, period: str | None,
 
 
 def tax_rate_for(info: dict) -> float:
-    """Statutory tax rate for the listing's jurisdiction, by currency."""
+    """Statutory tax rate for the listing's jurisdiction, by currency.
+
+    A REIT is the one exception, and it is an exception in *kind* rather than in
+    degree. Everywhere else the gap between the statutory rate and the rate a
+    company actually pays is tax planning, and the statutory figure is the right
+    input for a debt tax shield because it is the marginal rate on the next
+    dollar. A REIT deducts the dividends it distributes, so distributing the
+    required share of taxable income leaves almost nothing to shield: Realty
+    Income's own income statement reports 85.3m of tax on 1,155m of pre-tax
+    income, an effective **7.4%**, and the residual is its taxable subsidiaries
+    rather than the trust. The marginal rate is what matters here and it is
+    approximately zero.
+
+    Charging a REIT 21% overstated its interest tax shield and so understated
+    its WACC — measured on the committed fixture, 6.05% against 6.58%, which is
+    a fair value of 36.00 against 27.04. `dcf_applies` already declares the DCF
+    itself inapplicable to this profile, but the rate also reaches `scoring`'s
+    NOPAT, and a REIT's after-tax operating profit really is close to its EBIT.
+
+    Read through `sector_weights.classify` rather than re-testing the industry
+    string here, so the REIT rule keeps one home. No free cash flow is passed
+    because the REIT branch is decided from sector/industry alone, before
+    `classify` consults it.
+    """
+    if sector_weights.classify(info) == "real_estate_reit":
+        return REIT_TAX_RATE
     return TAX_RATE_BY_CURRENCY.get(info.get("currency"), DEFAULT_TAX_RATE)
 
 
@@ -445,6 +477,42 @@ def statement_to_market_fx(trading_currency, reporting_currency):
 def _to_trading(info: dict):
     """statement_to_market_fx for a whole `info` dict."""
     return statement_to_market_fx(info.get("currency"), info.get("financialCurrency"))
+
+
+def ev_multiple_one_currency(multiple, trading_currency, reporting_currency):
+    """A vendor EV multiple with both of its legs put back into one currency.
+
+    `enterpriseToEbitda` and `enterpriseToRevenue` arrive already divided, and
+    the split documented on `statement_to_market_fx` says the two legs are not
+    in the same unit: enterprise value is built from `marketCap`, which is the
+    trading currency, while `ebitda` and `totalRevenue` are statement figures in
+    the reporting one. For 0700.HK that is an HKD numerator over a CNY
+    denominator and the ratio is overstated by the whole CNY->HKD rate —
+    measured on the committed fixture, 15.705x against a consistent 14.277x,
+    and EV/Revenue 5.772x against 5.247x.
+
+    Everything else in this module converts the figures it computes itself; this
+    is the one place a *pre-divided* vendor ratio arrives with the mismatch
+    already baked in, which is why it survived the currency work of 2026-08-10.
+
+    Dividing by the rate restates the denominator in the trading currency. None
+    when the currencies differ and no rate is available — the same choice the
+    DCF makes for upside, because a mixed-unit multiple is worse than an absent
+    one.
+    """
+    if multiple is None:
+        return None
+    fx, mismatch = statement_to_market_fx(trading_currency, reporting_currency)
+    if not mismatch:
+        return multiple
+    return None if fx is None else round(multiple / fx, 4)
+
+
+def ev_multiples_for(info: dict) -> tuple[float | None, float | None]:
+    """(ev_to_ebitda, ev_to_revenue) for a whole `info` dict, on one currency."""
+    trading, reporting = info.get("currency"), info.get("financialCurrency")
+    return (ev_multiple_one_currency(info.get("enterpriseToEbitda"), trading, reporting),
+            ev_multiple_one_currency(info.get("enterpriseToRevenue"), trading, reporting))
 
 
 def _debt_to_equity(debt, market_cap, fx: float | None = 1.0) -> float | None:
@@ -576,6 +644,7 @@ def ratio_analysis(f: dict) -> dict:
 
     # both legs from one period — see paired_latest
     coverage, coverage_period = interest_coverage(inc)
+    ev_ebitda_1c, ev_revenue_1c = ev_multiples_for(info)
 
     dupont = {
         "net_margin": div(net_income, revenue),
@@ -610,8 +679,9 @@ def ratio_analysis(f: dict) -> dict:
             "pe_trailing": info.get("trailingPE"),
             "pe_forward": info.get("forwardPE"),
             "price_to_book": info.get("priceToBook"),
-            "ev_to_ebitda": info.get("enterpriseToEbitda"),
-            "ev_to_revenue": info.get("enterpriseToRevenue"),
+            # both legs on one currency — see ev_multiple_one_currency
+            "ev_to_ebitda": ev_ebitda_1c,
+            "ev_to_revenue": ev_revenue_1c,
             "peg_ratio": info.get("pegRatio"),
             # yfinance returns dividendYield already in percent (0.32 == 0.32%)
             "dividend_yield": info.get("dividendYield") / 100
@@ -633,6 +703,18 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     # only pass them along would be noise.
     bars, index_bars = market_bars or (None, None)
     beta, beta_source = resolve_beta(info, peers, tax_rate, bars, index_bars)
+    # How well that regression actually fit, when a regression is what was used.
+    # Only then: the ladder's other rungs are a vendor scalar, a peer median and
+    # a constant, and none of them has a residual to report — attaching an
+    # interval to those would invent a precision claim rather than describe one.
+    #
+    # `resolve_beta` is deliberately left returning (beta, source). It is called
+    # from one place in the app and from roughly twenty in the suite, and
+    # widening its result to carry reporting-only figures would churn all of
+    # them for nothing. The two calls cannot disagree: `beta_fit` is pure and
+    # both read the same two bar lists.
+    beta_fit = (market_series.beta_fit(bars, index_bars)[0]
+                if beta_source == "computed" else None)
     # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy.
     # Known to be the weaker half of this pair — 0700.HK reports CNY, which is
     # not pegged, so its cash flows and its discount rate are in different
@@ -669,6 +751,26 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
         # statement, and only the backend knows which applies.
         "beta_reported_credible": (None if info.get("beta") is None
                                    else BETA_MIN <= info["beta"] <= BETA_MAX),
+        # How much of this name's movement the index actually explains, and how
+        # wide the slope's own interval is. Present only for a regressed beta.
+        #
+        # The point is not that a low R^2 makes a beta wrong. It is that the
+        # panel printed 0.2888 for XOM and 1.1546 for AAPL in the same typeface,
+        # while one is measured to +/-0.08 and the other to +/-0.21 against a
+        # value five times smaller. Which of those a reader should lean on is
+        # not visible in the number.
+        #
+        # `beta_regressed` is the slope before the credibility band clamps it,
+        # so a clamp that fires is legible rather than silent — XOM regresses at
+        # 0.2888 and is used at 0.30.
+        "beta_regressed": (None if beta_fit is None
+                           else round(beta_fit["beta"], 4)),
+        "beta_standard_error": (None if beta_fit is None
+                                else round(beta_fit["standard_error"], 4)),
+        "beta_r_squared": (None if beta_fit is None or beta_fit["r_squared"] is None
+                           else round(beta_fit["r_squared"], 4)),
+        "beta_confidence_interval": (None if beta_fit is None else
+                                     [round(b, 4) for b in beta_fit["confidence_interval"]]),
         "equity_risk_premium": round(erp, 4),
         "equity_risk_premium_source": erp_source,
         "equity_risk_premium_market": erp_market,
@@ -881,7 +983,11 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     #
     # g is always below WACC for any finite k, so the solve cannot blow up.
     market_implied_growth = None
-    current_multiple = info.get("enterpriseToEbitda")
+    # `conversion` below is FCF/EBITDA, both reporting-currency and so already
+    # unit-free. The traded multiple is not: it needs restating onto one
+    # currency first, or `k` carries the FX rate into the solve. On 0700.HK the
+    # uncorrected figure moved this diagnostic from 5.46% to 5.89%.
+    current_multiple, _ = ev_multiples_for(info)
     if ebitda and ebitda > 0 and current_multiple and current_multiple > 0:
         conversion = fcf / ebitda
         if conversion > 0:
@@ -1031,7 +1137,12 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "terminal_value_share": terminal_share,
             "terminal_value_high": terminal_share is not None and terminal_share > 0.75,
             "implied_exit_ev_ebitda": implied_exit_multiple,
-            "current_ev_ebitda": info.get("enterpriseToEbitda"),
+            # The implied exit above is built from statement figures and is
+            # already reporting-currency throughout, so the multiple it is read
+            # against has to be on one currency too — the panel divides one by
+            # the other. Uncorrected, 0700.HK showed 44.6% implied compression
+            # where the like-for-like figure is 39.1%.
+            "current_ev_ebitda": current_multiple,
             # what perpetual growth today's price already assumes, and whether
             # that is more than an economy grows
             "market_implied_terminal_growth": market_implied_growth,

@@ -93,6 +93,72 @@ def test_change_over_needs_a_full_window():
     assert ms.change_over(_bars([100.0] * 52 + [110.0]), periods=52) == pytest.approx(0.10)
 
 
+# ── how well the regression fits ─────────────────────────────────────
+
+def test_the_fit_reports_its_own_precision():
+    """A slope with no error term cannot say whether it measured anything. The
+    standard error is the textbook OLS slope error; these figures were checked
+    against numpy's polyfit covariance matrix and the algebraic form, agreeing
+    to 1e-12, when this was written."""
+    fit, n = ms.beta_fit(*load_market_bars("XOM"))
+    assert n == 261
+    assert fit["beta"] == pytest.approx(0.288806, abs=1e-5)
+    assert fit["standard_error"] == pytest.approx(0.10512, abs=1e-4)
+    assert fit["r_squared"] == pytest.approx(0.0283, abs=1e-3)
+
+    lo, hi = fit["confidence_interval"]
+    assert lo == pytest.approx(fit["beta"] - ms.BETA_CI_Z * fit["standard_error"])
+    assert hi == pytest.approx(fit["beta"] + ms.BETA_CI_Z * fit["standard_error"])
+
+
+def test_the_t_statistic_identity_holds():
+    """t = beta/SE must satisfy t^2 = R^2/(1-R^2) * (n-2) for a simple
+    regression. If it does not, the error and the fit were computed from
+    different residuals — which is exactly the bug a hand-rolled OLS invites."""
+    for stem in ("AAPL", "XOM", "0700_HK"):
+        fit, n = ms.beta_fit(*load_market_bars(stem))
+        t = fit["beta"] / fit["standard_error"]
+        r2 = fit["r_squared"]
+        assert t ** 2 == pytest.approx(r2 / (1 - r2) * (n - 2), rel=1e-9), stem
+
+
+def test_the_fit_separates_a_measurement_from_a_non_measurement():
+    """The whole point. Both of these are 5y weekly regressions over 260-odd
+    observations and both used to reach the caller as a bare four-decimal
+    number; one of them explains almost nothing."""
+    tencent, _ = ms.beta_fit(*load_market_bars("0700_HK"))
+    xom, _ = ms.beta_fit(*load_market_bars("XOM"))
+
+    assert tencent["r_squared"] > 0.65 and xom["r_squared"] < 0.05
+    tencent_width = tencent["confidence_interval"][1] - tencent["confidence_interval"][0]
+    xom_width = xom["confidence_interval"][1] - xom["confidence_interval"][0]
+
+    # XOM's slope is roughly a fifth of Tencent's and its interval is still
+    # wider in absolute terms.
+    assert xom_width > tencent_width
+
+    # The sharpest way to put it: XOM's interval is wider than the estimate it
+    # brackets, so the measurement does not even establish the beta's own order
+    # of magnitude. Tencent's is a small fraction of its estimate.
+    assert xom_width > xom["beta"]
+    assert tencent_width < 0.2 * tencent["beta"]
+
+
+def test_beta_is_a_reading_of_the_same_fit():
+    """`beta` must not become a second implementation of the slope."""
+    for stem in ("AAPL", "XOM", "O"):
+        bars = load_market_bars(stem)
+        assert ms.beta(*bars)[0] == ms.beta_fit(*bars)[0]["beta"]
+
+
+def test_no_fit_where_there_is_no_beta():
+    """Both guards agree: too short a series, and a motionless index."""
+    assert ms.beta_fit(_bars([100.0] * 10), _bars([100.0] * 10))[0] is None
+    flat = _bars([100.0] * 200)
+    moving = _bars([100.0 * (1.001 ** i) for i in range(200)])
+    assert ms.beta_fit(moving, flat)[0] is None
+
+
 # ── beta resolution ──────────────────────────────────────────────────
 
 def test_xom_gets_a_measured_beta_instead_of_the_neutral_default():

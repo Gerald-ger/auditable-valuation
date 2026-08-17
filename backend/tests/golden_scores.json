@@ -51,10 +51,10 @@
     "metrics": {
      "dcf_upside_pct": 47,
      "earnings_yield_fwd": 84,
-     "ev_ebitda": 43,
+     "ev_ebitda": 49,
      "fcf_yield": 68
     },
-    "score": 60
+    "score": 62
    }
   },
   "tier": "A"

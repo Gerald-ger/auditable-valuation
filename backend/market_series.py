@@ -16,6 +16,14 @@ it. Series can be checked; scalars have to be trusted.
 """
 from __future__ import annotations
 
+import math
+
+# Two-sided 95% normal quantile for the beta interval. Normal rather than
+# Student's t because the sample is never small by construction — the minimum
+# below is 104 observations, where t is 1.983 against 1.960, a difference far
+# inside the noise the interval is describing.
+BETA_CI_Z = 1.96
+
 # Weekly bars, so 104 is two years. Below this a regression is fitting noise:
 # a newly listed company has no cycle in it, and the standard beta windows are
 # two to five years precisely because shorter ones are unstable. Falling short
@@ -65,13 +73,27 @@ def returns(closes: list[float]) -> list[float]:
     return [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes))]
 
 
-def beta(stock_bars: list[dict], index_bars: list[dict]) -> tuple[float | None, int]:
-    """(beta, observations) — cov(stock, index) / var(index).
+def beta_fit(stock_bars: list[dict], index_bars: list[dict]) -> tuple[dict | None, int]:
+    """(fit, observations) — the regression *and* how well it fits.
 
-    Returns `(None, n)` when there is not enough overlap or the index did not
-    move at all, so the caller can fall through to its other sources and report
-    which one it used. The variance guard is not theoretical: a constant series
-    is what a placeholder or a halted market looks like.
+    `fit` is None on the same two conditions `beta` returns None for; otherwise
+    it carries `beta`, `standard_error`, `r_squared` and `confidence_interval`.
+
+    Why the fit statistics are not optional extras. A slope alone cannot say
+    whether it measured anything, and on the committed fixtures the difference
+    is not academic: 0700.HK regresses at 1.319 with an R^2 of 0.691, while XOM
+    regresses at 0.289 with an R^2 of **0.028** — the index explains under 3% of
+    its variance, and its 95% interval [0.08, 0.49] is wide enough to move that
+    company's fair value from 123 to 228. Both used to arrive at the caller as
+    a bare four-decimal number with nothing to separate them.
+
+    The standard error is the textbook OLS slope error,
+    `sqrt(SSE / (n - 2) / Sxx)`. Sxx is the `variance` accumulator below, which
+    is already the un-normalised sum of squared index deviations, so the error
+    costs one extra pass and no new dependency. Cross-checked when written
+    against numpy's own `polyfit(..., cov=True)` covariance matrix and against
+    the algebraic form, agreeing to 1e-12 on all seven fixtures, and the
+    identity `t^2 = R^2/(1-R^2) * (n-2)` holds exactly.
     """
     rs, ri = (returns(s) for s in align(stock_bars, index_bars))
     n = min(len(rs), len(ri))
@@ -85,7 +107,37 @@ def beta(stock_bars: list[dict], index_bars: list[dict]) -> tuple[float | None, 
     variance = sum((ri[k] - mean_i) ** 2 for k in range(n))
     if variance == 0:
         return None, n
-    return covariance / variance, n
+
+    slope = covariance / variance
+    intercept = mean_s - slope * mean_i
+    sse = sum((rs[k] - (intercept + slope * ri[k])) ** 2 for k in range(n))
+    total = sum((rs[k] - mean_s) ** 2 for k in range(n))
+    standard_error = math.sqrt(sse / (n - 2) / variance)
+    half = BETA_CI_Z * standard_error
+    return {
+        "beta": slope,
+        "standard_error": standard_error,
+        # None rather than 0.0 for a motionless *stock*: nothing was explained
+        # because there was nothing to explain, which is not the same as a
+        # regression that failed to explain a real series.
+        "r_squared": None if total == 0 else 1 - sse / total,
+        "confidence_interval": (slope - half, slope + half),
+    }, n
+
+
+def beta(stock_bars: list[dict], index_bars: list[dict]) -> tuple[float | None, int]:
+    """(beta, observations) — cov(stock, index) / var(index).
+
+    Returns `(None, n)` when there is not enough overlap or the index did not
+    move at all, so the caller can fall through to its other sources and report
+    which one it used. The variance guard is not theoretical: a constant series
+    is what a placeholder or a halted market looks like.
+
+    A thin reading of `beta_fit`, so the value and the statistics describing it
+    can never be computed two different ways.
+    """
+    fit, n = beta_fit(stock_bars, index_bars)
+    return (fit["beta"] if fit else None), n
 
 
 def change_over(bars: list[dict], periods: int = RELATIVE_STRENGTH_PERIODS) -> float | None:

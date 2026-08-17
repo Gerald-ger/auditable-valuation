@@ -189,6 +189,39 @@ function DcfAudit({ dcf }) {
               {a.beta_reported_credible === false && ', not credible'})
             </span>
           )}
+          {/* A slope on its own cannot say whether it measured anything. XOM
+              and AAPL used to print here in the same typeface — 0.2888 and
+              1.1546 — while the index explains 46% of AAPL's movement and under
+              3% of XOM's, and XOM's interval is wide enough to move its fair
+              value from 123 to 228. Published rather than flagged: a threshold
+              for "too weak" would be a constant seven fixtures cannot
+              calibrate, and the reader can see 0.03 for themselves. */}
+          {a.beta_r_squared != null && (
+            <span
+              className="muted-note"
+              title={
+                `The index explains ${(a.beta_r_squared * 100).toFixed(0)}% of this ` +
+                `company's week-to-week movement. The range is the 95% confidence ` +
+                `interval for the slope — the wider it is, the less the exact ` +
+                `figure should be leaned on.`
+              }
+            >
+              {' '}(R² {num(a.beta_r_squared, 2)}
+              {a.beta_confidence_interval &&
+                `, 95% ${num(a.beta_confidence_interval[0], 2)}–${num(
+                  a.beta_confidence_interval[1], 2)}`}
+              )
+            </span>
+          )}
+          {/* The credibility band was written for a vendor figure that could
+              not be checked. When it fires on a measured one, say so rather
+              than printing the clamped value as if it were the measurement. */}
+          {a.beta_regressed != null && a.beta_regressed !== a.beta && (
+            <span className="muted-note">
+              {' '}— regressed {num(a.beta_regressed, 4)}, held at the{' '}
+              {num(a.beta, 2)} band
+            </span>
+          )}
           {' · '}WACC <b>{pct(a.wacc_used)}</b>
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>
           {/* The ERP was a bare 5% for every market on earth until it was

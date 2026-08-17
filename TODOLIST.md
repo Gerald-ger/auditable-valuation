@@ -101,16 +101,51 @@ roughly **half the valuation**. The floor now binds on a *measured* value, pulli
 0.2888 up to 0.30 — a small distortion, but the clamp firing on a good measurement
 is the signal worth watching.
 
-**The deeper question is a modelling one, not a data one.** CAPM prices only
-systematic risk, so a genuinely uncorrelated business gets a low required return
-however volatile it is on its own terms. Whether that is the right answer for a
-commodity cyclical is a known criticism of CAPM, and it is not something a better
-beta fixes.
+*Trigger discharged 2026-08-17 (e), and the sentence above needs one correction.*
+The trigger read "a name whose measured beta sits below 0.3 and whose valuation
+looks implausible because of it": XOM, at a **5.64% cost of equity** for an oil
+major — 134bp over treasuries — and a resulting "+3.7%, fairly valued".
 
-**Trigger: a name whose measured beta sits below 0.3 and whose valuation looks
-implausible because of it.** Options then: lower the floor for computed betas
-(the band was written for an unverifiable input), or add a total-risk adjustment,
-or accept CAPM's answer and say so on screen.
+**"All agree" overstated it.** Those four figures span 0.123 to 0.488, a factor of
+four. Measured properly, XOM's regression has R² **0.028** and a 95% interval of
+**[0.08, 0.49]** — an interval that contains every one of them. They are not four
+corroborating readings; they are four points inside one very wide interval. The
+low correlation is real (0.168), and what does not follow from it is that the
+resulting slope is precise enough to be a point estimate. Its window sensitivity
+says the same: 0.048 at 2y, 0.040 at 3y, 0.254 at 4y, 0.289 at 5y.
+
+What shipped is publication, not judgement: R², the interval and the unclamped
+slope are on the audit row, so XOM and 0700.HK (R² 0.691) no longer look alike.
+A rejection threshold was considered and **not** taken — it sends XOM to a flat
+1.0, and R² jumps 0.028 → 0.148 across the fixtures with nothing between, so any
+cutoff from 0.05 to 0.14 rejects exactly one name. See CHANGELOG 2026-08-17 (e).
+
+**What remains open is the modelling question, unchanged and now isolated.** CAPM
+prices only systematic risk, so a genuinely uncorrelated business gets a low
+required return however volatile it is on its own terms. Whether that is right for
+a commodity cyclical is a known criticism of CAPM, and no better beta fixes it.
+
+**Trigger: a decision to depart from CAPM.** The remaining options are a total-risk
+adjustment (Damodaran's own suggestion for exactly this case), a floor keyed on
+something other than the band, or accepting CAPM's answer — which is now at least
+stated on screen with its precision attached.
+
+### 🟡 Only beta shows its uncertainty
+
+Raised 2026-08-17 (e) by the change that added it. The audit row now carries an R²
+and a confidence interval for a regressed beta, and nothing else on the panel
+carries either. The growth rate, the equity risk premium and the terminal rate are
+all estimates too, and displaying an interval on one input while the rest are bare
+numbers can read as a precision claim about the rest.
+
+Not obviously fixable by symmetry: beta has a residual because it is regressed, and
+the others have no sampling distribution to quote. A consensus growth figure has a
+dispersion across analysts, which yfinance does not forward; the ERP is a dated
+vendor snapshot with no interval published.
+
+**Trigger: a second input acquiring a defensible interval.** One input with an
+honest error bar is better than none; three with invented ones would be worse than
+either. Until then the README says so in the same bullet that introduces it.
 
 ### 🔵 Cross-sectional normalization needs a universe, not a `scoring.py` change
 
@@ -440,6 +475,36 @@ would need a third category. Decide whether you want that before it gets built.
 ---
 
 ## Done
+
+### ✅ 2026-08-17 (e) — three things the model said that the world does not
+
+Full detail in `CHANGELOG.md` under 2026-08-17 (e). A review of the valuation engine run by
+*executing* it over every fixture and reading the output, rather than by reading the code.
+Backend **409 → 423 passing**, frontend 46. One golden metric moved, predicted before the
+change was made.
+
+- **Yahoo's EV multiples divided an HKD enterprise value by CNY financials.** 0700.HK read
+  15.705× where the like-for-like figure is 14.277×. Everything the app computes itself was
+  already converted; a pre-divided vendor ratio was the one place the mismatch arrived baked
+  in. Also fixed a compounding double-conversion in `comps.ev_implied`.
+- **A REIT was charged 21% corporation tax** where its own statements show 7.4% and its
+  marginal rate is approximately zero. WACC 6.05% → 6.58%, fair value 36.00 → 27.04.
+- **A regressed beta now reports its own precision.** XOM's R² is 0.028 and its 95% interval
+  [0.08, 0.49] spans a fair value of 123 to 228, against one published figure of 157.30.
+
+Three things worth carrying forward rather than filing as achievements:
+
+- **A credibility band on a value is not a test of a measurement.** `BETA_MIN/MAX` had been
+  doing duty as both since the regression landed, and nothing anywhere asked whether the
+  regression explained anything. The same shape as the `__init__.py` and README warnings
+  below: a check that looks like it covers something it does not.
+- **The fixtures already held the answer to the tax question.** `Tax Rate For Calcs` sits in
+  the same dict the model reads, showing O at 7.4%, AAPL 15.6%, XOM 31%, JPM 21.4%. The
+  statutory default is still right for the other three — but it was never checked against the
+  statements sitting beside it.
+- **Reading the code would not have found any of these.** All three surfaced only by running
+  the model over real payloads and asking whether the output described a real company. A
+  5.64% cost of equity for an oil major is obvious on screen and invisible in a diff.
 
 ### ✅ 2026-08-17 (d) — the README's instructions, followed literally
 

@@ -181,6 +181,12 @@ def _ev_revenue_transfers(target_margin: float | None,
 def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
     """Comps table + peer-median-implied share values for the target."""
     info = target_fund["info"]
+    # Target and peers alike are restated onto one currency before anything is
+    # compared or medianed. Correcting only one side would be worse than
+    # correcting neither: an all-HK peer set carries the same vendor mismatch,
+    # so a corrected target beside uncorrected peers would read 10% cheap purely
+    # on FX. See fm.ev_multiple_one_currency.
+    target_ev_ebitda, target_ev_revenue = fm.ev_multiples_for(info)
     target_row = {
         "ticker": target_fund["ticker"],
         "name": info.get("longName"),
@@ -188,8 +194,8 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
         "pe_trailing": info.get("trailingPE"),
         "pe_forward": info.get("forwardPE"),
         "price_to_book": info.get("priceToBook"),
-        "ev_to_ebitda": info.get("enterpriseToEbitda"),
-        "ev_to_revenue": info.get("enterpriseToRevenue"),
+        "ev_to_ebitda": target_ev_ebitda,
+        "ev_to_revenue": target_ev_revenue,
         "peg_ratio": info.get("pegRatio"),
         "operating_margin": info.get("operatingMargins"),
         "revenue_growth": info.get("revenueGrowth"),
@@ -202,6 +208,12 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
             if snap["market_cap"] is None:
                 failed.append(p)
             else:
+                # Each peer carries its own pair — an HK peer set mixes
+                # HKD-reporting and CNY-reporting names, so the rate is per peer
+                # and not the target's.
+                for key in ("ev_to_ebitda", "ev_to_revenue"):
+                    snap[key] = fm.ev_multiple_one_currency(
+                        snap.get(key), snap.get("currency"), snap.get("financial_currency"))
                 peers.append(snap)
         except Exception:
             failed.append(p)

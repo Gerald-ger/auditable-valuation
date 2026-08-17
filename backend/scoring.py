@@ -143,7 +143,11 @@ def extract_metrics(f: dict,
     # same reason net_debt_ebitda below guards its denominator. Negative EV the
     # anchors cannot express either; cheapness still reaches the pillar through
     # earnings_yield_fwd, fcf_yield and dcf_upside_pct.
-    ev_ebitda = info.get("enterpriseToEbitda")
+    # Restated onto one currency before scoring: the vendor divides a
+    # trading-currency EV by reporting-currency EBITDA, which scored a
+    # CNY-reporting HK issuer as dearer than it is (0700.HK 15.705 -> 14.277,
+    # worth 6 points on this metric). See fm.ev_multiple_one_currency.
+    ev_ebitda, ev_sales = fm.ev_multiples_for(info)
     ebitda = info.get("ebitda")
     if ev_ebitda is not None and (ev_ebitda <= 0 or (ebitda is not None and ebitda <= 0)):
         ev_ebitda = None
@@ -152,7 +156,7 @@ def extract_metrics(f: dict,
     # it to 0 handed it the top anchor score.
     pb = info.get("priceToBook")
     m["p_b"] = _clamp(pb, 0, 1000) if pb is not None and pb > 0 else None
-    m["ev_sales"] = _clamp(info.get("enterpriseToRevenue"), 0, 1000)
+    m["ev_sales"] = _clamp(ev_sales, 0, 1000)
     # A non-payer is a zero yield, not an unreported one. yfinance omits
     # dividendYield entirely rather than sending 0, and None means "unreported"
     # to piecewise_score — so the metric was dropped from the pillar average

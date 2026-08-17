@@ -7,6 +7,103 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-17 (e) — three things the model said that the world does not
+
+A review of the valuation engine against reality, run by executing the model over every
+committed fixture and reading the output rather than the code. Backend **409 → 423 passing**
+(14 new tests), frontend 46. One golden moved, by one metric, as predicted before the change
+was made.
+
+### Fixed
+
+- **The vendor's EV multiples divided an HKD enterprise value by CNY financials.** Yahoo
+  computes `enterpriseToEbitda` and `enterpriseToRevenue` itself, and its two legs are in
+  different currencies for a China-domiciled HK listing: EV comes from `marketCap` (trading)
+  and EBITDA/revenue from the statements (reporting). Proved rather than inferred —
+  `marketCap / shares` reproduces 0700.HK's HKD quote to the cent, `totalRevenue` matches the
+  CNY statement, and `EV / totalRevenue` reproduces the published ratio to four decimals, so
+  the currencies of both legs are pinned independently.
+
+  0700.HK's EV/EBITDA read **15.705× against a like-for-like 14.277×**, and EV/Revenue 5.772×
+  against 5.247× — overstated by the whole CNY→HKD rate. Downstream: the scored `ev_ebitda`
+  metric 43 → 49 and the valuation pillar 60 → 62 (composite held at 71/A, so the score
+  absorbed it); the market-implied terminal growth 5.89% → 5.46%; and the Models tab's
+  implied multiple compression, which reads a currency-consistent exit multiple against this
+  one, −44.6% → −39.1%.
+
+  This also removes a compounding error in `comps.ev_implied`, which multiplies a peer
+  multiple by the target's reporting-currency EBITDA and *then* converts: with a mismatched
+  vendor multiple it converted the enterprise-value term twice while converting net debt
+  once. Target and peers are both restated, per peer, because correcting one side of a comps
+  table and not the other is worse than correcting neither — an all-HK peer set carries the
+  same mismatch.
+
+  The correction lives in the model layer, not in `data_provider`, deliberately: the test
+  fixtures *are* captured `get_fundamentals` output, so a fix at the fetch boundary would
+  have been invisible to the offline suite while every test stayed green.
+
+- **A REIT was charged 21% corporation tax.** `tax_rate_for` keyed on listing currency alone.
+  Elsewhere the gap between statutory and effective is tax planning, and statutory is the
+  right input for a debt shield because it is the marginal rate; a REIT is different in kind,
+  deducting what it distributes, so the marginal rate is approximately zero. Realty Income's
+  own income statement reports 85.3m of tax on 1,155m pre-tax — **7.4%** — and that residual
+  is its taxable subsidiaries rather than the trust.
+
+  WACC 6.05% → **6.58%**, fair value 36.00 → **27.04**. The rule reads through
+  `sector_weights.classify`, the same classification `dcf_applies` uses, rather than
+  re-testing the industry string in a second place. Verified that only the REIT moved: the
+  other six fixtures hold the rate their listing currency implies.
+
+  Its golden did not move, and the reason was checked rather than assumed — the REIT profile
+  scores `ffo_yield`, not `dcf_upside_pct` or `roic`, so the rate never reaches its score.
+
+### Added
+
+- **A regressed beta now reports how well it fit.** The credibility band tested whether the
+  *value* looked sane and nothing tested whether the regression meant anything. Measured
+  across the fixtures, that is the difference between 0700.HK at R² **0.691** and XOM at R²
+  **0.028** — an index explaining under 3% of a company's variance — both arriving at the
+  audit row as bare four-decimal numbers.
+
+  XOM's 95% interval is **[0.08, 0.49]**, which is wider than the estimate it brackets, and
+  inside that interval alone its fair value runs **123 to 228** (−19% to +50% upside) against
+  a single published figure of 157.30, "+3.7%, fairly valued". Its window sensitivity says
+  the same thing: 0.048 at 2y, 0.040 at 3y, 0.254 at 4y, 0.289 at 5y.
+
+  `market_series.beta_fit` now returns the slope with its standard error, R² and 95%
+  interval; `beta` is a thin reading of it so the value and its statistics cannot be computed
+  two different ways. The standard error is the textbook OLS slope error and reuses the
+  `variance` accumulator already there as its `Sxx`, so it costs one pass and no new
+  dependency — cross-checked against numpy's `polyfit(cov=True)` covariance matrix and the
+  algebraic form, agreeing to **1e-12** on all seven fixtures, with the identity
+  `t² = R²/(1−R²)·(n−2)` holding exactly.
+
+  The audit row also shows the **unclamped** slope, so a credibility band firing on a
+  measurement is legible: XOM reads *used 0.30, regressed 0.2888* where it previously printed
+  0.30 alone.
+
+  `resolve_beta` keeps its `(beta, source)` signature. It has one caller in the app and about
+  twenty in the suite, and widening it to carry reporting-only figures would have churned all
+  of them; `_wacc` asks for the fit directly, guarded on the source actually being a
+  regression.
+
+### Not done, deliberately
+
+- **No "fit too weak" threshold.** Rejecting a weak regression sends XOM down the ladder to a
+  flat **1.0** — its reported 0.173 fails the band and fewer than two peers survive it —
+  which is the neutral non-answer the regression was built to escape, and would move its fair
+  value to 76.69. Worse, the threshold is uncalibratable here: R² jumps 0.028 → 0.148 with
+  nothing between, so anything from 0.05 to 0.14 rejects exactly XOM. That is a constant
+  chosen to produce a chosen outcome, which is the objection that removed the old growth
+  clamp. The figures are published and the reader decides.
+
+- **`BETA_MIN` still clamps computed betas.** Worth 2.76 per share on XOM and nothing
+  elsewhere on the fixtures; now at least visible rather than silent.
+
+- **The uncertainty display is asymmetric.** Beta carries an interval; the growth rate,
+  equity risk premium and terminal growth do not, and that does not make them precise. Noted
+  in `TODOLIST.md` rather than fixed by adding intervals nobody has derived.
+
 ## 2026-08-17 (d) — the README's own instructions, followed literally
 
 An audit of every command the README tells a stranger to run, checked against what the repo

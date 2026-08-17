@@ -11,7 +11,7 @@ import copy
 
 import pytest
 
-from conftest import TEST_CNY_HKD, load_fundamentals
+from conftest import TEST_CNY_HKD, load_bars, load_fundamentals
 
 from backend import financial_models as fm
 
@@ -725,6 +725,43 @@ def test_tax_rate_follows_the_listing_currency():
     assert fm.tax_rate_for({}) == fm.DEFAULT_TAX_RATE
 
 
+def test_a_reit_is_not_charged_corporation_tax():
+    """A REIT deducts what it distributes, so there is no shield to price. Its
+    own statements agree: O reports 85.3m of tax on 1,155m of pre-tax income,
+    an effective 7.4%, and that residual is its taxable subsidiaries rather than
+    the trust. The exception is structural, so it keys on the classification
+    rather than on the currency the listing happens to trade in."""
+    f = load_fundamentals("O")
+    assert f["info"]["currency"] == "USD"          # would otherwise be 21%
+    assert fm.tax_rate_for(f["info"]) == 0.0
+
+    inc = f["income_statement"][sorted(f["income_statement"])[-1]]
+    effective = inc["Tax Provision"] / inc["Pretax Income"]
+    assert effective < 0.10, "fixture no longer shows a REIT-like effective rate"
+
+
+def test_only_the_reit_moved(monkeypatch):
+    """The exception must not leak into anything else. Every other fixture keeps
+    the rate its listing currency implies."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    expected = {"AAPL": 0.21, "MSFT": 0.21, "XOM": 0.21, "JPM": 0.21,
+                "RIVN": 0.21, "0700_HK": 0.165, "O": 0.0}
+    for stem, rate in expected.items():
+        assert fm.tax_rate_for(load_fundamentals(stem)["info"]) == rate, stem
+
+
+def test_charging_a_reit_tax_understated_its_cost_of_capital(monkeypatch):
+    """The reason the exception is worth having: the shield it wrongly granted
+    was the difference between a 6.05% and a 6.58% WACC on the committed
+    fixture, and a fair value of 36.00 against 27.04."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("O")
+    now = fm.dcf_valuation(f)
+    charged = fm.dcf_valuation(f, tax_rate=0.21)
+    assert now["assumptions"]["wacc"] > charged["assumptions"]["wacc"]
+    assert now["fair_value_per_share"] < charged["fair_value_per_share"]
+
+
 def test_hk_listing_uses_the_hk_rate(monkeypatch):
     monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     d = fm.dcf_valuation(load_fundamentals("0700_HK"))
@@ -1123,6 +1160,90 @@ def test_erp_resolves_per_market():
 
     assert fm.equity_risk_premium_for("HKD")[::2] == (0.0501, "Hong Kong")
     assert fm.equity_risk_premium_for("CNY")[::2] == (0.0514, "China")
+
+
+def test_the_audit_row_carries_the_precision_of_the_beta_it_used(monkeypatch):
+    """XOM is the case this exists for: the panel printed 0.2888 with the same
+    authority as AAPL's 1.1546, while the index explains under 3% of XOM's
+    movement and its interval spans 0.08 to 0.49."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    a = fm._wacc(load_fundamentals("XOM"), 0.21, None,
+                 (load_bars("XOM"), load_bars("_GSPC")))
+    assert a["beta_source"] == "computed"
+    assert a["beta_r_squared"] == pytest.approx(0.028, abs=0.002)
+    lo, hi = a["beta_confidence_interval"]
+    assert lo < 0.1 and hi > 0.45
+
+    # and the clamp is legible rather than silent
+    assert a["beta_regressed"] == pytest.approx(0.2888, abs=1e-3)
+    assert a["beta"] == fm.BETA_MIN
+    assert a["beta_regressed"] < a["beta"]
+
+
+def test_a_well_fitted_beta_is_visibly_different_from_a_badly_fitted_one(monkeypatch):
+    """The comparison the reader could not previously make on screen."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    good = fm._wacc(load_fundamentals("0700_HK"), 0.165, None,
+                    (load_bars("0700_HK"), load_bars("_HSI")))
+    poor = fm._wacc(load_fundamentals("XOM"), 0.21, None,
+                    (load_bars("XOM"), load_bars("_GSPC")))
+    assert good["beta_r_squared"] > 0.65
+    assert poor["beta_r_squared"] < 0.05
+
+
+def test_only_a_regressed_beta_claims_a_precision(monkeypatch):
+    """The other rungs of the ladder are a vendor scalar, a peer median and a
+    constant. None has residuals, so none may carry an interval — publishing one
+    would invent a precision claim instead of describing one."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    a = fm._wacc(load_fundamentals("AAPL"), 0.21, None, None)
+    assert a["beta_source"] == "reported"
+    for key in ("beta_regressed", "beta_standard_error",
+                "beta_r_squared", "beta_confidence_interval"):
+        assert a[key] is None, key
+
+
+def test_a_vendor_ev_multiple_is_restated_onto_one_currency():
+    """`enterpriseToEbitda` arrives pre-divided, and its legs are not in the same
+    unit: EV comes from marketCap (trading) and EBITDA from the statements
+    (reporting). For 0700.HK that is HKD over CNY, overstated by the whole rate.
+
+    Both directions matter. A rule that only ever divides would quietly rescale
+    every US issuer too, and the test would not notice."""
+    f = load_fundamentals("0700_HK")
+    vendor = f["info"]["enterpriseToEbitda"]
+    assert vendor == 15.705
+
+    ev_ebitda, ev_revenue = fm.ev_multiples_for(f["info"])
+    assert ev_ebitda == round(vendor / TEST_CNY_HKD, 4) == 14.2773
+    assert ev_revenue == round(f["info"]["enterpriseToRevenue"] / TEST_CNY_HKD, 4)
+
+    # a single-currency issuer is passed through untouched
+    aapl = load_fundamentals("AAPL")["info"]
+    assert aapl["currency"] == aapl["financialCurrency"]
+    assert fm.ev_multiples_for(aapl) == (aapl["enterpriseToEbitda"],
+                                         aapl["enterpriseToRevenue"])
+
+
+def test_an_unfetchable_rate_withholds_the_multiple_rather_than_mixing_units(monkeypatch):
+    """Same stance the DCF takes on upside: no rate means no number, because a
+    multiple with one leg in each currency is worse than an absent one."""
+    monkeypatch.setattr(fm, "fx_rate", lambda a, b: None)
+    f = load_fundamentals("0700_HK")
+    assert fm.ev_multiples_for(f["info"]) == (None, None)
+    # and a same-currency issuer still resolves, because no rate was needed
+    assert fm.ev_multiples_for(load_fundamentals("AAPL")["info"])[0] is not None
+
+
+def test_the_traded_multiple_the_diagnostics_report_is_the_corrected_one(monkeypatch):
+    """The panel divides the implied exit multiple by this one. The exit figure
+    is built from statements and is reporting-currency throughout, so reading it
+    against an HKD-over-CNY multiple overstated the implied compression."""
+    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
+    f = load_fundamentals("0700_HK")
+    diag = fm.dcf_valuation(f)["diagnostics"]
+    assert diag["current_ev_ebitda"] == 14.2773
+    assert diag["current_ev_ebitda"] < f["info"]["enterpriseToEbitda"]
 
 
 def test_tencent_is_priced_off_china_not_hong_kong():

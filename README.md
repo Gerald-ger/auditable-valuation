@@ -545,6 +545,17 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   reporter such as 0700.HK the peg argument does not apply at all. This is the one half of
   the cost-of-capital pair still unsourced; see `docs/data-sources-review.md` §7 for why
   the obvious fix is gated rather than shipped.
+- **The vendor's own EV multiples mixed those two currencies, and now do not.**
+  `enterpriseToEbitda` and `enterpriseToRevenue` arrive from Yahoo already divided, and the
+  legs are not in the same unit: enterprise value is built from market cap (trading) while
+  EBITDA and revenue are statement figures (reporting). Proved on 0700.HK rather than
+  assumed — `marketCap / shares` reproduces the HKD quote exactly, while `totalRevenue`
+  matches the CNY statement, and `EV / totalRevenue` reproduces Yahoo's published ratio to
+  four decimals. So its EV/EBITDA read **15.705× where the like-for-like figure is 14.277×**,
+  overstated by the whole CNY→HKD rate. Everything the app computes itself was already
+  converted; a *pre-divided* vendor ratio was the one place the mismatch arrived baked in.
+  Both the subject and each peer are restated before anything is compared, because
+  correcting one side of a comps table and not the other is worse than correcting neither.
 - **A company's statements and its shares can be in different currencies**, and for the
   China-domiciled Hong Kong listings they are: 0700.HK reports in CNY and trades in HKD
   (so do 9988.HK and 1810.HK). Cash flows, `totalDebt` and `totalCash` follow the
@@ -601,9 +612,21 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   This matters most where the vendor and the band disagreed. XOM's reported 0.173 failed the
   band and only one of its four peers survived it, so it fell through to a neutral **1.0** —
   and the regression puts it at **0.2888**. Correcting that alone moves XOM's fair value
-  **+103%**. Note what that implies: the vendor was directionally right and the `0.3` floor
-  was the problem, so the floor now clamps a *measured* value, which `TODOLIST.md` carries as
-  an open calibration question.
+  **+105%**. Note what that implies: the vendor was directionally right and the `0.3` floor
+  was the problem, so the floor now clamps a *measured* value.
+
+  **The regression also reports how well it fit, because on XOM it barely did.** A slope
+  alone cannot say whether it measured anything, and the audit row used to print 0.2888 and
+  AAPL's 1.1546 in the same typeface. The index explains **46%** of AAPL's week-to-week
+  movement and **2.8%** of XOM's; XOM's 95% interval is **0.08 to 0.49**, which is wider than
+  the estimate it brackets and moves that company's fair value from 123 to 228. So R², the
+  interval, and the unclamped slope are all shown — XOM reads *used 0.30, regressed 0.2888*
+  rather than presenting the clamped figure as the measurement.
+
+  Deliberately **published rather than flagged**: a "fit too weak" threshold would be a
+  constant these seven fixtures cannot calibrate, since R² jumps 0.028 → 0.148 with nothing
+  in between. And note the asymmetry it introduces — beta now carries an interval while the
+  growth rate and equity risk premium do not, which does not mean those are precise.
 - **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
   Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each
   with its published threshold. They stay out of the score because the composite already
@@ -618,8 +641,15 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   no entry falls back to the mature-market premium, and a missing file to the old 5%; the
   Models tab names which of the three was used.
 - Corporate tax defaults to the statutory rate for the listing currency (HKD 16.5%,
-  USD 21%, otherwise 21%) and is overridable per request.
-- Terminal value is 52–66% of enterprise value on the sample fixtures. Above 75% the UI
+  USD 21%, otherwise 21%) and is overridable per request. **A REIT is the exception**, and
+  an exception in kind rather than degree: everywhere else the gap between statutory and
+  what a company actually pays is tax planning, and the statutory figure is the right input
+  for a debt shield because it is the marginal rate. A REIT deducts what it distributes, so
+  there is almost nothing left to shield — Realty Income's own statements show **7.4%**
+  effective, and that residual is its taxable subsidiaries rather than the trust. Charging
+  it 21% overstated the shield and understated its WACC (6.05% against 6.58%, a fair value
+  of 36.00 against 27.04). The rule keys on the same classification `dcf_applies` uses.
+- Terminal value is 50–73% of enterprise value on the sample fixtures. Above 75% the UI
   flags it: at that point the perpetuity assumption, not the explicit forecast, is
   producing the answer. Cross-check with the implied exit multiple — a DCF that only works
   by exiting far below today's trading multiple is assuming compression, which is a stance
