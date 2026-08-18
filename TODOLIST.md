@@ -1356,17 +1356,38 @@ and adds marked securities, so the two bars on the football field rest on differ
 That observation is **true**. Measured across the seven fixtures, the difference is 13.9% of
 price on 0700.HK, 2.1% on JPM, 1.7% on AAPL and ≤1.1% on the rest.
 
-**Why the proposed fix was wrong.** The multiples on both sides are the vendor's
-`enterpriseToEbitda` / `enterpriseToRevenue`, and Yahoo's enterprise value is exactly
-`market cap + total debt − total cash`. Verified against the fixtures 2026-08-18:
-`(enterpriseValue − net_debt) / shares` reproduces the traded price **to the cent** on AAPL
-and MSFT, and to within 0.4% on RIVN and XOM. So the existing line is the algebraic inverse
-of the definition the multiple is built on, and any extra term breaks the inversion.
+**Why the proposed fix was wrong — on the term that dominates.** The multiples on both
+sides are the vendor's `enterpriseToEbitda` / `enterpriseToRevenue`, and the vendor does not
+deduct non-operating assets from enterprise value. AAPL carries **77.7bn** of
+`Investmentin Financial Assets` while its reported `enterpriseValue` sits **127k** from
+`market cap + total debt − total cash` — five orders of magnitude apart. So adding
+`marked_securities` to the peer bridge **double-counts**: a peer's market cap already prices
+its own non-operating assets, that value is inside the median multiple, and adding the
+target's again counts it twice. On 0700.HK that term alone is **+77.65 per share on a 481
+price, 16.1%**.
 
-Adding `marked_securities` in particular **double-counts**: a peer's market cap already
-prices its own non-operating assets, so that value is baked into the median multiple, and
-adding the target's again on top counts it twice. On 0700.HK that is +67.03 per share on a
-481 price — a 13.9% overstatement that would have shipped as a correction.
+**Corrected 2026-08-18, hours after this entry was first written.** The original version of
+this entry made the same class of mistake it was closing, and both errors reached the
+shipped code:
+
+- It claimed Yahoo's EV is **exactly** `market cap + debt − cash`. That holds to the cent on
+  AAPL and MSFT and **fails by 4.3% on JPM and 2.3% on O**.
+- Its proof was **a null test**. AAPL and MSFT are precisely the two fixtures whose balance
+  sheets carry zero minority interest and zero preferred — the only two where "net debt
+  only" and "net debt plus those terms" are the same arithmetic. They cannot distinguish the
+  two hypotheses. Worse, `(EV − net debt) / shares` reduces to `market cap / shares`, which
+  *is* the price by construction, so "reproduces the traded price to the cent" measured
+  nothing at all.
+- Evidence points the other way on those terms: **JPM's 21.04bn residual is within 5% of its
+  20.05bn of preferred stock**, and accounting for minority interest and preferred cuts JPM's
+  error from 4.28% to 0.20% and RIVN's from 0.093% to −0.031%. It does not fit XOM or O, so
+  the exact vendor formula is **not recoverable from seven fixtures**.
+- It quoted **+67.03** as the marked-securities effect. 67.03 is the *net* of all four bridge
+  terms; marked securities alone is **77.65**, and minority interest pulls it back to 67.03.
+
+So: net debt only remains correct, because the term that dominates is settled and the terms
+that are not settled have no better answer. What is retracted is the claim that *every* term
+was proven.
 
 The DCF bar may use the fuller bridge because its enterprise value comes from discounted
 FCFF, which contains only operating cash flows. **The two bars rest on two different

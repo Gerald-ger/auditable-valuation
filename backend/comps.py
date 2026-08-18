@@ -249,21 +249,34 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
         one; it was recorded as a defect in TODOLIST until 2026-08-18 and the
         proposed fix would have introduced a real error.
 
-        The multiples on both sides of this calculation are the vendor's
-        `enterpriseToEbitda` / `enterpriseToRevenue`, and the vendor's
-        enterprise value is exactly `market cap + total debt - total cash`.
-        Verified against the fixtures: `(enterpriseValue - net_debt) / shares`
-        reproduces the traded price to the cent on AAPL and MSFT, and to within
-        0.4% on RIVN and XOM. So the line below is the algebraic inverse of the
-        definition the multiple was built on, and any extra term breaks that
-        inversion.
+        The multiples on both sides are the vendor's `enterpriseToEbitda` /
+        `enterpriseToRevenue`, so the equity conversion has to invert whatever
+        definition of enterprise value the vendor used.
 
-        Concretely, adding the bridge's `marked_securities` would double-count:
-        a peer's market cap already reflects its own non-operating assets, so
-        that valuation is baked into the median multiple, and adding the
-        target's again on top counts them twice. On 0700.HK, whose marked
-        securities are 635bn, that is +67.03 per share on a 481 price -- a 13.9%
-        overstatement dressed as a correction.
+        **What is established.** The vendor does not deduct non-operating assets.
+        AAPL carries 77.7bn of `Investmentin Financial Assets` while its
+        `enterpriseValue` sits 127k -- five orders of magnitude smaller -- from
+        `market cap + total debt - total cash`. So adding the bridge's
+        `marked_securities` here would double-count: a peer's market cap already
+        prices that peer's non-operating assets, so their value is inside the
+        median multiple, and adding the target's again on top counts them twice.
+        On 0700.HK that term alone is +77.65 per share on a 481 price, 16.1%.
+        It is also the dominant term, which is why the decision rests on it.
+
+        **What is not established, and was over-claimed here until 2026-08-18.**
+        Whether the vendor also folds in minority interest and preferred stock.
+        `enterpriseValue == market cap + debt - cash` holds to the cent on AAPL
+        and MSFT and fails by 4.3% on JPM and 2.3% on O. The two names it holds
+        on are precisely the two whose balance sheets carry zero minority
+        interest and zero preferred -- the only two where "net debt only" and
+        "net debt plus those terms" are the same arithmetic, so they cannot
+        distinguish the two hypotheses. JPM's 21.04bn residual is within 5% of
+        its 20.05bn of preferred stock, which points the other way. The exact
+        vendor formula is not recoverable from seven fixtures.
+
+        Net debt only is therefore the right call on the term that dominates and
+        the honest default on the terms that are unresolved -- not, as this
+        docstring first claimed, a proven inversion in every term.
 
         The DCF bar may use the full bridge because its enterprise value comes
         from discounted FCFF, which contains *only* operating cash flows. The two
@@ -457,11 +470,11 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
         ranges.append({
             "method": "Peer multiples (implied)",
             "equity_basis_note": (
-                "Converted to equity by subtracting net debt only. That inverts the "
-                "vendor's own enterprise value — market cap + debt − cash — which is "
-                "what these multiples are built on. The DCF bar uses the fuller bridge "
-                "because it discounts operating cash flows, which exclude non-operating "
-                "assets; subtracting that same bridge here would count them twice."
+                "Converted to equity by subtracting net debt only, because these are "
+                "the data vendor's multiples and its enterprise value does not deduct "
+                "non-operating assets. The DCF bar uses a fuller bridge, since it "
+                "discounts operating cash flows and those assets sit outside them — "
+                "applying that same bridge here would count them twice."
             ) if dcf_drawn else None,
             "low": round(core_low, 2), "high": round(core_high, 2),
             "mid": round(median(vals), 2),

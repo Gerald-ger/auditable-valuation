@@ -128,13 +128,17 @@ def test_ev_implied_uses_net_debt_only_and_ignores_the_rest_of_the_bridge(stub):
     Until 2026-08-18 TODOLIST carried this as a defect: the DCF bar subtracts
     minority interest and preferred and adds marked securities, and the peer bar
     beside it does not. Making them match would have been an error, because these
-    multiples are the vendor's, and the vendor's enterprise value is exactly
-    `market cap + debt - cash`. The line under test is the algebraic inverse of
-    that definition, so any additional term breaks the inversion — and adding
-    `marked_securities` in particular double-counts, since a peer's market cap
-    already prices its own non-operating assets into the median multiple.
+    are the vendor's multiples and the vendor's enterprise value demonstrably
+    does not deduct non-operating assets — AAPL carries 77.7bn of them while its
+    reported enterprise value sits 127k from `market cap + debt - cash`. Adding
+    them here therefore double-counts: a peer's market cap already prices its own
+    into the median multiple.
 
-    A balance sheet carrying all four bridge terms must therefore change nothing.
+    That argument covers marked securities, which is the dominant term. It does
+    *not* settle minority interest and preferred — see `comps.ev_implied`, whose
+    docstring records what the fixtures can and cannot show. This test pins the
+    behaviour rather than the full theory: a balance sheet carrying all four
+    bridge terms must change nothing.
     """
     stub({t: snapshot(t, ev_to_ebitda=10.0) for t in ("A", "B", "C")})
     f = target()
