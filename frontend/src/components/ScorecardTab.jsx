@@ -382,6 +382,19 @@ function FootballField({ ranges, currentPrice, triangulation }) {
         </div>
       ))}
 
+      {/* The two bars turn enterprise value into equity by different bridges,
+          and both are correct — the peer multiples are the vendor's, whose EV is
+          market cap + debt − cash, so inverting it is the only consistent move.
+          The backend supplies this only when a DCF bar was actually drawn, i.e.
+          only when the chart is inviting the comparison. See comps.ev_implied:
+          this was on the TODO list as a defect until the "fix" was measured and
+          turned out to double-count. */}
+      {drawn.map((r) => r.equity_basis_note && (
+        <div key={`${r.method}-basis`} className="chart-note">
+          <b>{r.method}:</b> {r.equity_basis_note}
+        </div>
+      ))}
+
       {/* The arithmetic, ahead of every verdict on this panel. A reader who
           disagrees with a grade has nowhere to go; a reader who disagrees with a
           line in a bridge can point at the line. */}

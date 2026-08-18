@@ -122,6 +122,40 @@ def test_ev_implied_bridges_to_equity_before_dividing_by_shares(stub):
     assert result["implied_values"]["peer_ev_ebitda"] == pytest.approx(expected, rel=1e-9)
 
 
+def test_ev_implied_uses_net_debt_only_and_ignores_the_rest_of_the_bridge(stub):
+    """The regression guard for a fix that would have been wrong.
+
+    Until 2026-08-18 TODOLIST carried this as a defect: the DCF bar subtracts
+    minority interest and preferred and adds marked securities, and the peer bar
+    beside it does not. Making them match would have been an error, because these
+    multiples are the vendor's, and the vendor's enterprise value is exactly
+    `market cap + debt - cash`. The line under test is the algebraic inverse of
+    that definition, so any additional term breaks the inversion — and adding
+    `marked_securities` in particular double-counts, since a peer's market cap
+    already prices its own non-operating assets into the median multiple.
+
+    A balance sheet carrying all four bridge terms must therefore change nothing.
+    """
+    stub({t: snapshot(t, ev_to_ebitda=10.0) for t in ("A", "B", "C")})
+    f = target()
+    f["balance_sheet"] = {"2025-12-31": {
+        "Minority Interest": 4e10,
+        "Preferred Stock": 2e10,
+        "Investmentin Financial Assets": 6e11,
+        "Long Term Equity Investment": 3e11,
+    }}
+    with_bridge = comps.comps_analysis(f, ["A", "B", "C"])
+
+    net_debt = f["info"]["totalDebt"] - f["info"]["totalCash"]
+    expected = (10.0 * f["info"]["ebitda"] - net_debt) / f["info"]["sharesOutstanding"]
+    assert with_bridge["implied_values"]["peer_ev_ebitda"] == pytest.approx(expected, rel=1e-9)
+
+    # And identical to the same target with no balance sheet at all.
+    without = comps.comps_analysis(target(), ["A", "B", "C"])
+    assert (with_bridge["implied_values"]["peer_ev_ebitda"]
+            == without["implied_values"]["peer_ev_ebitda"])
+
+
 def test_earnings_multiples_apply_directly_to_eps(stub):
     """A P/E is already an equity multiple — no bridge, no share count."""
     stub({t: snapshot(t, pe_forward=15.0, pe_trailing=18.0) for t in ("A", "B", "C")})
@@ -219,6 +253,33 @@ def test_peer_multiple_bar_spans_the_implied_values():
     bar = next(r for r in comps.football_field(target(), {}, comps_result)
                if r["method"].startswith("Peer"))
     assert (bar["low"], bar["mid"], bar["high"]) == (90.0, 100.0, 130.0)
+
+
+def _dcf_and_peers():
+    dcf = {"fair_value_per_share": 140.0,
+           "sensitivity": {"rows": [{"values": [130.0, 140.0, 150.0]}]}}
+    return dcf, {"implied_values": {"peer_ev_ebitda": 120.0, "peer_forward_pe": 130.0}}
+
+
+def test_the_peer_bar_discloses_its_equity_basis_when_a_dcf_bar_sits_beside_it():
+    """The two bars convert enterprise value to equity differently, and both are
+    right — see `comps.ev_implied`. The chart puts them side by side, so the
+    difference is stated rather than left for the reader to discover."""
+    dcf, comps_result = _dcf_and_peers()
+    bar = next(r for r in comps.football_field(target(), dcf, comps_result, "technology")
+               if r["method"].startswith("Peer"))
+    assert bar["equity_basis_note"] is not None
+    assert "net debt only" in bar["equity_basis_note"]
+
+
+def test_no_basis_note_where_there_is_no_dcf_bar_to_compare_against():
+    """A bank or a REIT gets one bar, so there is no comparison to qualify and
+    the note would be noise."""
+    dcf, comps_result = _dcf_and_peers()
+    bar = next(r for r in comps.football_field(target(), dcf, comps_result,
+                                               "real_estate_reit")
+               if r["method"].startswith("Peer"))
+    assert bar["equity_basis_note"] is None
 
 
 # ── applicability, comparability and sample size ─────────────────────

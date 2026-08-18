@@ -242,6 +242,34 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
         info.get("currency"), info.get("financialCurrency"))
 
     def ev_implied(mult, metric):
+        """Peer-median EV multiple -> implied share price.
+
+        **Net debt only, and deliberately not the DCF's five-term bridge.** This
+        looks like an inconsistency beside the Financial Models tab and is not
+        one; it was recorded as a defect in TODOLIST until 2026-08-18 and the
+        proposed fix would have introduced a real error.
+
+        The multiples on both sides of this calculation are the vendor's
+        `enterpriseToEbitda` / `enterpriseToRevenue`, and the vendor's
+        enterprise value is exactly `market cap + total debt - total cash`.
+        Verified against the fixtures: `(enterpriseValue - net_debt) / shares`
+        reproduces the traded price to the cent on AAPL and MSFT, and to within
+        0.4% on RIVN and XOM. So the line below is the algebraic inverse of the
+        definition the multiple was built on, and any extra term breaks that
+        inversion.
+
+        Concretely, adding the bridge's `marked_securities` would double-count:
+        a peer's market cap already reflects its own non-operating assets, so
+        that valuation is baked into the median multiple, and adding the
+        target's again on top counts them twice. On 0700.HK, whose marked
+        securities are 635bn, that is +67.03 per share on a 481 price -- a 13.9%
+        overstatement dressed as a correction.
+
+        The DCF bar may use the full bridge because its enterprise value comes
+        from discounted FCFF, which contains *only* operating cash flows. The two
+        bars therefore rest on two different definitions of enterprise value, and
+        that difference is disclosed on the chart rather than averaged away.
+        """
         if mult and metric and shares and fx is not None:
             return round((mult * metric - net_debt) * fx / shares, 2)
         return None
@@ -420,8 +448,21 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
         core_low, core_high = (
             (quantiles(vals, n=4)[0], quantiles(vals, n=4)[2]) if len(vals) >= 4
             else (min(vals), max(vals)))
+        # Only where a DCF bar was actually drawn, because that is the only case
+        # in which the chart invites the comparison. For a bank or a REIT there
+        # is no second bar and no basis difference to explain. See `ev_implied`
+        # for why the two bases are both correct rather than one being a bug.
+        dcf_drawn = any(r["method"].startswith("DCF") and r.get("low") is not None
+                        for r in ranges)
         ranges.append({
             "method": "Peer multiples (implied)",
+            "equity_basis_note": (
+                "Converted to equity by subtracting net debt only. That inverts the "
+                "vendor's own enterprise value — market cap + debt − cash — which is "
+                "what these multiples are built on. The DCF bar uses the fuller bridge "
+                "because it discounts operating cash flows, which exclude non-operating "
+                "assets; subtracting that same bridge here would count them twice."
+            ) if dcf_drawn else None,
             "low": round(core_low, 2), "high": round(core_high, 2),
             "mid": round(median(vals), 2),
             "envelope_low": min(vals), "envelope_high": max(vals),

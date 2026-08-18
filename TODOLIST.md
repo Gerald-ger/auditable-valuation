@@ -4,9 +4,11 @@ Open work, ranked. Open items record the **trigger** (when it becomes worth doin
 nothing gets done too early — and the deferred items record *why*, so the decision does
 not get re-litigated. Entries under *Deliberately not doing* carry no trigger, which is
 deliberate: they are settled rather than waiting, and inventing a reopening condition for
-them would suggest otherwise. The one exception is the TestClient item, which names the
-change that would reopen it. (Stated as a rule and an exception rather than as a count,
-because a count goes stale every time an entry is added — it already had, twice.)
+them would suggest otherwise. Two of them do name the change that would reopen them — the
+TestClient item and the `comps.ev_implied` one — because in both cases a specific data
+source, not a change of mind, is what would make the work worth doing. (Stated as a rule
+and its exceptions rather than as a count, because a count goes stale every time an entry
+is added — it already had, twice.)
 
 Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliberately deferred
 
@@ -269,22 +271,6 @@ say which.
 **Trigger: a holdings-level source with marks**, or a decision to accept carrying cost with
 that stated on screen. Note the platform can already show the second answer — the panel
 prints it — so what a source would buy is the right to put it in the headline.
-
-### 🟡 `comps.ev_implied` still uses the one-term bridge
-
-Raised 2026-08-14 (d). `comps.py:222` bridges every peer-multiple implied value with
-`EV − net_debt` alone, which is what the DCF did until the same day. So the DCF bar on the
-football field now subtracts minority interest and adds marked securities while the peer
-bars beside it do not — on 0700.HK that is a 71-per-share difference in basis between bars
-the chart invites you to compare.
-
-Not fixed in the same change because it moves every peer bar on every company, which is a
-different blast radius from one headline, and the football field's verdicts and overlap zone
-all read off those bars.
-
-**Trigger: before the next football-field change.** The fix is mechanical — the bridge
-figure is already computed in `dcf_valuation`; the work is deciding whether comps should
-import it or recompute, and re-measuring every verdict.
 
 ### 🟡 Portfolio totals ignore FX
 
@@ -1357,6 +1343,46 @@ purposes. No reason to spend the quota.
 ### ⚪ Rewriting the curated peer map
 
 FMP peers are worse than the curated list where the list exists (see above). Keep both.
+
+### ⚪ ~~`comps.ev_implied` still uses the one-term bridge~~ — not a defect, closed 2026-08-18
+
+*Raised 2026-08-14 (d) as a defect. It is not one, and the fix this entry proposed would
+have introduced a real error. Kept rather than deleted so the reasoning is not lost and the
+"fix" is not re-attempted — which is exactly what nearly happened on 2026-08-18.*
+
+**What the entry said.** `comps.ev_implied` bridges peer-multiple implied values with
+`EV − net_debt` alone while the DCF bar beside it subtracts minority interest and preferred
+and adds marked securities, so the two bars on the football field rest on different bases.
+That observation is **true**. Measured across the seven fixtures, the difference is 13.9% of
+price on 0700.HK, 2.1% on JPM, 1.7% on AAPL and ≤1.1% on the rest.
+
+**Why the proposed fix was wrong.** The multiples on both sides are the vendor's
+`enterpriseToEbitda` / `enterpriseToRevenue`, and Yahoo's enterprise value is exactly
+`market cap + total debt − total cash`. Verified against the fixtures 2026-08-18:
+`(enterpriseValue − net_debt) / shares` reproduces the traded price **to the cent** on AAPL
+and MSFT, and to within 0.4% on RIVN and XOM. So the existing line is the algebraic inverse
+of the definition the multiple is built on, and any extra term breaks the inversion.
+
+Adding `marked_securities` in particular **double-counts**: a peer's market cap already
+prices its own non-operating assets, so that value is baked into the median multiple, and
+adding the target's again on top counts it twice. On 0700.HK that is +67.03 per share on a
+481 price — a 13.9% overstatement that would have shipped as a correction.
+
+The DCF bar may use the fuller bridge because its enterprise value comes from discounted
+FCFF, which contains only operating cash flows. **The two bars rest on two different
+definitions of enterprise value, and both are right for their own method.**
+
+**What shipped instead** (2026-08-18): the reasoning is now a docstring on
+`comps.ev_implied`, a regression test asserts that a balance sheet carrying all four bridge
+terms changes the implied value by nothing, and the football field discloses the basis
+difference on screen — but only when a DCF bar was actually drawn, since a bank or a REIT
+has no second bar to compare against.
+
+**No trigger.** This is settled. The only thing that would reopen it is a peer data source
+carrying full balance sheets, which would allow recomputing *peer* EVs on the fuller bridge
+so that both sides moved together. `get_peer_snapshot` fetches `info` only; full statements
+per peer would be roughly four times the request weight for a cosmetic gain, and the
+disclosure is the honest answer at a fraction of the cost.
 
 ### ⚪ HTTP-layer (TestClient) tests
 
