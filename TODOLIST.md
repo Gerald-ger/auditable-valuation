@@ -24,14 +24,19 @@ plausibility expectation someone wrote down in advance; enforcing it substitutes
 judgement for another. The composite still has no forward-return validation, exactly as
 `docs/scoring-system-design.md` §5.6 and the README say.
 
-**Also now true:** the `pre_profit_growth` series in `score_history` is **discontinuous at
-2026-08-10**. Rows before that date come from the old weights and the old runway formula,
-rows after from the new ones, and there is no backfill. Any calibration study must treat
-that date as a break for this one profile.
+**Corrected 2026-08-18.** This paragraph asserted that the `pre_profit_growth` series in
+`score_history` is *"discontinuous at 2026-08-10"*, with rows before that date coming from
+the old weights, and instructed any calibration study to segment across the boundary. **The
+break does not exist.** The stored history holds exactly two `pre_profit_growth` rows —
+SPCX on 2026-08-12 and 2026-08-13 — both recorded *after* the change. There are nine rows
+of other profiles before 2026-08-10, but none in this one, so there is no old-side data to
+be discontinuous with.
 
-**Trigger: the same ~2 quarters of data as the score-history item below.** When the
-calibration query is finally written, it has to exclude or segment pre-profit rows across
-that boundary.
+What is true prospectively: **no pre-2026-08-10 pre-profit row can ever appear**, because
+there is no backfill. So the series is short, not broken, and a calibration study needs no
+special handling for it.
+
+**Trigger: the same ~2 quarters of data as the score-history item below.**
 
 ### 🔵 The FCFF add-back does not net off interest income
 
@@ -44,13 +49,31 @@ Netting it off was rejected on basis-consistency grounds: US filers disclose cas
 interest *paid* but no matching cash interest *received*, so netting would mean adding a
 cash figure and subtracting an accrual one.
 
-**Currently latent, not active.** XOM is the only fixture the add-back fires on and it
-reports no interest income. The first issuer that discloses cash interest paid *and*
-earns interest income will activate it. Measured on an accrual basis for comparison, the
-effect is worth roughly 3% of FCF on MSFT and AAPL.
+**Currently latent, but not for the reason this entry gave until 2026-08-18.** It said *"XOM
+is the only fixture the add-back fires on and it reports no interest income. The first
+issuer that discloses cash interest paid **and** earns interest income will activate it."*
+Measured across the fixtures:
 
-**Trigger: a source that discloses cash interest received**, or a decision to accept a
-mixed basis.
+| | add-back | basis | interest income at that period |
+|---|---|---|---|
+| XOM | 1,384,080,000 | `cash_interest_paid` | −603,000,000 (net *expense*) |
+| **RIVN** | **175,380,000** | `cash_interest_paid` | **+293,000,000** |
+| others | 0 | not required / unverified | — |
+
+**RIVN already meets the stated condition** — it fires the add-back *and* earns interest
+income. The condition the entry treats as future has been met since the fixtures were
+captured. What actually keeps the defect dormant is different and narrower: RIVN's free cash
+flow is −2.489bn, so `dcf_valuation` returns *"No positive free cash flow available"* and no
+valuation ever consumes the add-back. **If RIVN turns FCF-positive the case activates with
+no code change and no trigger firing.**
+
+The ~3% of FCF figure for MSFT and AAPL still reproduces on an accrual basis (AAPL FY2023
+2.97%, MSFT FY2026 3.89% after tax) — note AAPL's newest period reports no interest-income
+row at all, so that figure necessarily comes from FY2023.
+
+**Trigger: a source that discloses cash interest received**, a decision to accept a mixed
+basis, **or any FCF-positive issuer that reports cash interest paid alongside interest
+income** — which is the case that would actually bite.
 
 ### 🔵 Two US filers cannot be verified, so they get no FCFF adjustment
 
@@ -219,14 +242,41 @@ principle.** Three findings, any one of which is enough:
 - **The classification to key on does not exist.** `SECTOR_MAP` sends `basic materials` to
   `industrials`, so "energy / materials" resolves to `energy` alone and materials stays
   fused with non-cyclical industrials.
-- **It is not one number.** The sensitivity grid, `growth_sensitivity`, the football-field
-  mid and `price_gap_bridge` are all built on the reported base. Swapping the headline
-  without rebuilding them puts the mid outside its own bar (hidden by `_clamped_mid`) and
-  makes the bridge either double-count its adjustment or show a zero-length step.
+- **It is not one number.** The sensitivity grid, `growth_sensitivity` and
+  `price_gap_bridge` are all built on the reported base. Swapping the headline without
+  rebuilding them makes the bridge either double-count its adjustment or show a
+  zero-length step.
+  *(Corrected 2026-08-18: this bullet also claimed the swap "puts the mid outside its own
+  bar (hidden by `_clamped_mid`)". It does not. `comps._dcf_band` **unions** the normalised
+  figure into the band — `low, high = min(low, normalised), max(high, normalised)` — so a
+  normalised mid lands on a band edge, inside the bar, and `_clamped_mid` is a no-op. The
+  paragraph below this list already says the bar spans both bases, so the bullet
+  contradicted its own entry.)*
 
-What was *not* an argument against it, contrary to the earlier assumption: **scoring.**
-`dcf_upside_pct` is anchor-clipped at −40, so XOM's metric moves 0 → 9 of 100 and the
-composite stays **70, tier A**. The swap is a display change almost entirely.
+**⚠️ Corrected 2026-08-18 — this paragraph said the opposite of what is now true, and it
+was the entry's reason for calling the swap cheap.**
+
+It read: *"`dcf_upside_pct` is anchor-clipped at −40, so XOM's metric moves 0 → 9 of 100 and
+the composite stays 70, tier A. The swap is a display change almost entirely."* That was
+internally consistent when written — 102.17 against a 151.63 price is −32.6%, which scores
+about 9.
+
+Measured today with the risk-free rate pinned at 4.3% and the FX pin at 1.10, XOM's DCF is
+**157.30 (+3.7% upside)**, not 71.75, because beta became a measured regression on
+2026-08-14. So:
+
+| | as written | today |
+|---|---|---|
+| reported fair value | 71.75 | **157.30** |
+| normalised fair value | 102.17 | **221.14** |
+| `dcf_upside_pct` raw | ≤ −40 (clipped) | **+3.7%** |
+| metric score | 0 → 9 | **55 → 91** |
+| composite / tier | 70 / A | **74 / A** |
+
+The headline swap now moves that metric **55 → 91 of 100**, which flows through the
+valuation pillar into the composite. **It is a substantive scoring change, not a display
+change**, and the argument that made it look cheap no longer holds. Anyone revisiting this
+has to re-measure the composite, not just the chart.
 
 The cheap part of the value was taken instead — see the 2026-08-14 Done entry: the DCF
 bar now spans both bases, so the chart shows the base-year uncertainty without the
@@ -236,17 +286,36 @@ platform choosing a side.
 history long enough to contain a turn. Options if revisited: normalised headline for
 `energy` only, a multi-year consensus average, or the 3-year revenue CAGR.
 
-### 🔵 Beta re-levering has never been audited on a net-cash company
+### ⚪ ~~Beta re-levering has never been audited on a net-cash company~~ — closed 2026-08-18
 
-Raised 2026-08-13 and not investigated. `resolve_beta` unlevers peer betas and re-levers
-them to the target's capital structure, which is correct in general. AAPL and MSFT carry
-more cash than debt, and it has never been checked what the Hamada formula does with a
-*negative* net position, nor whether the result is the right input for a company whose
-financial risk is essentially nil. CAPM with a historical ERP is a known suspect for
-overstating the required return on exactly this kind of business.
+*Raised 2026-08-13 and never investigated. Investigated 2026-08-18: the premise is false in
+three independent ways, so there is nothing to audit. Kept rather than deleted so it is not
+raised a fourth time.*
 
-**Trigger: before treating the mega-cap DCF gaps as settled.** Cheap to look at; direction
-unknown, which is why it is not listed as a defect.
+It read: *"`resolve_beta` unlevers peer betas and re-levers them to the target's capital
+structure… AAPL and MSFT carry more cash than debt, and it has never been checked what the
+Hamada formula does with a **negative** net position."*
+
+- **AAPL and MSFT are not net-cash.** On the committed fixtures MSFT carries 128.81bn of
+  debt against 76.65bn of cash, and AAPL 84.34bn against 62.40bn. Both are net *debt*. The
+  net-cash fixtures are 0700.HK and JPM.
+- **The formula never sees a net position.** `resolve_beta` builds D/E from
+  `financial_models._debt_to_equity`, which returns `max(debt, 0.0) * fx / market_cap` —
+  gross debt over market cap, floored at zero. It is structurally incapable of going
+  negative, whatever the cash balance.
+- **The branch is unreachable for every fixture.** Since beta became a measured regression
+  on 2026-08-14, `resolve_beta` returns `"computed"` before peers are consulted; all seven
+  fixtures resolve `computed` (or produce no DCF at all, for JPM and RIVN).
+  `peer_median_relevered` is a third-tier fallback that no fixture reaches.
+
+**The one part worth keeping is already recorded elsewhere.** The closing sentence — CAPM
+with a historical ERP may overstate the required return on a business with negligible
+financial risk — is the same open question the beta-credibility-band item states above, in
+more detail and with measurements. This entry added a false premise on top of a duplicate.
+
+**No trigger.** Its old one read *"before treating the mega-cap DCF gaps as settled"* — a
+real concern, but one the beta-credibility-band item above already owns. Closing this
+removes a duplicate, not a question.
 
 ### 🟡 Associates are still carried at cost, and cost is not value
 
@@ -474,9 +543,25 @@ Measured 2026-08-02 (details in `CHANGELOG.md`):
 **No option on this list solves HK news.** That needs a non-OpenBB source (AAStocks,
 ET Net, or similar) and is a separate project.
 
-SEC filings are the only free improvement, but they are a **new feature, not a data-source
-swap** — 8-K/10-Q are regulatory events, not headlines, and the chart's COMPANY/MACRO tags
-would need a third category. Decide whether you want that before it gets built.
+**The SEC-filings row is no longer a proposal — it shipped.** This paragraph used to end
+*"Decide whether you want that before it gets built."* It was built: `get_filings` in
+`data_provider.py` (`provider="sec"`, `FILINGS_LIMIT = 400`), merged with news at
+`/api/stock/{ticker}/events`, and rendered as markers by `PriceChart.jsx`. It needed **three**
+new categories rather than the one this entry predicted — `earnings`, `material` and
+`insider` — which now sit alongside `company` and `macro`, with insider filings defaulted off
+because they are the bulk of the feed.
+
+*Its measured depth also disagrees with the table above, which was a pre-implementation
+survey (2026-08-02) rather than a measurement of what was built.* Post-implementation the
+repo records **~5 years and 278 events for AAPL**, against the table's **2.5 y and 200
+filings**. One conflict is unresolved: `data_provider.py` says **209 distinct dates** while
+two other places say **140**. The likely reconciliation is that 209 counts the raw fetch and
+140 the set surviving the category filter, but that needs a live EDGAR call to confirm and is
+recorded here unresolved rather than guessed at.
+
+**What remains open is the part the table is actually about: paid historical *news*, and HK
+in particular.** No option listed solves HK, and SEC filings did not either — they are US-only
+by construction (`if "." in ticker: return []`).
 
 ---
 

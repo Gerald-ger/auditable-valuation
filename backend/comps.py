@@ -388,11 +388,16 @@ def _dcf_band(dcf: dict) -> tuple[float, float, str] | None:
     # This is the union, not a substitution: the tick stays on the reported-year
     # answer, and `enterprise_value(..., base=normalised)` is the other end of a
     # band the platform declines to choose between. Measured on the fixtures
-    # (risk-free pinned at 4.3%) it widens upward for XOM 71.75 -> 102.17 and
-    # MSFT 248.51 -> 321.75, and *downward* for 0700.HK 663.32 -> 628.00. That
-    # it is not one-directional is the whole reason it can be shown without
-    # taking a view: a rule that only ever raised the value would be price
-    # tuning wearing a band's clothes.
+    # (risk-free pinned at 4.3%, CNY/HKD at 1.10) it widens upward for XOM
+    # 157.30 -> 221.14 and MSFT 269.64 -> 347.53, and *downward* for 0700.HK
+    # 469.48 -> 448.17. That it is not one-directional is the whole reason it
+    # can be shown without taking a view: a rule that only ever raised the value
+    # would be price tuning wearing a band's clothes.
+    #
+    # Figures refreshed 2026-08-18. They were 71.75 -> 102.17, 248.51 -> 321.75
+    # and 663.32 -> 628.00, measured before beta became a regression on
+    # 2026-08-14; that change alone was worth about +105% on XOM. The direction
+    # of each — and so the argument above — is unchanged.
     normalised = ((dcf.get("diagnostics") or {}).get("base_year") or {}).get(
         "fair_value_normalised")
     # `> 0` for the same reason price_gap_bridge uses it: a normalised
