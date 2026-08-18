@@ -7,6 +7,171 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-18 — guards where there were none, and four claims that did not survive checking
+
+Backend **423 → 450**, frontend **54 → 100**. No model output moved: the full dump for all
+seven fixtures across ten surfaces — DCF, analysis, scorecard, forensics, ratios, price
+reconciliation, three bisection solves, football field — is byte-identical to 8c5d467, same
+SHA-256. That harness was built for one refactor and then reused for every other.
+
+The theme is unflattering and worth stating plainly: most of the day went on discovering
+that things this repo asserted about itself were not true. One of those assertions was
+written this morning, by this session.
+
+### Added
+
+- **A conformance test tying the fixtures to the provider contract**
+  ([backend/tests/test_fixtures.py](backend/tests/test_fixtures.py)). `get_fundamentals`
+  whitelists 51 `info` keys; every committed fixture carried 49. `regularMarketTime` and
+  `exchangeDataDelayedBy` were added on 2026-08-14 and the fixtures, captured 2026-08-10,
+  were never updated. Nothing failed, because a fixture missing a key and a vendor that did
+  not report one are indistinguishable to `info.get`. The whitelist moved to
+  `data_provider.INFO_KEYS` so a test can import it; the guard was confirmed to fail on the
+  real drift before the fixtures were repaired, and again afterwards against a synthetic
+  52nd key. The two keys were added as `null` rather than recaptured — recapturing moves
+  every pinned figure and golden score, which is a deliberate operation, not a side effect
+  of fixing a key set.
+
+- **A schema migration path in [backend/store.py](backend/store.py)**, added while the list
+  is still empty. `_SCHEMA` is built from `CREATE TABLE IF NOT EXISTS`, which does nothing
+  to a database that already has the table — verified: running it with an extra column
+  leaves the table unchanged and raises nothing. So a column added there reaches a fresh
+  clone and silently skips every database in use. `init()` now applies unrun entries gated
+  on `user_version`. Exercised against a copy of the working database with the migration
+  TODOLIST already has queued: **52 rows → 52 rows, v0 → v2, 17 → 19 columns**, restart
+  idempotent. `score_history` cannot be backfilled, so losing it does not cost 52 rows — it
+  restarts the two-quarter clock the calibration study is waiting on.
+
+- **Six tests of the projection arithmetic itself.** `project`/`enterprise_value` were
+  closures inside `dcf_valuation`; ~70 tests reached that loop and every one did so by
+  running a whole valuation over a fixture, which pins the answer for seven companies and
+  the arithmetic for none. Now module-level `_project`/`_enterprise_value`, bound with
+  `functools.partial`. The tests assert the identities directly: zero growth reduces to the
+  closed-form perpetuity, and the base override is **homogeneous of degree one** — the
+  property `dcf_valuation` already relies on when pricing the normalised base year, and
+  which nothing tested. Breaking the terminal discount exponent shows the difference: the
+  old suite reports two golden-score failures and a *currency* test, three symptoms none of
+  which is at the bug; the new test reports the identity.
+
+- **Frontend tests, from zero components to three.** Two pure suites first
+  (`format.test.js`, `charttime.test.js`, 25 tests, no new dependencies), then jsdom.
+  **One devDependency, not three** — React 19 exports `act`, so
+  [frontend/src/test-utils.js](frontend/src/test-utils.js) is 30 lines of `createRoot` +
+  `act` and `@testing-library/react` was never needed. **No config change either**: the
+  default `node` environment stays for the pure suites and component files opt in with a
+  `@vitest-environment jsdom` docblock.
+
+  `PortfolioTab` went first despite being the most expensive to mock, because
+  `backend/tests/test_portfolio.py` already pins the producer side of a **shipped crash** —
+  a zero cost basis yields a real `unrealized_pnl` beside a null `unrealized_pnl_pct`, the
+  component read the percentage off the absolute figure's guard, and the `TypeError` landed
+  inside render, so the ErrorBoundary took the edit form down with the table. Nothing pinned
+  the consumer, which is the half that threw. Restoring the unguarded expression now
+  reproduces `TypeError: Cannot read properties of null (reading 'toFixed')` exactly.
+
+- **Eight tests over the chart/drawings boundary**
+  ([frontend/src/components/PriceChart.test.jsx](frontend/src/components/PriceChart.test.jsx)),
+  written *before* any refactor of it. `lightweight-charts` is mocked wholesale, and that is
+  a finding rather than a shortcut: rendering it under jsdom fails with eight errors —
+  `ResizeObserver`, a canvas 2D context, a `devicePixelRatio` observable — ending in
+  `Error: Value is null` inside `PriceAxisWidget._internal_optimalWidth`. The mock still
+  reaches both hard edges: the primitive handoff and the pan/zoom handshake. Dropping the
+  `toChartTime` shift fails by exactly 28,800 seconds, the eight hours a stored line would
+  walk per round trip.
+
+- **The football field now states the peer bar's equity basis**, where a DCF bar is drawn
+  beside it. See *Fixed* below for why that is a disclosure and not a correction.
+
+### Changed
+
+- **[backend/statements.py](backend/statements.py) extracted from `financial_models.py`**,
+  1612 → 1390 lines. The new module imports nothing but `__future__`. The reason is
+  direction, not size: `scoring.py` reached through the valuation module for eleven private
+  names, `main.py` for one, and `sector_weights.py`'s docstring cited a twelfth. A valuation
+  module is not where you look for "read net income", and a private name three modules
+  depend on is public API in disguise. Measured by AST, those eight functions reference
+  nothing outside themselves but their own two constants — nothing else in the file is that
+  self-contained. The jurisdiction and cost-of-capital groups deliberately stayed: moving
+  them would relocate the module attributes `conftest.py` patches, the offline suite would
+  start hitting the live Fed and FX feeds, and every golden would drift with the market.
+
+- **`ForensicPanel` moved to module scope in `ScorecardTab.jsx`** — a pure relocation, 61
+  lines out and 61 in. Declared inside its parent's body it was a new function identity on
+  every render, so React unmounted and rebuilt the subtree rather than diffing it, on every
+  keystroke in the peer box and every streamed narrative token. Nothing user-visible broke
+  — no state, no effects, nothing focusable — which is exactly why it survived unnoticed.
+
+### Fixed
+
+Four claims this repository made about itself, none of which held.
+
+- **`comps.ev_implied` was never the defect TODOLIST said it was.** The entry was right that
+  the DCF bar and the peer bar convert enterprise value to equity differently, and wrong
+  that matching them was the fix. The vendor does not deduct non-operating assets — AAPL
+  carries **77.7bn** of them while its reported enterprise value sits **127k** from
+  `market cap + debt − cash` — so adding `marked_securities` to the peer bridge
+  double-counts: a peer's market cap already prices its own into the median multiple. On
+  0700.HK that term alone is **+77.65 per share on a 481 price, 16.1%**, and it would have
+  shipped described as a correction.
+
+- **Then the retraction of that fix over-claimed in turn, and it reached users.** The first
+  version asserted the vendor's EV is *exactly* `market cap + debt − cash`, proved by
+  `(EV − net debt) / shares` reproducing the traded price to the cent on AAPL and MSFT. All
+  three parts fail. The identity misses by **4.28% on JPM** and **2.31% on O**. AAPL and
+  MSFT are precisely the two fixtures carrying zero minority interest and zero preferred —
+  the only two where the competing formulas are the same arithmetic — so the test could not
+  discriminate. And `(EV − net debt) / shares` reduces to `market cap / shares`, which *is*
+  the price by construction, so the measurement could not have failed. JPM's 21.04bn
+  residual sits within 5% of its 20.05bn of preferred, pointing the other way. The decision
+  stands on the term that dominates; the claim that every term was proven does not.
+
+- **Two TODOLIST entries would have caused wrong work.** *A cyclical is still valued off one
+  year* said the headline swap was "a display change almost entirely" because
+  `dcf_upside_pct` clips at −40, moving XOM's metric 0 → 9 and leaving the composite at
+  70/A. Measured today the DCF is **157.30 (+3.7%)**, the metric scores **55**, on a
+  normalised base **91**, and the composite is **74** — a substantive scoring change, not a
+  display one. Its `_clamped_mid` bullet was false too: `comps._dcf_band` *unions* the
+  normalised figure into the band. The stale band figures also sat in a source comment,
+  refreshed to 157.30 → 221.14, 269.64 → 347.53, 469.48 → 448.17, with every direction
+  unchanged. *Beta re-levering has never been audited on a net-cash company* is closed: MSFT
+  and AAPL are net **debt** on the fixtures, `_debt_to_equity` returns `max(debt, 0.0)` so it
+  cannot see a net position, and every fixture resolves beta as `computed`, so the branch is
+  unreachable.
+
+- **Three smaller factual corrections.** `score_history` was said to be "discontinuous at
+  2026-08-10" — it holds two `pre_profit_growth` rows, both after that date. The FCFF
+  add-back was said to fire on XOM alone — **RIVN fires it too** (175,380,000) *and* earns
+  293,000,000 of interest income, so the condition treated as future is already met; what
+  keeps it dormant is RIVN's negative FCF, which the entry never mentioned. And the
+  historical-news entry ended "decide whether you want that before it gets built" — it was
+  built, and needed three new marker categories rather than the one predicted.
+
+- `PROVENANCE.md` claimed a "47-key `info` dict", matching neither the code's 51 nor the
+  fixtures' 49.
+
+### Not done, deliberately
+
+- **The `useDrawings` extraction from `PriceChart.jsx`.** Measured rather than assumed: ~152
+  lines relocate but ~21–27 must be newly written, so the file set grows **+16 to +30 lines**;
+  the interface is **15 identifiers wide** (4 in, 11 out), three of them mutable refs. The
+  primitive must be constructed in the chart effect because `attachPrimitive` needs the
+  series object, so no option is simultaneously a pure relocation, free of ownerless refs,
+  and behaviour-preserving. The boundary tests shipped anyway — they were the point.
+
+- **Splitting the two large tab components into per-tab folders.** It would produce nine
+  files, ~1,098 relocated lines, 21 new imports and a net **+19 lines**, and its stated
+  justification — enabling isolated unit tests — does not hold: `test-utils.js` imports by
+  module specifier and does not care where a component lives. Isolation comes from adding
+  `export` to a declaration in place. The one component that *structurally* could not be
+  exported was `ForensicPanel`, and lifting it needed no folders.
+
+- **Giving `comps.ev_implied` the DCF's bridge**, for the reason above. The theoretically
+  clean alternative — recomputing *peer* enterprise values on the fuller bridge so both
+  sides move together — needs peer balance sheets. `get_peer_snapshot` fetches `info` only,
+  so that is roughly four times the request weight per peer for a cosmetic gain.
+
+---
+
 ## 2026-08-17 (f) — a dispersion band, and two indicators tested rather than argued
 
 A review of which technical indicators are worth adding. Frontend **46 → 54 passing**,

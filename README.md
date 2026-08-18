@@ -326,12 +326,17 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 409 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 450 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 46 tests
+cd frontend; npm test                                   # 100 tests
 ```
 
-Of the 425 collected, 16 are `network`-marked and deselected by default.
+Of the 466 collected, 16 are `network`-marked and deselected by default.
+
+The frontend suite runs in vitest's default `node` environment; the three component
+suites opt into a DOM per file with a `@vitest-environment jsdom` docblock. Rendering is
+`createRoot` + React 19's own `act` ([frontend/src/test-utils.js](frontend/src/test-utils.js),
+30 lines) rather than a testing library.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -466,7 +471,9 @@ that its "free provider" column predates the measurements above.
 backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models,
             peer comps, deterministic scoring engine + sector weight library,
             async streaming Ollama client
+            statements.py             reading figures off a statement — no valuation logic
             store.py                  SQLite: score history, watchlist, positions, drawings
+                                      + ordered schema migrations keyed on user_version
             search.py                 ticker search: local fuzzy index + Yahoo fallback
             drawings.py               geometry of user-drawn lines, for the AI context
             data/app.db               your data — gitignored
@@ -504,7 +511,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for nine symbols, kept because
-  the 409-test suite runs entirely offline against them. Provenance and capture dates in
+  the 450-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
