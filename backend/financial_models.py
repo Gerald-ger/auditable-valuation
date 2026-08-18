@@ -497,9 +497,29 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     # HK issuers keep the USD 10Y: the HKD peg makes it an acceptable proxy.
     # Known to be the weaker half of this pair — 0700.HK reports CNY, which is
     # not pegged, so its cash flows and its discount rate are in different
-    # currencies. Not fixed here: China's 10Y runs ~260bp below the US, which
-    # would roughly double that valuation, and whether the conversion should
-    # then use spot or a forward rate is unsettled. See TODOLIST.
+    # currencies. Not fixed here, but the reason changed on 2026-08-17 and this
+    # comment was two revisions behind it (corrected 2026-08-18):
+    #   - it is not "roughly double". Measured on the 0700_HK fixture with the
+    #     growth cap moving too (docs/currency-consistent-discounting.md §4):
+    #       rf 4.30% (today)          -> 680.99
+    #       rf 1.70% (China 10Y raw)  -> 1,024.98   = +50.5%   [-260bp]
+    #       rf 1.10% (10Y - spread)   -> 1,043.30   = +53.2%   [-320bp]
+    #     The old "double" came from moving the WACC alone; the terminal growth
+    #     ceiling falls with the rate, which is most of the difference.
+    #   - the applicable cut is the -320bp row, because the CNY risk-free is the
+    #     10Y net of the CNY default spread (1.70 - 0.60 = 1.10 against 4.30).
+    #     Netting the spread is worth only the 1.8% between the two rows, so the
+    #     contestable half of the change is also the cheap half. Quote the rows
+    #     together: +50.5% belongs to -260bp and pairing it with -320bp, as a
+    #     2026-08-18 draft of this comment did, mismatches them.
+    #   - spot vs forward is NOT unsettled. docs/currency-consistent-
+    #     discounting.md settled it: discounting in the cash-flow currency and
+    #     translating the result at spot is algebraically identical to
+    #     translating each flow at its forward rate, so spot is correct and is
+    #     already what this code does. Applying a forward on top would double-
+    #     count the interest differential.
+    # What keeps it open is the terminal-growth ceiling: a 1.1-1.7% CNY rate
+    # also asserts 1.1-1.7% perpetual growth for Tencent. See TODOLIST.
     rf = risk_free_rate(RISK_FREE_RATE)
     # The ERP half of the same pair, and the half that can be sourced today.
     erp, erp_source, erp_market = equity_risk_premium_for(

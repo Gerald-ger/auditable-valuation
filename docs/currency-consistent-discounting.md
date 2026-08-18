@@ -187,9 +187,24 @@ Recorded now so the estimate does not have to be rebuilt later.
 
 - `risk_free_rate()` ([data_provider.py:114-137](../backend/data_provider.py#L114-L137)) takes
   `(fallback)` and caches one rate in a module global keyed only by date. It would need a currency
-  parameter and a per-currency cache, plus a source per market. China's 10-year is widely
-  published; HKMA publishes Exchange Fund yields free (unverified from this machine — 502 on
-  2026-08-14).
+  parameter and a per-currency cache, plus a source per market.
+
+  **Source availability, corrected 2026-08-18.** This bullet used to end *"China's 10-year is
+  widely published; HKMA publishes Exchange Fund yields free (unverified from this machine —
+  502 on 2026-08-14)"*, which reads as though one sentence covered both markets. It does not.
+  HKMA publishes **HKD**, so it is silent on the CNY rate this whole document is about. And its
+  Exchange Fund Bills & Notes series stops at **2 years** — issuance at three years and above
+  ceased in 2015, with longer tenors moving to the Government Bond Programme endpoint
+  (`gov-bond/instit-bond-price-yield-daily?segment=Benchmark`). The endpoint has now failed
+  twice from this machine: `502` on 2026-08-14, and `http_code=000` after 25 s on 2026-08-18
+  while the host itself answered `404` in 1.2 s. **Treat reachability as a prerequisite to
+  discharge, not a caveat to carry.**
+
+  *Provenance: every HKMA figure in this bullet is a **live** claim — the tenor range and the
+  2015 cessation are read off HKMA's published API documentation, and the two failures are
+  single observations from one machine on one network. None is reproducible from a checkout,
+  and neither failure distinguishes a broken endpoint from a filtered route. See the `†`
+  convention at the top of [data-sources-review.md](data-sources-review.md).*
 - **`conftest.py`'s `pinned_risk_free_rate` is `autouse`** and returns one constant for every call.
   If the rate becomes currency-aware, that fixture has to become currency-aware too, or **the new
   path is never exercised by the suite** while every test still passes.

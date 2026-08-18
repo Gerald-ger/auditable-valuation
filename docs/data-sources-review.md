@@ -9,6 +9,21 @@ Companion to `quant-review-2026-08-06.md` (model correctness) and
 `valuation-triangulation-review.md` (how the methods are combined). This one is about the
 inputs underneath both.
 
+**Provenance: † marks a live measurement (convention added 2026-08-18).** A document about where
+numbers come from should say where *its own* numbers come from. Most figures here are
+reproducible from a checkout — run the suite, read a fixture, count the call sites. Some are
+not: they needed a network call, a vendor credential, or both, and no artefact of them survives
+in the repo. Those carry a **†** and a date.
+
+This is a **reproducibility** marker, not a confidence one. A live measurement is often the
+better evidence — the FMP and screener results below settled questions no amount of reading
+could. But a `†` figure can go stale without anything here failing, and vendor peer lists
+demonstrably do: FMP's UPS peers changed between 2026-08-14 and 2026-08-18 †, with
+`backend/tests/test_comps.py:714-715` still recording the earlier list and the later one written
+down nowhere in the repo — the marker illustrating itself. Where a `†` claim becomes
+load-bearing, this repo's own answer is to capture a fixture, which is what the HKD-reporting
+case needs before anything is built on it.
+
 ---
 
 ## 1. What the platform actually depends on
@@ -86,7 +101,7 @@ eventual swap a bounded job rather than a rewrite — it is worth keeping clean.
 | Gap | Data actually needed | Free source? |
 |---|---|---|
 | ERP flat 5% for every market | per-market equity risk premium | ✅ **done 2026-08-14** — Damodaran, vendored |
-| HK/CNY discounted at the US 10Y | per-currency sovereign yield | ⚠️ HKMA publishes HKD; **gated, see §6** |
+| HK/CNY discounted at the US 10Y | per-currency sovereign yield | ⚠️ HKMA publishes HKD, so it cannot serve the CNY case at all; **gated, see §7** *(this row pointed at §6 until 2026-08-18 — §6 is the beta/momentum section; the risk-free gating has always been §7)* |
 | Interest income not netted from FCFF | cash interest *received*, per period | ✅ likely — SEC XBRL `CompanyFacts` (US only) |
 | AAPL/MSFT get no FCFF add-back | interest paid, every period | ✅ likely — same source |
 | Interest coverage mixing FY2025 and FY2023 | statements with explicit period labels | ✅ same source |
@@ -98,7 +113,7 @@ eventual swap a bounded job rather than a rewrite — it is worth keeping clean.
 | EV→equity bridge omits MI and preferred | market values, not book | ❌ **not free** |
 | HK has ~10 event markers vs AAPL's 209 | HKEX filings feed | ⚠️ HKEXnews is public but needs its own scraper — same fragility and licence class as yfinance |
 | HK news | HK-native news source | ❌ **no option covers HK** |
-| Peer sets weak outside 21 curated names | business-mix classification data | ❌ **not free** |
+| Peer sets weak outside 23 curated names | business-mix classification data | ✅ **free — refuted 2026-08-18**, this row used to read "not free". `info['sector']`/`info['industry']` are already in the `INFO_KEYS` whitelist and populated on all 7 fixtures incl. HK, and yfinance's screener filters on them **without a key**. Raw output and the five obstacles it carries are in §5 |
 | Beta neutral-defaulted for energy | 2–5y weekly returns | ✅ **no new source needed** — see §6 |
 | HK momentum vs the S&P 500 | home-market benchmark | ✅ **no new source needed** — see §6 |
 
@@ -132,12 +147,33 @@ match the money it discounts. 0700.HK trades HKD and reports CNY, so it is price
 
 Measured against this platform's actual needs, not in general:
 
-- **FMP's free plan is US-only.** International exchanges including SEHK require payment.
+- **FMP's free plan blocks the fundamentals endpoints for everyone, and the block is not
+  geographic.** This section previously read *"FMP's free plan is US-only"*. That was asserted
+  rather than measured, and it is wrong twice over. `equity.compare.peers` is a *free-tier*
+  endpoint and **does cover HK** — `README.md:447` records it, and it was re-measured † on
+  2026-08-18: `1177.HK → 2269.HK, 1801.HK, 1093.HK, 3759.HK`, `0700.HK → 9888.HK, 1024.HK,
+  1698.HK, 2518.HK`. What the free plan actually refuses is
+  `fundamental.income/balance/cash`, which return `402 Restricted Endpoint` — a
+  **plan-entitlement refusal, not a coverage one**. The only measured "US-only" in this repo
+  attaches to FMP **Starter** (paid) for **news** (`README.md:455`) — a different plan and a
+  different endpoint.
+
+  **Stated as inference, not measurement, because that distinction is this bullet's whole
+  point.** The `402` was observed on a US symbol. No FMP fundamentals call against a `.HK`
+  symbol is recorded anywhere in this repo, so "the block is not geographic" is read off the
+  error *class* — `402` is what a vendor returns for an unsubscribed endpoint, where a coverage
+  gap returns empty data — and not off a measurement. It would be a poor correction that
+  replaced an unmeasured assertion with a differently-unmeasured one and did not say so.
 - **Finnhub's free tier is US-only** for anything beyond basic quotes; its 60+ exchange
-  coverage is a paid feature.
-- **`README.md` reached the same conclusion independently** on 2026-08-02 by raw HTTP against
-  both vendors with valid free keys: `fundamental.income/balance/cash` return `402`, news
-  endpoints return `403`/`402`, *"Neither covers HK news at all."*
+  coverage is a paid feature. † Re-checked 2026-08-18 against Finnhub's published pricing and
+  rate-limit documentation — this repo holds no Finnhub credential, so nothing here has ever
+  called their API, and this is the weakest-provenance claim in the section.
+- **What `README.md` actually measured** on 2026-08-02, by raw HTTP against both vendors with
+  valid free keys: `fundamental.income/balance/cash` return `402`, news endpoints return
+  `403`/`402`, *"Neither covers HK news at all."* Stated precisely because this section used to
+  cite it as corroborating a *geographic* restriction, which it never tested — a `402` is a
+  **plan-entitlement refusal, not a coverage one**, and no FMP fundamentals call against a
+  `.HK` symbol is recorded anywhere in this repo.
 
 So: **there is no free, redistribution-clean, Hong-Kong-covering fundamentals API.** Any plan
 that assumes one exists is wrong. The realistic options are (a) stay personal-use and keep
@@ -151,11 +187,98 @@ Free *does* cover, cleanly and with redistribution rights:
   strongest unused source available and it is US-only.
 - **Damodaran's datasets** — ERP, country risk, tax rates, industry betas. Free, semi-annual.
   Now partly used.
-- **HKMA** — Exchange Fund Bills & Notes yields including a 10-year, free and official. The
-  only clean HK-specific source found. *Documented but unverified: the endpoint was
-  unreachable from this machine on 2026-08-14 (502), so it must be confirmed live before
-  anything depends on it.*
+- **HKMA** — free, official, no key, and disseminated through DATA.GOV.HK for re-use
+  **commercial and non-commercial alike** †. The only clean HK-specific source found, and the
+  only clean licence in this whole section. *Marked because it is an external licence assertion
+  read off HKMA's and DATA.GOV.HK's published terms — in a section about licensing, that is the
+  claim least excusable to leave looking like a measurement.*
+
+  **Two corrections, 2026-08-18 †.** This entry used to say *"Exchange Fund Bills & Notes yields
+  including a 10-year"*. There is no 10-year there: the EFBN yield series runs **7-day to
+  2-year only**, because HKMA ceased issuing Exchange Fund Notes of three years and above in
+  **2015**. Longer tenors moved to the **Government Bond Programme**, which is a different
+  endpoint — `gov-bond/instit-bond-price-yield-daily?segment=Benchmark`. *All three facts are
+  read off HKMA's published API documentation, not off a response — the endpoint has never
+  answered from here. The same claim is marked † in `TODOLIST.md`; it was left unmarked here
+  until 2026-08-18, so the identical fact carried two different provenance labels in two files.*
+
+  **And it is still unreachable, twice †.** Two single observations from one machine on one
+  network; neither distinguishes a broken endpoint from a filtered route. `502` on 2026-08-14; on 2026-08-18 the API path
+  returned `http_code=000` after 25 s while `api.hkma.gov.hk/` itself answered `404` in 1.2 s
+  and `data.gov.hk/` answered `302` in 0.8 s. The host resolves and completes TLS; the API path
+  does not respond. Two failures **four days apart** — thinner than a long run of failures, but
+  enough that **reachability is a prerequisite to be discharged before any work is scoped
+  against this**, not a footnote.
+
+  **And what it could settle here is smaller than it looks †.** HKMA publishes **HKD**, so it
+  cannot address 0700.HK, which reports CNY (see the ⚠️ in §4). The natural reply is that it
+  still serves HKD-*reporting* issuers — but measured 2026-08-18 off `financialCurrency`, **none
+  of the six HK names in `PEER_SUGGESTIONS` reports in HKD**: `0700.HK`, `9988.HK`, `3690.HK`
+  and `0941.HK` report CNY, and `0005.HK` and `1299.HK` report **USD**. An earlier draft of this
+  section named 0005.HK and 0941.HK as the HKD case; both were wrong.
+
+  **The curated six are not representative, though.** Across a sample of HK large caps the split
+  is **30 CNY / 14 HKD / 4 USD** †, and the HKD segment is the HK-domestic names — `0001` CK
+  Hutchison, `0002` CLP, `0066` MTR, `0388` HKEX, `0823` Link REIT, `2388` BOC Hong Kong and
+  eight more. So an HKD rate serves a real and coherent slice of what a Hong Kong user would
+  actually look up; it just serves none of what this list happens to curate.
+
+  *Counts, not percentages, because they have to reconcile: 49 tickers were queried and **48
+  resolved** — `0011.HK` returned `404 Quote not found`. A draft quoted "61% / 29% / 8%", which
+  sums to 98% and leaves the 49th unexplained.* † Both figures are live `info` reads, and
+  **there is no HKD-reporting fixture in this repo to check them against** — which is why
+  capturing one is the first item of the risk-free-rate work.
 - **FRED** — US macro series with history, free with a key.
+
+### Peer classification is free, and it is not a new licence
+
+Kept separate from the list above on purpose, because it does **not** carry redistribution
+rights — it rides the yfinance dependency the platform already has. That is the point: it adds
+capability without adding a licence class.
+
+`info['sector']` and `info['industry']` are already inside the 51-key `INFO_KEYS` whitelist and
+populated on all seven fixtures, HK included (`0700.HK → Communication Services / Internet
+Content & Information`). yfinance exposes a screener that filters on exactly those fields,
+**with no API key**, and returns market caps so the result can be ranked by size.
+
+`docs/financial-models-reference.md:922` had already listed `obb.equity.screener(...)` with
+yfinance in the free-provider column and *"peer building"* as the use case — so this was
+documented, never measured, and never carried into a peer-discovery decision. `README.md:464`
+warns that table's free-provider column *"predates the measurements above"*. It has now been
+measured (2026-08-18):
+
+**† Live, 2026-08-18** — both columns needed a network call and the FMP column a credential.
+Neither is reproducible from a checkout, and vendor peer lists drift.
+
+| target | yfinance screener, keyless — **raw**, market-cap ranked † | FMP, with key † |
+|---|---|---|
+| O | *O*, SPG, URMCY, UNBLF, STGPF, KIM, SPG-PJ | SPG, KIM, REG, FRT |
+| **RIVN** | **TSLA, TOYOF, TM, BYDDY, BYDDF, GM, RACE** | HMC, MGA, GPC, **BBY** |
+| 0700.HK | *0700.HK*, 9888.HK, 1024.HK, 1698.HK, 9626.HK | 9888.HK, 1024.HK, 1698.HK, 2518.HK |
+| 1177.HK | 1276.HK, 3692.HK, 2196.HK, 2096.HK, 3320.HK | 2269.HK, 1801.HK, 1093.HK, 3759.HK |
+
+Raw rather than cleaned, because the cleaning is the work. Italics mark the target appearing in
+its own results; `SPG-PJ` is a preferred at marketCap 0; `TOYOF`/`TM` and `BYDDY`/`BYDDF` are
+ADR-and-ordinary pairs of one company each.
+
+Equivalent on O and 0700.HK, worse on 1177.HK, and decisively better on RIVN — where FMP
+returned a consumer-electronics retailer for a pre-profit EV maker.
+
+**Five obstacles, all found by running it rather than predicting them.** Two are checkable
+offline against the pinned yfinance — the accepted `industry` and `region` spellings are literal
+dicts in `yfinance/const.py`, so the first and last reproduce with the network unplugged. The
+middle three are † live, describing what a screen actually returned on 2026-08-18: the screener's industry
+labels use an em-dash (`REIT—Retail`) where `info['industry']` uses a hyphen (`REIT - Retail`),
+which raises `Invalid EQ value` and needs a mapping rather than a character replace; the target
+appears in its own results (`O`, `0700.HK` — but not `RIVN` or `1177.HK`, so it fires on half
+the sample); share classes, ADRs and cross-listings duplicate, so one company votes twice or
+three times in a median — `URMCY` and `UNBLF` are both Unibail-Rodamco-Westfield, and `SPG-PJ`
+is a Simon preferred sitting beside `SPG` itself, giving seven rows for five companies on the
+`O` screen; foreign names arrive mixed in and are not all duplicates (`STGPF` is Scentre Group,
+an Australian retail REIT), which is a judgement an implementation must make rather than
+inherit; and the
+region has to be derived from the ticker suffix, inheriting `home_index()`'s known limit that a
+US-listed Chinese ADR still reads `us`.
 
 ---
 
@@ -202,15 +325,50 @@ Per-market **risk-free rates** — the other half of the cost-of-capital pair, a
 that would fix 0700.HK discounting CNY cash flows at a US rate. Not done, and not because it
 is hard:
 
-- China's 10Y is ~1.70% against the US 4.30%, a **−260bp** move.
-- A −250bp move on 0700.HK was already measured at **624.90 → 1,225.93** — roughly doubling.
+- China's 10Y is ~1.70% against the US 4.30%. The **applicable** move is **−320bp**, not the
+  −260bp this bullet used to record: the CNY risk-free is the 10Y *net of* the CNY default
+  spread, `1.70% − 0.60% = 1.10%`, so it is 1.10% against 4.30%. See
+  [currency-consistent-discounting.md §3](currency-consistent-discounting.md), which already
+  said so — *"that is −320bp against the current 4.30%, not the −260bp TODOLIST recorded"* —
+  and which this section's 2026-08-18 rewrite adopted three corrections from while leaving this
+  fourth one behind.
 - China's country risk premium is ~0.91pp, so **it does not offset the rate cut.** The hope
   recorded in `TODOLIST.md` that the two legs would cancel does not survive the numbers.
-- And discounting CNY flows at a CNY rate then converting at **spot** is not obviously right:
-  interest-rate parity implies a low-rate currency trades at a forward premium, so the
-  conversion arguably needs a forward rate.
 
-Today's treatment is wrong in a **named** way. The naive fix would be wrong in an **unnamed**
-way, which is worse. Nearly doubling a valuation on an unexamined FX assumption is precisely
-the failure this platform exists to avoid, so the rate leg waits until spot-versus-forward is
-settled in writing with a worked example.
+**Three claims in this section were superseded, and are corrected here rather than deleted
+(2026-08-18).** It said the fix would take 0700.HK **624.90 → 1,225.93, "roughly doubling"**;
+that discounting CNY flows at a CNY rate and converting at **spot** was *"not obviously right"*
+because interest-rate parity implies a forward premium; and therefore that the work *"waits
+until spot-versus-forward is settled in writing with a worked example."*
+
+1. **The sizing is wrong twice over.** The baseline moved to **680.99**, and it is not a
+   doubling. Measured with the growth cap moving too (§4 of
+   [currency-consistent-discounting.md](currency-consistent-discounting.md)):
+
+   | risk-free | fair value | vs 680.99 | move |
+   |---|---|---|---|
+   | 4.30% — US 10Y, today | 680.99 | — | — |
+   | 1.70% — China 10Y raw | 1,024.98 | **+50.5%** | −260bp |
+   | 1.10% — 10Y − CNY default spread | 1,043.30 | **+53.2%** | −320bp |
+
+   **Both rows, because they are not interchangeable.** `+50.5%` is the −260bp row; the
+   applicable move is −320bp, whose row is `+53.2%`. Netting the default spread is worth only
+   the **1.8%** between them, so the contestable half of the change is also the cheap half. A
+   2026-08-18 draft of this section quoted `+50.5%` beside `−320bp` — the right two numbers,
+   mismatched.
+2. **The spot-versus-forward worry was inverted.** Discounting in the cash-flow currency and
+   translating the *result* at spot is algebraically identical to translating each cash flow at
+   its forward rate and discounting at the target-currency rate — the interest differential
+   enters exactly once. Applying a forward rate *on top of* a local-currency discount rate
+   would count it twice. **Spot is correct, and it is already the shape the code uses.**
+3. **The stated gate has been discharged.** "Settled in writing with a worked example" is
+   [currency-consistent-discounting.md](currency-consistent-discounting.md), written 2026-08-17.
+
+**So what still keeps this open is not FX.** It is the **terminal-growth ceiling**: adopting a
+1.1–1.7% CNY risk-free rate does not only change a discount rate, it asserts through the cap
+that Tencent's cash flows grow at 1.1–1.7% in perpetuity — a macro forecast arriving through
+the back door, with the terminal share rising 62.96% → 73.4% as it does. That is a different
+and narrower objection than the one this section originally recorded, and it is the live one.
+
+**And the data half is blocked too.** HKMA publishes HKD, not CNY, so it cannot serve this case
+whatever its uptime — and its endpoint has now failed from this machine twice (§5).

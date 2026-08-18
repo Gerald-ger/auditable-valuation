@@ -10,10 +10,13 @@ backend/data/
 .ruff_cache/
 # personal working reminder, not project documentation — TODOLIST.md is the public list
 NEXT-STEPS.md
-# a point-in-time architecture audit with its own verification record. Same
-# category as the file above: a working document, superseded as its items land,
-# and not the public account of the project. TODOLIST.md remains that.
+# working documents for a change in progress. Same category as the file above:
+# scaffolding, superseded as their items land, and not the public account of the
+# project — TODOLIST.md remains that. ARCHITECTURE-REVIEW-VERIFIED.md was retired
+# on 2026-08-18 once its five surviving items were migrated into TODOLIST.md; the
+# pattern stays so a re-run of that audit does not get staged by accident.
 ARCHITECTURE-REVIEW-VERIFIED.md
+WORKPLAN-DATA-SOURCES.md
 # local Claude Code tooling, not part of the platform. settings.local.json was previously
 # protected only by a machine-global ignore, so any other clone would have staged it.
 **/.claude/settings.local.json

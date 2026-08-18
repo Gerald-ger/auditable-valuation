@@ -4,13 +4,35 @@ Open work, ranked. Open items record the **trigger** (when it becomes worth doin
 nothing gets done too early — and the deferred items record *why*, so the decision does
 not get re-litigated. Entries under *Deliberately not doing* carry no trigger, which is
 deliberate: they are settled rather than waiting, and inventing a reopening condition for
-them would suggest otherwise. Two of them do name the change that would reopen them — the
-TestClient item and the `comps.ev_implied` one — because in both cases a specific data
-source, not a change of mind, is what would make the work worth doing. (Stated as a rule
-and its exceptions rather than as a count, because a count goes stale every time an entry
-is added — it already had, twice.)
+them would suggest otherwise. Some of them do name a **reopening condition**, and the test for
+whether one belongs is narrow: the entry may name it only when the trigger is a *decision or
+event outside this entry* — a data source beginning to carry a field, a second provider being
+added, a type checker entering CI. Reconsidering the item **on its own merits** does not
+qualify; that is re-litigation, and it is what the rest of the entry exists to prevent. The
+distinction is not external-versus-internal but **elsewhere-versus-here**: adding mypy is a
+decision, but it is a separate and costly one that nobody makes in order to reopen a `TypedDict`
+entry.
+
+*(This clause used to enumerate its exceptions, having already noted that a count "goes stale
+every time an entry is added — it already had, twice". Enumerating them was the same mistake in
+another form, and it went stale a third time on 2026-08-18 when the migrated entries arrived.
+A first attempt at the replacement said those entries carried conditions "that were not data
+sources at all", which is half wrong — "a second data provider being added" is exactly a data
+source, and only the mypy/pyright one is a different category. Stated as a criterion now, and
+the criterion had to be widened rather than the entries excused.)*
 
 Status: 🔴 open bug · 🟡 improvement · 🔵 decision needed · ⚪ deliberately deferred
+
+**Provenance: † marks a live measurement.** Most figures here are reproducible from a checkout —
+run the suite, read the fixtures, count the lines. Some are not: they required a network call, a
+vendor credential, or both, and a reader cannot re-derive them without the same access. Those
+carry a **†** and a date. It is not a confidence marker — a live measurement is often the more
+direct evidence — it is a **reproducibility** marker, and it means the figure can go stale
+without anything in this repo noticing. Vendor peer lists in particular are unstable: FMP's UPS
+peers changed between 2026-08-14 and 2026-08-18 † while the conclusion drawn from them held —
+`test_comps.py:714-715` still records the earlier list (HWM, GD, MMM, WM) and the later one
+(HWM, GD, **JCI**, MMM) is written down nowhere but here, which is the marker's own point made
+against itself.
 
 ---
 
@@ -201,6 +223,105 @@ composite at all.
 
 ## Next
 
+### 🟡 Peer discovery has no tier below FMP, and the free one that exists was never wired in
+
+**Accepted 2026-08-18.** `suggest_peers` is two tiers — `PEER_SUGGESTIONS.get(t) or _fmp_peers(t)`
+([comps.py:122](backend/comps.py#L122)) — so a ticker outside the 23 curated names with no FMP
+key, or an FMP call that fails, gets **no peers at all**. For a company type whose DCF is
+refused (REIT, bank, pre-profit) that means **no model-based valuation whatsoever**: measured on
+`O`, the football field drops to `methods_scored: []` and only the analyst-target row remains,
+which `triangulate` deliberately excludes from scoring.
+
+**This was not a missing option — it was an unmeasured one.**
+[docs/financial-models-reference.md:922](docs/financial-models-reference.md#L922) already listed
+`obb.equity.screener(...)` with **yfinance in the free-provider column** and *"peer building"*
+as the use case. It was never measured and never carried into a peer decision, and
+[README.md:464](README.md#L464) warns that column *"predates the measurements above"*. Measured
+2026-08-18:
+
+**† Live, 2026-08-18.** Both columns required a network call and the FMP column a credential.
+Neither is reproducible from a checkout, and vendor peer lists drift — see the provenance note
+at the top of this file.
+
+| target | yfinance screener, **no key** — raw, market-cap ranked † | FMP, with key † |
+|---|---|---|
+| O | *O*, SPG, URMCY, UNBLF, STGPF, KIM, **SPG-PJ** | SPG, KIM, REG, FRT |
+| **RIVN** | **TSLA, TOYOF, TM, BYDDY, BYDDF, GM, RACE** | HMC, MGA, GPC, **BBY** |
+| 0700.HK | *0700.HK*, 9888.HK, 1024.HK, 1698.HK, 9626.HK | 9888.HK, 1024.HK, 1698.HK, 2518.HK |
+| 1177.HK | 1276.HK, 3692.HK, 2196.HK, 2096.HK, 3320.HK | 2269.HK, 1801.HK, 1093.HK, 3759.HK |
+
+**Shown raw on purpose.** A first draft of this table showed the screener column already
+hand-filtered — 2, 5, 3 and 3 entries against FMP's consistent 4 — which read as though the
+screener found *fewer* peers when it actually finds more and needs cleaning.
+
+The `O` row is the instructive one: **seven rows, five distinct companies.** Italics mark the
+target itself. `SPG-PJ` is a Simon Property preferred, so **SPG appears twice**; `URMCY` and
+`UNBLF` are *both* Unibail-Rodamco-Westfield SE, a second duplicate pair — and both are foreign
+listings, as is `STGPF` (Scentre Group), which is the only foreign name here that is *not* also
+a duplicate. `RIVN` is seven rows and five companies too (`TOYOF`/`TM` are one Toyota,
+`BYDDY`/`BYDDF` one BYD) — **but not the same story**: `O` and `0700.HK` include themselves and
+`RIVN` and `1177.HK` do not, so the usable peer counts are 4 and 5 respectively. **Each obstacle
+fires on two of the four rows, and they are different pairs** — self-inclusion on `O` and
+`0700.HK`, duplicate securities on `O` and `RIVN`, overlapping only on `O`. Neither HK row
+carries a duplicate pair. *(A draft said obstacle 3 fires "on all of it", which the table three
+rows up refutes; a first correction then said the two obstacles fire on "the same half", which
+it also refutes.)* All identities confirmed against
+`longName` †, not inferred from the ticker — which is how `URMCY` and `UNBLF` were caught as one
+company rather than two.
+
+Equivalent on two, worse on one, decisively better on RIVN — where FMP returned a
+consumer-electronics retailer for a pre-profit EV maker. `info['sector']`/`info['industry']`
+are already in the `INFO_KEYS` whitelist and populated on all seven fixtures, HK included, so
+the input costs nothing.
+
+**Does not conflict with *"Rewriting the curated peer map"*** below — that entry keeps the
+curated map first, and this sits below FMP, not in place of either.
+
+**Five obstacles, all found by running it rather than predicting them.** Two of the five are
+**checkable offline** against the pinned yfinance — the accepted `industry` and `region`
+spellings are literal dicts in `yfinance/const.py`, so obstacles 1 and 5 can be verified with the
+network unplugged. Obstacles 2, 3 and 4 are † live: they describe what a screen actually
+*returned* on 2026-08-18.
+
+1. The screener's industry labels use an **em-dash** (`REIT—Retail`) where `info['industry']`
+   uses a hyphen (`REIT - Retail`). Not a cosmetic difference — it raises `Invalid EQ value`
+   and needs a mapping, not a naive character replace. *Offline-checkable: the accepted
+   spellings are `EQUITY_SCREENER_EQ_MAP['industry']` in `yfinance/const.py`, so the
+   `ValueError` reproduces with the network unplugged. `sector` needs no mapping — its 11
+   values are the same display strings on both sides.*
+2. **The target appears in its own results** (`O`, `0700.HK` above).
+3. **Share classes, ADRs and cross-listings all duplicate, and there is no single tell.**
+   `TM`+`TOYOF` are one Toyota, `BYDDY`+`BYDDF` one BYD, `URMCY`+`UNBLF` one Unibail, and
+   `SPG-PJ` is a Simon preferred sitting alongside `SPG` itself. Undeduped, one company votes
+   two or three times in a median. **Note `SPG-PJ` reports `quoteType=EQUITY`**, so quoteType
+   cannot filter preferreds — `marketCap == 0` is the only signal it gives.
+4. **Genuinely foreign names arrive mixed in too** — `STGPF` is Scentre Group, an Australian
+   retail REIT, correctly classified and not a duplicate of anything. Whether a foreign listing
+   belongs in a peer set is a judgement the implementation must make explicitly rather than
+   inherit.
+5. **Region must be derived from the ticker suffix** — `.HK` → `hk`, else `us`. Same rule and
+   same known limit as `home_index()`: a US-listed Chinese ADR still reads `us`.
+
+**One trap to handle in the same commit.** Nothing leaks today — both tests that call
+`suggest_peers` monkeypatch `_fmp_peers` to return *non-empty*
+([test_comps.py:713-722](backend/tests/test_comps.py#L713-L722)). Add a third tier and any
+*future* test returning `[]` would silently reach the live network inside the offline suite.
+Needs an `autouse` fixture stubbing the screener, the same shape as `conftest.py`'s
+`pinned_risk_free_rate`.
+
+**Note for whoever measures this.** The byte-comparison harness used on 2026-08-18 injects peers
+directly and never calls `suggest_peers`, so it will correctly report zero change. That proves
+the *valuation layer* is untouched; it is **not** evidence that nothing changed. The effect is
+visible only through `/api/stock/{ticker}/comps`.
+
+*And the harness is not in this repo* — no † needed, because the absence is checkable: nothing
+under `backend/tests/` implements it. It was built ad hoc for that session: a git worktree at
+the prior commit, plus a script dumping ten model surfaces across the seven fixtures and
+SHA-256'ing the result. Nothing under `backend/tests/` implements it, so **a future reader cannot
+run it by finding it.** Recorded rather than quietly assumed: the golden-score snapshots in
+`test_scoring.py` are the committed, runnable version of the same guarantee, and are what any
+claim of "no numeric change" should actually rest on.
+
 ### 🟡 The methodology reference is truncated, not retrieved
 
 [backend/ai_client.py](backend/ai_client.py) does `text[:16000]` on a 1,087-line
@@ -390,6 +511,47 @@ the helper worth exposing anyway.** If added, the tooltip should state the lag a
 equivalence — that sentence is the only thing that makes it worth having over the SMA, and
 no commercial charting package tells its users.
 
+### ⚪ CSS Modules — the structural concern is real, the present problem is 0.4%
+
+*Migrated here 2026-08-18 from a local architecture audit being retired; recorded because the
+measurement would otherwise be lost with the untracked file.*
+
+`index.css` is a single 2,033-line global stylesheet, so nothing *could* detect dead CSS and
+deleting a component would silently strand its rules. That much is structurally true. But it
+was measured rather than assumed — every class selector diffed against every string literal in
+the JS/JSX sources:
+
+- **227 classes defined** — re-counted 2026-08-18, unchanged
+- **8 with no literal match** under substring matching, **9** under strict-token matching:
+  `disp-tight`, `disp-moderate`, `disp-wide`, `ff-recon-input_substituted`,
+  `ff-recon-reconcilable`, `medium`, `peer_median_relevered`, `ticker-box`, plus `peer_median`
+  on the strict reading only
+- **All but one are dynamically composed or compound** — `` `ff-tag disp-${r.dispersion_band}` ``
+  ([ScorecardTab.jsx:312](frontend/src/components/ScorecardTab.jsx#L312)),
+  `` `chart-note ff-divergence ff-recon-${...}` `` ([:451](frontend/src/components/ScorecardTab.jsx#L451)),
+  `` `src-tag ${a.beta_source}` `` ([ModelsTab.jsx:180](frontend/src/components/ModelsTab.jsx#L180))
+  feeding `.src-tag.peer_median` / `.src-tag.peer_median_relevered`, and
+  `` `ff-conviction ${t.conviction.toLowerCase()}` `` ([:424](frontend/src/components/ScorecardTab.jsx#L424))
+  feeding `.ff-conviction.medium`
+- **Exactly one genuinely dead rule:** `.ticker-box`
+  ([index.css:107](frontend/src/index.css#L107)) — zero occurrences anywhere in
+  `frontend/src/**/*.{js,jsx}`. 1 of 227 is **0.44%**
+
+*(Two corrections. The retired audit said "12 unmatched, 11 dynamic" — miscounted, not drifted:
+re-running the whole analysis at `8c5d467` also gives 227/8/9. But the reason a 2026-08-18 draft
+gave for that — "`index.css` is byte-unchanged" — was a non-sequitur, since the unmatched count
+depends on the **JS side too**, and `frontend/src/` changed materially in between. And the
+method matters: matching against the whole file text gives 9, while matching against string
+literals only gives **10**, the extra being `computed`, which appears in this repo solely inside
+prose comments. `.src-tag.computed` was cited as an example of the unmatched set and is the one
+example that does not belong there.)*
+
+**0.4% dead is not a present problem**, and converting to CSS Modules would touch every
+component to fix it.
+
+**Trigger:** the stylesheet passing ~3,000 lines, or the first component deletion — whichever
+comes first, since either turns the structural risk into a live one.
+
 ### 🟡 Cosmetic
 
 Line references re-verified 2026-08-09.
@@ -408,13 +570,28 @@ Line references re-verified 2026-08-09.
   `useCallback` keyed on `ticker`, so the effect can list it honestly; `npm run lint` is
   clean. The line number this item carried (`:225`) had drifted and pointed at chart
   scaling. Separately,
-  [PriceChart.jsx:344](frontend/src/components/PriceChart.jsx#L344) *disables* the same
-  rule on `visibleGroups` deliberately — rebuilding the chart on a marker-filter change
-  would discard the user's zoom — and that remains the right call there, because the
-  effect sets the state it would have to depend on. (An earlier revision of this list
+  [PriceChart.jsx:366](frontend/src/components/PriceChart.jsx#L366) *disables* the same
+  rule on `visibleGroups` deliberately, and that remains the right call — the **pinned-panel**
+  effect reads `pinned` and calls `setPinned`, so it sets the very state it would have to
+  depend on. **The justification this entry used to give — "rebuilding the chart on a
+  marker-filter change would discard the user's zoom" — belongs to a different effect**: that
+  is the *markers* effect at `:345`, whose own comment at `:342-344` says exactly that, and
+  which carries no disable at all. Right rule, right verdict, wrong effect. (An earlier revision of this list
   called the ScorecardTab warning miscatalogued; the linter did emit it — that claim was
-  wrong. The `PriceChart.jsx:398` reference it also carried was wrong: the disable is at
-  line 344.)
+  wrong. It also cited `PriceChart.jsx:398`, then corrected that to `:344`. **Re-verified
+  2026-08-18: the disable is now at `:366`**, and line 344 is a comment about discarding zoom.
+  Tracked through git, `:398` and `:344` were each *correct when written* — `7cdb32a` had it at
+  398, `09ee627` at 344, `8c5d467` at 366 — so this is pure drift, not miscounting, and calling
+  the earlier values "wrong" would misdescribe it. Third statement of the same fact in one
+  file, which is the argument for referencing by symbol rather than by line.)
+
+  *And the suppression is doing real work. A 2026-08-18 draft of this entry claimed
+  `exhaustive-deps` was "not a rule this toolchain runs", reasoning from `.oxlintrc.json`,
+  which names only `react/rules-of-hooks` and `react/only-export-components`. **That was
+  wrong**, and it was checked rather than argued: a probe file with a deliberate missing
+  dependency draws `warning react-hooks(exhaustive-deps)` from `npx oxlint`. The rule arrives
+  with the `react` plugin's defaults, not the explicit `rules` block — which is also why the
+  line above is right that the linter did emit the ScorecardTab warning.*
 
 **Done since:** `assumptions.fcf_source` and `assumptions.risk_free_rate` are now
 surfaced in the DCF panel alongside `beta_source`
@@ -438,9 +615,39 @@ Yahoo's terms prohibit automated access and redistribution.
   data through a web app is the case those terms target.
 
 **Decided 2026-08-14: record it, keep yfinance.** There is no free, redistribution-clean,
-HK-covering fundamentals API — FMP's free plan is US-only, Finnhub's international coverage
-is paid, and the README's own 2026-08-02 measurements found the same. Removing yfinance now
-would cost exactly the Hong Kong coverage the platform is meant to have.
+HK-covering fundamentals API. Removing yfinance now would cost exactly the Hong Kong coverage
+the platform is meant to have.
+
+**Re-checked 2026-08-18. The decision stands; two of the three reasons given for it did not.**
+
+- ~~"FMP's free plan is US-only"~~ — **false.** `equity.compare.peers` is a free-tier endpoint
+  and covers HK: measured † 2026-08-18, `1177.HK → 2269.HK, 1801.HK, 1093.HK, 3759.HK` and
+  `0700.HK → 9888.HK, 1024.HK, 1698.HK, 2518.HK`. `README.md:447` already said so. The correct
+  reason is **stronger**: FMP free refuses `fundamental.income/balance/cash` with `402`, which
+  is a **plan-entitlement refusal rather than a coverage one**. Said as inference, not
+  measurement — the `402` was seen on a US symbol, and no FMP fundamentals call against a `.HK`
+  symbol is recorded anywhere here, so this reads off the error class rather than off a test.
+  Replacing one unmeasured assertion with another without saying so would repeat the original
+  mistake. The only measured
+  "US-only" in this repo is FMP **Starter** (paid) for **news** — `README.md:455`, and the
+  option table under *"Historical news — pay, work around, or drop"* below, whose own Depth
+  column reads "unknown, untested". A different plan and a different endpoint.
+  *(Referenced by section rather than by line, and the reason is instructive: the first draft
+  said "the table at line 539"; the edit that added this entry pushed it to 657; a later edit
+  in the same session pushed it to 700. A line number naming a target in the same file it lives
+  in is wrong the moment anything above it changes.)*
+- ~~"the README's own 2026-08-02 measurements found the same"~~ — **overstated.** The README
+  measured `402`/`403`, which are **plan-entitlement refusals, not coverage ones**. No FMP
+  fundamentals call against a `.HK` symbol is recorded anywhere in this repo, so nothing here
+  ever tested a geographic restriction.
+- "Finnhub's international coverage is paid" — **holds**, and now corroborated externally †
+  (2026-08-18): the free tier is US real-time only; HKEX sits behind a paid plan. Sourced from
+  Finnhub's own pricing and rate-limit documentation, not from a call against their API — this
+  repo holds no Finnhub credential, so it is the weakest-provenance claim in this entry.
+
+*Recorded rather than silently rewritten: the wrong reason was copied into this entry from
+`docs/data-sources-review.md` §5, which has been corrected at source. A decision that survives
+having its reasons checked is worth more than one that was never checked.*
 
 **Trigger: any decision to host or share this.** That decision has a data-licensing
 prerequisite, not just a deployment one, and the realistic answers are pay for HK coverage
@@ -496,14 +703,65 @@ alone. The terminal spread `WACC − g` is almost invariant once the cap binds (
 → 3.50% at rf 4.30% / 1.70% / 1.10%), which also makes netting off the sovereign default
 spread worth only 1.8% — the contestable half of the change is the cheap half.
 
+**A third number is wrong too, found 2026-08-18.** The **−260bp** above is the raw 10Y gap
+(1.70% vs 4.30%). The *applicable* move is **−320bp**, because the CNY risk-free is the 10Y net
+of the CNY default spread — `1.70% − 0.60% = 1.10%` against 4.30%.
+[docs/currency-consistent-discounting.md §3](docs/currency-consistent-discounting.md) had
+already said so in as many words — *"that is −320bp against the current 4.30%, not the −260bp
+TODOLIST recorded"* — and this entry never picked it up. Note the two figures answer different
+questions and the paragraph above needs the second one, since it is reasoning about what
+sourcing the rate would actually do.
+
 **New trigger: what the terminal-growth ceiling means in a low-nominal-rate currency.**
 Adopting a 1.1–1.7% CNY risk-free rate does not only change a discount rate — through the
 cap it asserts that Tencent's cash flows grow at 1.1–1.7% in perpetuity, which is a macro
 forecast arriving through the back door. The terminal share rises 62.96% → 73.4% with it, so
 more of the answer rests on the assumption that just became questionable. The analysis lists
-three candidate resolutions and picks none. Data is not the blocker: China's ten-year is
-widely published and HKMA publishes Exchange Fund yields free (unverified from this machine,
-502 on 2026-08-14).
+three candidate resolutions and picks none.
+
+**"Data is not the blocker" was too confident — corrected 2026-08-18.** This paragraph used to
+end: *"China's ten-year is widely published and HKMA publishes Exchange Fund yields free
+(unverified from this machine, 502 on 2026-08-14)."* Three things are wrong with that sentence,
+and they matter because it is the line that makes this item look ready to start.
+
+1. **It pairs two currencies as if they served the same need.** HKMA publishes **HKD**. The
+   problem in this paragraph is **CNY** — 0700.HK reports CNY, and CNY is not pegged. HKMA
+   cannot address the 0700.HK case at all. It *can* convert the peg assumption into a
+   measurement for an HKD-**reporting** issuer, which is worth having — but that is the half of
+   this item that is already defensible. `docs/data-sources-review.md` §4 makes this distinction
+   with a ⚠️; this entry lost it. *(A 2026-08-18 draft of this sentence offered "0005.HK,
+   0941.HK" as the HKD-reporting example. Both are wrong — see point 4 — and the error survived
+   into a revision that already contained its own refutation four points below.)*
+2. **It names an endpoint that cannot supply a ten-year †.** HKMA's Exchange Fund Bills & Notes
+   yields run **7-day to 2-year only** — issuance of Notes at three years and above **ceased in
+   2015**. Longer tenors live in the separate Government Bond Programme series
+   (`gov-bond/instit-bond-price-yield-daily?segment=Benchmark`). Read off HKMA's published API
+   documentation, not off a response — the endpoint has never answered from here.
+3. **The endpoint is still unreachable, and now twice †.** On 2026-08-18 it returned
+   `http_code=000` after 25 s, while `api.hkma.gov.hk/` itself answered `404` in 1.2 s and
+   `data.gov.hk/` answered `302` in 0.8 s — the host resolves and completes TLS, the API path
+   does not answer. With the `502` on 2026-08-14 that is two failures **four days apart**.
+   Both are single observations from one machine on one network; neither distinguishes a broken
+   endpoint from a filtered route.
+   *(A draft of this bullet said "twelve days apart" — 2026-08-14 to 2026-08-18 is four. Two
+   failures four days apart is thinner evidence of a pattern than twelve would have been, and
+   the correct number is the one that has to carry the argument.)*
+4. **And it serves nothing this list curates, though more than that in the wild †.** Measured
+   2026-08-18 off `financialCurrency`: of the six HK names in `PEER_SUGGESTIONS`, **none reports
+   in HKD** — `0700.HK`, `9988.HK`, `3690.HK` and `0941.HK` report CNY, `0005.HK` and `1299.HK`
+   report **USD**. Across a wider sample the split is **30 CNY / 14 HKD / 4 USD**, so the HKD
+   segment is real (`0001`, `0002`, `0066`, `0388`, `0823`, `2388` …) — the curated six are
+   simply an unrepresentative sample of it. *Counts rather than percentages, because they have
+   to reconcile: 49 tickers were queried and **48 resolved**; `0011.HK` returned
+   `404 Quote not found` and is excluded. Quoting "61/29/8%" summed to 98% and left the 49th
+   unexplained.* † Both figures are live `info` reads, and **there is no HKD-reporting fixture
+   in this repo to check them against** — which is why capturing one is the first item of the
+   risk-free-rate work.
+
+**So data *is* a blocker, on both halves.** For CNY, HKMA is the wrong source. For HKD, the
+right source has not responded on either attempt — and the HKD case barely arises in this
+platform's actual coverage. **Reachability is a prerequisite to discharge before this item is
+scoped**, not a caveat to carry into it.
 
 *(Distinct from the reporting-currency mismatch fixed 2026-08-10. That was a units bug —
 CNY cash flows compared against an HKD price. This is a choice of discount-rate inputs,
@@ -1499,3 +1757,174 @@ were smoke-tested live instead. Revisit if the endpoint layer grows real logic.
 
 *(2026-08-09: `fastapi` is now an explicit test requirement, but only because `main` is
 imported for two constants — it does not bring `httpx`, so the conclusion is unchanged.)*
+
+### ⚪ A shared `useResource(path, deps)` hook
+
+*Migrated here 2026-08-18 from a local architecture audit, which is being retired. Recorded
+because the reasoning is measured and would otherwise be lost — the file was never tracked.*
+
+Proposed as *"~25 lines, deletes duplicated loading/error scaffolding from six components."*
+**Measured: there are 12 resource-load sites across 8 files, and a naive `useResource(path, deps)`
+covers 1 of 12 unchanged** — and even that one needs the caller to deliberately ignore the
+returned `error`. `ScreenerTab.jsx` has zero `useEffect` at all; its only call is a `post` with
+a body inside a click handler.
+
+*Counting rule, stated because it is not obvious: **12/8 counts resource-load operations**,
+which is what such a hook would target — App ×2, ModelsTab ×2, PortfolioTab, PriceChart,
+**ScorecardTab ×3**, ScreenerTab, SearchBar, TrackerTab; a `Promise.all` block counts once, and
+`ChatBox`/`Debate` are stream-only and excluded. Counting every literal
+`get`/`post`/`patch`/`del`/`stream` call instead gives **28 across 10 files**.*
+
+*(The retired audit said 11/8, and a 2026-08-18 pass repeated it after "verifying" the total
+without re-deriving the per-file breakdown. `ScorecardTab.jsx` has **three** load sites, not
+two: `:592` inside `loadComps`, the `Promise.all` at `:607-608`, and `:613`
+`get(.../history).then(setHistory).catch(...)`. The omitted one is precisely the three-line
+`get(...).then(setX).catch(...)` shape this entry's own verdict calls "the genuinely shared
+part" — so the strongest case **for** a hook was the site left out of the census against it.
+The conclusion is unaffected: 1 of 12 is worse than 1 of 11.)*
+
+**The divergences are the feature, not the duplication:**
+
+- `ModelsTab.jsx:703-706` deliberately swallows its error — *"the quality bars are an
+  enhancement — a failure here must not blank the tab."* A hook that surfaced `error` would
+  blank the entire valuation tab because a score bar failed.
+- `SearchBar.jsx:38-51` — a 220 ms debounce **plus** a sequence-number race guard, because
+  *"a slow lookup for 'app' must not overwrite the newer one for 'apple'."* A naive hook fires
+  per keystroke with no ordering guarantee.
+- `PortfolioTab.jsx:60` gates on `if (loading && !data)` to keep stale rows visible during a
+  refetch instead of flashing a loader; its error renders as a banner *above* the table.
+- `TrackerTab.jsx:31-46` — three URLs behind one loading flag and one fatal error. Three hook
+  calls would let the chart render with bars but no event markers: a behaviour change.
+- [ScorecardTab.jsx:616](frontend/src/components/ScorecardTab.jsx#L616) — the comps URL is
+  derived from a *prior* response (`loadComps(peerSuggest.suggested.join(','))`), so it cannot
+  be expressed as `deps` at all.
+- `ModelsTab.jsx:694-699` and
+  [ScorecardTab.jsx:611](frontend/src/components/ScorecardTab.jsx#L611) seed **controlled form
+  inputs** from the response (`setPeerInput(peerSuggest.suggested.join(', '))`);
+  `PriceChart.jsx:126` seeds state then mutates it locally on drag/append/delete. Read-only
+  `data` is incompatible with both.
+
+Only 2 of 12 sites have any cancellation today — `PriceChart.jsx`'s `let live` guard and
+`SearchBar.jsx`'s sequence number — so universal cancellation would itself be a behaviour
+change. The genuinely shared part is the three-line `get(...).then(setX).catch(...)`
+shape; everything a hook would have to absorb is commented-in intent. **This is duplication
+that is carrying information.** No reopening condition.
+
+### ⚪ `Protocol` for the provider + `TypedDict` for the fundamentals dict
+
+*Migrated here 2026-08-18, same origin as the entry above.*
+
+Proposed as *"converts the vendor-swap contract from tribal knowledge into a CI failure."*
+**It cannot: there is no type checker.** CI runs `pip install`, `ruff check backend/`, `pytest`.
+There is no `[tool.ruff]` section, so ruff runs its default pycodestyle + Pyflakes set — AST
+lint, no type inference. Repo-wide search for `mypy|pyright|pytype|pyre`: zero real hits.
+
+Demonstrated rather than assumed: ruff at the pinned version passes a file containing a
+`TypedDict`-annotated literal missing a required key, a subscript of an undeclared key, and a
+`str` where `float | None` was declared — `All checks passed!`, exit 0. And `TypedDict` is not
+runtime-enforced: a dict missing a required key assigns without error, `Info(bogusKey=5)`
+constructs, and `isinstance(d, Info)` raises `TypeError`.
+
+**The `Protocol` would document zero drift.** `YFinanceProvider` has exactly six public methods,
+cross-checked against every real `provider.<method>` call site — **defined set == called set**,
+zero unused, zero undefined, all six already carrying return annotations.
+
+Non-`Optional` fields would also overfit: of the **51** keys in the fixtures, **13** are null in
+at least one, and the other 38 are non-null only because the sample is seven large caps.
+**11 of the 13 are attributable to RIVN (pre-profit) and JPM (bank)**; the remaining two,
+`exchangeDataDelayedBy` and `regularMarketTime`, are null in **all seven** — they were added
+that way by the fixture-conformance fix.
+
+*(The source audit said "49 keys, 11 null … RIVN and JPM account for all 11", which was exactly
+right when written and went stale hours later: commit `7f0a64b` took `info` from 49 to 51 keys.
+Re-counted 2026-08-18. The RIVN/JPM attribution still holds for 11 of 13 — stating it as "all
+13" would have been true as set-coverage and misleading as explanation, since the two new nulls
+have nothing to do with being pre-profit or a bank.)*
+
+The load-bearing 10% was the fixture-conformance assertion, which needs no types at all and
+**shipped separately** as `test_fixtures.py` on 2026-08-18.
+
+**Reopening condition:** a decision to add mypy or pyright to CI. That is a separate,
+non-trivial call — an untyped FastAPI + pandas + yfinance backend will produce a large
+first-run baseline — not a free rider on this change.
+
+### ⚪ Parameterising `risk_free_rate` and `fx_rate`
+
+*Migrated here 2026-08-18, same origin as the two entries above.*
+
+Proposed as *"4 call sites; makes the domain layer genuinely pure; removes two autouse fixtures
+and `yfinance` from CI."* **Wrong on cost and wrong on benefit.**
+
+- **Cost understated.** `risk_free_rate` is indeed one production call site
+  (the single `rf = risk_free_rate(RISK_FREE_RATE)` inside `_wacc`, cited by symbol because a
+  line number here has already drifted twice — `:503` → `:515` → `:523` — each time from an edit
+  to the comment block sitting directly above it), but `statement_to_market_fx`
+  has **6 production call sites across 4 modules** — `financial_models.py` ×3 (`:258`, `:284`,
+  `:382`), plus `comps.py:241`, `forensics.py:108`, `scoring.py:129` — so threading a rate
+  lookup is still a viral parameter through a chain of signatures rather than a local change.
+
+  *(The source audit said "7 call sites across 4 modules, `financial_models` ×5". Re-counted
+  2026-08-18: wrong, and self-contradictory as written — 5+1+1+1 is 8, not 7. It was already
+  wrong at `8c5d467`, so this is a miscount rather than drift. **The direction is unchanged and
+  the conclusion is unaffected**: 6 sites across 4 modules is still viral, just less so than
+  claimed. Recorded rather than quietly corrected, because a cost argument that was inflated is
+  worth knowing about.)*
+- **"Removes yfinance from CI" is false.** [data_provider.py:16](backend/data_provider.py#L16)
+  imports `yfinance` at module scope, and [comps.py:15](backend/comps.py#L15) imports the
+  `provider` singleton. Any test importing `main` or `comps` pulls it regardless.
+- **The impurity is already contained.** Both functions are day-cached in module globals, fail
+  soft (`risk_free_rate` returns its fallback *uncached*; `fx_rate` returns `None` and callers
+  suppress the comparison), and are documented at length.
+
+The direction-of-dependency criticism — domain reaching into infrastructure — remains true on
+principle. Its entire practical cost is two `autouse` fixtures in `conftest.py`. The
+`statements.py` extraction reduced the argument further: the impure imports are now isolated in
+small modules where they read honestly.
+
+**Reopening condition:** a second data provider being added.
+
+*The migrated text also offered "or the FX pin ever producing a test that is wrong rather than
+merely artificial". Dropped 2026-08-18: that is reconsidering the item on its own merits, which
+the criterion at the top of this file explicitly excludes — and the entry that added the
+criterion carried the violation in the same commit. A test going wrong is a reason to fix the
+test, not a trigger to re-litigate a decision.*
+
+### ⚪ Restructuring the backend layout, or thinning the comments
+
+*Migrated here 2026-08-18 with the three entries above. Recorded because these are the two
+things a well-meaning refactor is most likely to undo, and neither is written down anywhere
+else.*
+
+**The backend DAG is not accidental.** Zero import cycles, and it really is four layers —
+re-derived 2026-08-18 by parsing every module's AST for `backend.*` imports:
+
+| layer | modules | depends on |
+|---|---|---|
+| 0 — leaves | `ai_client`, `data_provider`, `drawings`, `market_series`, `search`, `sector_weights`, `statements`, `store` | nothing in the project (**8 of 13**) |
+| 1 | `financial_models` | leaves only |
+| 2 | `comps`, `forensics`, `scoring` | `financial_models` + leaves |
+| 3 | `main` | everything |
+
+Do not add a DI container and do not add layers — the structure that makes a vendor swap
+bounded is the six-method provider interface, not the directory count.
+
+*(Two corrections in two passes, both worth recording. The retired audit said "five of twelve":
+twelve was right at `8c5d467` and became thirteen when `statements.py` landed, but "five" was
+never right — 7 of 12 then, 8 of 13 now. The first fix then over-corrected, claiming every
+non-leaf "depends on `data_provider` or on a leaf", which is **false**: `forensics` and
+`scoring` depend on `financial_models`, and neither imports `data_provider` at all. The layer
+table above is what the AST actually says, which also vindicates the audit's original "four
+clean layers" — the one part of that sentence that had been right.)*
+
+**The comment density is an audit trail, not documentation.** It carries measured values, often
+dated — `financial_models.py:109` records *"yfinance returned 0.173 for XOM"*, `:544` records
+*"XOM regresses at 0.2888 and is used at 0.30"*, and `:713-714` carries *"moved fair value
+143.99 → 147.41"* with its date. That is what lets this list say *"declined again, this time on
+measurement rather than principle"* instead of re-arguing a decision from scratch. A refactor
+that normalises it to conventional docstrings would delete the least reproducible asset in the
+repo and leave the code looking tidier. **Preserve it through every refactor above.**
+
+*(A 2026-08-18 draft of this paragraph illustrated the point with a quote —* "XOM's vendor
+0.173, its measured 0.2888" *— that is not a code comment at all. It is a line from **this
+file**, and the two figures live in two separate comments that never appear together. Quoting
+the list to itself as evidence for the code is exactly the failure the paragraph warns about.)*
