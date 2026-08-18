@@ -8,6 +8,7 @@ because pulling the network into this suite would defeat its purpose.
 from __future__ import annotations
 
 import copy
+import math
 
 import pytest
 
@@ -402,6 +403,61 @@ def test_growth_path_is_flat_then_fades_to_terminal():
     assert path[-1] == pytest.approx(0.025), "final year must reach terminal growth"
     fade = path[fm.STAGE1_YEARS:]
     assert fade == sorted(fade, reverse=True), "stage 2 must decline monotonically"
+
+
+# The projection arithmetic itself. Until `_project` was lifted out of
+# `dcf_valuation` this loop was a closure, so every one of the ~70 tests that
+# reached it did so by running a whole valuation over a fixture — which pins the
+# answer for seven companies and pins the *arithmetic* for none. These do the
+# opposite: no fundamentals, no fixtures, just the identities the model claims.
+
+def test_projection_discounts_a_flat_cash_flow_to_its_closed_form():
+    """Zero growth throughout reduces the whole model to a textbook perpetuity."""
+    w, fcf = 0.10, 100.0
+    pv, terminal_pv, growth_factor = fm._project(fcf, 0.0, w, 0.0)
+
+    assert pv == sum(fcf / (1 + w) ** y for y in range(1, fm.PROJECTION_YEARS + 1))
+    assert terminal_pv == (fcf / w) / (1 + w) ** fm.PROJECTION_YEARS
+    assert growth_factor == 1.0, "nothing grew, so the base year must not scale"
+    # And the two legs together are exactly what a no-growth perpetuity is worth.
+    assert pv + terminal_pv == pytest.approx(fcf / w)
+
+
+def test_projection_is_homogeneous_of_degree_one_in_the_base():
+    """`_project`'s docstring claims the base override "scales the result exactly
+    and nothing damps it". `dcf_valuation` relies on that when it prices the
+    normalised base year, so the claim is load-bearing rather than descriptive."""
+    args = (0.12, 0.10, 0.025)  # growth, wacc, terminal
+    assert fm._enterprise_value(200.0, *args) == 2 * fm._enterprise_value(100.0, *args)
+    assert (fm._enterprise_value(100.0, *args, base=700.0)
+            == 2 * fm._enterprise_value(100.0, *args, base=350.0))
+
+
+def test_a_base_override_replaces_the_reported_cash_flow_entirely():
+    # The normalised base-year valuation would otherwise blend two base years.
+    args = (0.12, 0.10, 0.025)
+    assert (fm._enterprise_value(1.0, *args, base=350.0)
+            == fm._enterprise_value(999.0, *args, base=350.0))
+
+
+def test_a_growth_override_replaces_the_starting_rate_entirely():
+    # What makes the growth sensitivity a sweep of one assumption rather than a
+    # blend of two.
+    swept = fm._project(100.0, 0.12, 0.10, 0.025, g_start=0.30)
+    assert swept == fm._project(100.0, 0.30, 0.10, 0.025)
+
+
+def test_the_growth_factor_is_the_compounded_path():
+    """The implied exit multiple divides by this, so it has to be the product of
+    the path rather than the final year's rate."""
+    growth, terminal = 0.12, 0.025
+    _, _, growth_factor = fm._project(100.0, growth, 0.10, terminal)
+    assert growth_factor == math.prod(1 + g for g in fm._growth_path(growth, terminal))
+
+
+def test_enterprise_value_is_the_sum_of_the_two_legs():
+    pv, terminal_pv, _ = fm._project(100.0, 0.12, 0.10, 0.025)
+    assert fm._enterprise_value(100.0, 0.12, 0.10, 0.025) == pv + terminal_pv
 
 
 def test_two_stage_raises_valuation_versus_a_single_five_year_fade(monkeypatch):

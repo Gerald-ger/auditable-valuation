@@ -14,6 +14,7 @@ load does not fan out into peer fetches it did not ask for.
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 from statistics import median
 
@@ -792,6 +793,43 @@ def _growth_path(growth_rate: float, terminal_growth: float) -> list[float]:
     return path
 
 
+def _project(fcf: float, growth_rate: float, w: float, g_term: float,
+             g_start: float | None = None,
+             base: float | None = None) -> tuple[float, float, float]:
+    """(PV of explicit years, PV of terminal value, final-year growth factor).
+
+    `g_start` overrides the base growth rate so the same projection can be
+    swept for the growth sensitivity below; None means the base case.
+    `base` overrides the starting free cash flow the same way, for the
+    base-year band — the model is homogeneous of degree one in it, so the
+    override scales the result exactly and nothing damps it.
+
+    At module level rather than nested inside `dcf_valuation`, which is where it
+    used to live as a closure over `fcf` and `growth_rate`. Those two are settled
+    long before the projection runs, so binding them with `partial` is exactly
+    what the closure did — and out here the arithmetic can be tested on its own.
+    It could not be before: every one of the DCF's tests reached this loop only
+    by running the whole valuation.
+    """
+    pv = 0.0
+    cash_flow = fcf if base is None else base
+    compounded = 1.0
+    path = _growth_path(growth_rate if g_start is None else g_start, g_term)
+    for year, g in enumerate(path, start=1):
+        cash_flow *= (1 + g)
+        compounded *= (1 + g)
+        pv += cash_flow / (1 + w) ** year
+    terminal = cash_flow * (1 + g_term) / (w - g_term)
+    return pv, terminal / (1 + w) ** PROJECTION_YEARS, compounded
+
+
+def _enterprise_value(fcf: float, growth_rate: float, w: float, g_term: float,
+                      g_start: float | None = None,
+                      base: float | None = None) -> float:
+    pv, terminal_pv, _ = _project(fcf, growth_rate, w, g_term, g_start, base)
+    return pv + terminal_pv
+
+
 def dcf_valuation(f: dict, growth_rate: float | None = None,
                   terminal_growth: float | None = None,
                   wacc_override: float | None = None,
@@ -883,31 +921,12 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     if wacc <= terminal_growth:
         return {"error": f"WACC ({wacc:.2%}) must exceed terminal growth ({terminal_growth:.2%})."}
 
-    def project(w: float, g_term: float, g_start: float | None = None,
-                base: float | None = None) -> tuple[float, float, float]:
-        """(PV of explicit years, PV of terminal value, final-year growth factor).
-
-        `g_start` overrides the base growth rate so the same projection can be
-        swept for the growth sensitivity below; None means the base case.
-        `base` overrides the starting free cash flow the same way, for the
-        base-year band — the model is homogeneous of degree one in it, so the
-        override scales the result exactly and nothing damps it.
-        """
-        pv = 0.0
-        cash_flow = fcf if base is None else base
-        compounded = 1.0
-        path = _growth_path(growth_rate if g_start is None else g_start, g_term)
-        for year, g in enumerate(path, start=1):
-            cash_flow *= (1 + g)
-            compounded *= (1 + g)
-            pv += cash_flow / (1 + w) ** year
-        terminal = cash_flow * (1 + g_term) / (w - g_term)
-        return pv, terminal / (1 + w) ** PROJECTION_YEARS, compounded
-
-    def enterprise_value(w: float, g_term: float, g_start: float | None = None,
-                         base: float | None = None) -> float:
-        pv, terminal_pv, _ = project(w, g_term, g_start, base)
-        return pv + terminal_pv
+    # Bound to this company's base cash flow and starting growth rate, both of
+    # which are settled above and never reassigned below. The two swept
+    # parameters stay positional, so every call site further down reads exactly
+    # as it did when these were closures. See `_project` for why they are not.
+    project = partial(_project, fcf, growth_rate)
+    enterprise_value = partial(_enterprise_value, fcf, growth_rate)
 
     explicit_pv, terminal_pv, growth_factor = project(wacc, terminal_growth)
     ev = explicit_pv + terminal_pv
