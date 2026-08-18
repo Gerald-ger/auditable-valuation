@@ -255,6 +255,47 @@ def with_fresh_price(f: dict) -> dict:
     return {**f, "info": info}
 
 
+# The `info` fields `get_fundamentals` forwards to the model layer, and with that
+# the contract every committed fixture has to satisfy. At module level rather
+# than inline in the method so `tests/test_fixtures.py` can import it and assert
+# the two agree: while this list lived inside the function body, two keys were
+# added on 2026-08-14 and the fixtures captured on 2026-08-10 went on being a
+# 49-key subset of a 51-key contract, with nothing able to notice.
+#
+# Adding a key here means recapturing the fixtures, or adding it to them as null.
+# A fixture missing a field the provider forwards silently reads as "the vendor
+# did not report it", which is a different test from the one you think you wrote.
+INFO_KEYS = (
+    # `currency` is what the shares trade in; `financialCurrency` is
+    # what the statements are reported in, and for a China-domiciled
+    # HK listing they differ — 0700.HK trades in HKD and reports in
+    # CNY (verified live 2026-08-10, same for 9988.HK). Without this
+    # field the app cannot tell that the cash flows it discounts and
+    # the price it compares them against are different units.
+    "longName", "sector", "industry", "currency", "financialCurrency",
+    "marketCap",
+    "currentPrice", "regularMarketPrice", "sharesOutstanding", "beta",
+    # What the vendor says about its own latency. Forwarded so the
+    # price can carry its age like every other model input carries
+    # its provenance — it is the denominator of the headline upside
+    # and was the only input on screen with no label at all.
+    "regularMarketTime", "exchangeDataDelayedBy",
+    "trailingPE", "forwardPE", "priceToBook", "enterpriseValue",
+    "enterpriseToEbitda", "enterpriseToRevenue", "pegRatio",
+    "dividendYield", "payoutRatio", "returnOnEquity", "returnOnAssets",
+    "profitMargins", "operatingMargins", "grossMargins", "ebitdaMargins",
+    "revenueGrowth", "earningsGrowth", "totalDebt", "totalCash",
+    "debtToEquity", "currentRatio", "quickRatio", "freeCashflow",
+    "operatingCashflow", "totalRevenue", "ebitda", "trailingEps",
+    "forwardEps", "bookValue", "targetMeanPrice", "recommendationKey",
+    "numberOfAnalystOpinions", "targetLowPrice", "targetHighPrice",
+    # momentum pillar inputs (scoring.py pillar M) — omitting any of
+    # these drops the pillar below its 40% availability threshold
+    "twoHundredDayAverage", "fiftyTwoWeekLow", "fiftyTwoWeekHigh",
+    "52WeekChange", "SandP52WeekChange",
+)
+
+
 class YFinanceProvider:
     def get_quote(self, ticker: str) -> dict:
         info = yf.Ticker(ticker).info or {}
@@ -479,35 +520,7 @@ class YFinanceProvider:
 
         return {
             "ticker": ticker.upper(),
-            "info": {k: _clean(info.get(k)) for k in [
-                # `currency` is what the shares trade in; `financialCurrency` is
-                # what the statements are reported in, and for a China-domiciled
-                # HK listing they differ — 0700.HK trades in HKD and reports in
-                # CNY (verified live 2026-08-10, same for 9988.HK). Without this
-                # field the app cannot tell that the cash flows it discounts and
-                # the price it compares them against are different units.
-                "longName", "sector", "industry", "currency", "financialCurrency",
-                "marketCap",
-                "currentPrice", "regularMarketPrice", "sharesOutstanding", "beta",
-                # What the vendor says about its own latency. Forwarded so the
-                # price can carry its age like every other model input carries
-                # its provenance — it is the denominator of the headline upside
-                # and was the only input on screen with no label at all.
-                "regularMarketTime", "exchangeDataDelayedBy",
-                "trailingPE", "forwardPE", "priceToBook", "enterpriseValue",
-                "enterpriseToEbitda", "enterpriseToRevenue", "pegRatio",
-                "dividendYield", "payoutRatio", "returnOnEquity", "returnOnAssets",
-                "profitMargins", "operatingMargins", "grossMargins", "ebitdaMargins",
-                "revenueGrowth", "earningsGrowth", "totalDebt", "totalCash",
-                "debtToEquity", "currentRatio", "quickRatio", "freeCashflow",
-                "operatingCashflow", "totalRevenue", "ebitda", "trailingEps",
-                "forwardEps", "bookValue", "targetMeanPrice", "recommendationKey",
-                "numberOfAnalystOpinions", "targetLowPrice", "targetHighPrice",
-                # momentum pillar inputs (scoring.py pillar M) — omitting any of
-                # these drops the pillar below its 40% availability threshold
-                "twoHundredDayAverage", "fiftyTwoWeekLow", "fiftyTwoWeekHigh",
-                "52WeekChange", "SandP52WeekChange",
-            ]},
+            "info": {k: _clean(info.get(k)) for k in INFO_KEYS},
             "estimates": estimates,
             "income_statement": frame_to_dict(t.income_stmt),
             "balance_sheet": frame_to_dict(t.balance_sheet),
