@@ -427,6 +427,23 @@ class YFinanceProvider:
             # D/E on one basis. Free — same info call.
             "currency": info.get("currency"),
             "financial_currency": info.get("financialCurrency"),
+            # Yahoo's own classification, carried so peer *discovery* can filter
+            # on the same labels the target is classified by. Free — same info
+            # call, no extra request, exactly like the two fields above.
+            #
+            # `industry` here is Yahoo's display string ("REIT - Retail",
+            # hyphen-spaced) and is NOT interchangeable with the spelling
+            # yfinance's screener accepts ("REIT—Retail", em-dash). Matching one
+            # against the other needs a mapping, not a character replace.
+            #
+            # Checkable offline, and worth doing before relying on it: the
+            # accepted spellings are a literal dict in the pinned yfinance —
+            # EQUITY_SCREENER_EQ_MAP['industry'] in yfinance/const.py — so
+            # EquityQuery('eq', ['industry', 'REIT - Retail']) raises
+            # ValueError with the network unplugged. `sector` needs no such
+            # mapping: its 11 values are the same display strings on both sides.
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
             # beta rides along free on the same info call; financial_models uses
             # the peer median when a company's own reported beta is not credible
             "beta": _clean(info.get("beta")),
