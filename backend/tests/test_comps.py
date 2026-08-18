@@ -722,6 +722,205 @@ def test_discovery_covers_tickers_the_curated_map_does_not(monkeypatch):
     assert comps.suggest_peers("NOTCURATED") == ["X", "Y"]
 
 
+# ── the keyless screener tier ────────────────────────────────────────
+#
+# `conftest.no_live_screener` replaces `comps._screener_peers` for every test in
+# the suite, so this holds the real one — bound at import, before any fixture
+# runs. Calling `comps._screener_peers` inside a test would reach the stub.
+_real_screener_peers = comps._screener_peers
+
+# The em-dash spelling the screener accepts, kept out of the source as an escape
+# because it is the one character these tests are about.
+EM_DASH_RETAIL_REIT = "REIT—Retail"
+
+
+def row(symbol, market_cap=1e10, exchange="NYSE") -> dict:
+    """One quote as `yf.screen` returns it, carrying the keys the tier reads.
+
+    `exchange` is Yahoo's `fullExchangeName` — the venue's display name, not its
+    code. The tier matches on the name because OTC arrives under four different
+    codes and only one shared name.
+    """
+    return {"symbol": symbol, "marketCap": market_cap,
+            "fullExchangeName": exchange}
+
+
+@pytest.fixture
+def screener(monkeypatch):
+    """Install canned screener rows; returns every `yf.screen` call as (query, kwargs).
+
+    The kwargs are captured, not discarded: `sortAsc` alone is the difference
+    between the four largest names in an industry and the four smallest, and
+    nothing else offline would notice it flipping.
+
+    The process-lifetime cache is cleared on both sides — it is module state, and
+    a ranking left behind by one test would be served to the next.
+    """
+    def install(rows, industry="REIT - Retail"):
+        calls = []
+
+        def fake_screen(query, **kwargs):
+            calls.append((query, kwargs))
+            return {"quotes": rows}
+
+        monkeypatch.setattr(comps.provider, "get_peer_snapshot",
+                            lambda t: {"industry": industry})
+        monkeypatch.setattr(comps.yf, "screen", fake_screen)
+        return calls
+
+    comps._SCREENED_INDUSTRY_CACHE.clear()
+    yield install
+    comps._SCREENED_INDUSTRY_CACHE.clear()
+
+
+def test_the_screener_is_asked_for_the_industry_spelling_it_accepts(screener):
+    """The hinge of this tier. `info['industry']` says "REIT - Retail" and the
+    screener only knows "REIT—Retail"; handing it the former raises
+    `Invalid EQ value`, which the tier would swallow into an empty peer list
+    indistinguishable from a genuinely empty screen."""
+    calls = screener([row("SPG")])
+    assert _real_screener_peers("O") == ["SPG"]
+    query, kwargs = calls[0]
+    assert [sub.operands for sub in query.operands] == [
+        ["region", "us"], ["industry", EM_DASH_RETAIL_REIT]]
+    # The sort is half the query. `sortAsc=True` would return the four smallest
+    # names in the industry instead of the four largest — a total inversion of
+    # peer quality that nothing else offline would notice.
+    assert kwargs == {"sortField": "intradaymarketcap", "sortAsc": False,
+                      "size": comps.SCREENER_SIZE}
+
+
+def test_the_screener_industry_map_is_the_one_the_pinned_yfinance_validates():
+    """Derived from yfinance's own list, so this asserts the derivation rather
+    than a transcription — including that it is injective, since a collision
+    would silently point two industries at one screen."""
+    assert comps._SCREENER_INDUSTRY["REIT - Retail"] == EM_DASH_RETAIL_REIT
+    flat = {label for group in comps.EQUITY_SCREENER_EQ_MAP["industry"].values()
+            for label in group}
+    assert len(comps._SCREENER_INDUSTRY) == len(flat) == 145
+    # and every industry the fixture set actually carries is reachable
+    for stem in ("O", "AAPL", "JPM", "MSFT", "RIVN", "XOM", "0700_HK"):
+        industry = load_fundamentals(stem)["info"]["industry"]
+        assert industry in comps._SCREENER_INDUSTRY, stem
+
+
+def test_a_hk_ticker_screens_against_hk(screener):
+    """Same suffix rule as data_provider.home_index, and the same known limit."""
+    calls = screener([row("9888.HK")], industry="Internet Content & Information")
+    assert _real_screener_peers("0700.HK") == ["9888.HK"]
+    assert calls[0][0].operands[0].operands == ["region", "hk"]
+
+
+def test_the_target_is_dropped_from_its_own_screen(screener):
+    """`O` and `0700.HK` both come back at the top of their own industry."""
+    screener([row("O"), row("SPG"), row("KIM")])
+    assert _real_screener_peers("O") == ["SPG", "KIM"]
+
+
+def test_a_row_with_no_market_cap_is_dropped(screener):
+    """`SPG-PJ`, a Simon preferred, reports quoteType=EQUITY with a null cap —
+    so quoteType cannot filter it and the missing cap is the only signal."""
+    screener([row("SPG"), row("SPG-PJ", market_cap=None), row("KIM")])
+    assert _real_screener_peers("O") == ["SPG", "KIM"]
+
+
+def test_every_otc_tier_is_dropped_not_just_the_obvious_one(screener):
+    """OTC is where every cross-listing sits: undeduped, Toyota votes twice in a
+    median as `TM` and `TOYOF`.
+
+    All four tiers, because a filter written against `exchange == "PNK"` alone
+    passed `WMMVF` (OTCID) and `WMMVY` (OTCQX) — both Walmart de México — as two
+    of Costco's four peers. They share a `fullExchangeName` prefix and nothing
+    else, which is why the tier matches on the name.
+    """
+    screener([row("TSLA"), row("TOYOF", exchange="OTC Markets OTCPK"), row("TM"),
+              row("WMMVF", exchange="OTC Markets OTCID"),
+              row("WMMVY", exchange="OTC Markets OTCQX"),
+              row("DQJCY", exchange="OTC Markets OTCQB"), row("GM")],
+             industry="Auto Manufacturers")
+    assert _real_screener_peers("RIVN") == ["TSLA", "TM", "GM"]
+
+
+def test_the_screener_respects_the_same_peer_cap_as_every_other_tier(screener):
+    screener([row(f"P{i}") for i in range(10)])
+    # the ranking's head, not any four of it — a reversed slice would keep the
+    # count and hand back the smallest names in the industry
+    assert _real_screener_peers("O") == ["P0", "P1", "P2", "P3"]
+    assert comps.MAX_AUTO_PEERS == 4
+
+
+def test_an_industry_the_pinned_yfinance_does_not_know_yields_no_peers(screener):
+    """A miss returns nothing rather than a rewritten string the screener would
+    reject anyway — and it must not spend a request finding that out."""
+    calls = screener([row("SPG")], industry="Something Yahoo Renamed")
+    assert _real_screener_peers("O") == []
+    assert calls == []
+
+
+def test_a_failing_screener_yields_no_peers_rather_than_an_error(monkeypatch):
+    """Same failure contract as `_fmp_peers`: a bad day costs peers, never the
+    request."""
+    comps._SCREENED_INDUSTRY_CACHE.clear()
+    monkeypatch.setattr(comps.provider, "get_peer_snapshot",
+                        lambda t: {"industry": "REIT - Retail"})
+    monkeypatch.setattr(comps.yf, "screen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("no route")))
+    assert _real_screener_peers("O") == []
+
+
+def test_one_screen_serves_every_name_in_the_industry(screener):
+    """The cache is keyed on (region, industry), not on the ticker.
+
+    `/api/score/batch` fans a watchlist across a thread pool, so a ticker-keyed
+    cache would put one unauthenticated screen on Yahoo per name — fifty for a
+    watchlist of fifty REITs, where one will do. Each name still gets its own
+    answer, because only the self-exclusion differs.
+    """
+    calls = screener([row("SPG"), row("O"), row("KIM"), row("REG"), row("FRT")])
+    assert _real_screener_peers("O") == ["SPG", "KIM", "REG", "FRT"]
+    assert _real_screener_peers("KIM") == ["SPG", "O", "REG", "FRT"]
+    assert _real_screener_peers("REG") == ["SPG", "O", "KIM", "FRT"]
+    assert len(calls) == 1
+
+
+def test_a_screen_is_cached_but_an_empty_one_is_not(screener):
+    """Failures stay uncached for the same reason `_fmp_peers` does not cache
+    them: a transient outage must not blank an industry for the process."""
+    empty = screener([])
+    assert _real_screener_peers("O") == [] == _real_screener_peers("O")
+    assert len(empty) == 2
+
+
+def test_a_cached_ranking_cannot_be_poisoned_by_its_caller(screener):
+    """The cached list is module state shared across threads and the result
+    reaches an HTTP handler; handing out the object itself would let one
+    request's mutation become every later request's answer."""
+    screener([row("SPG"), row("KIM")])
+    first = _real_screener_peers("O")
+    first.append("POISON")
+    assert _real_screener_peers("O") == ["SPG", "KIM"]
+
+
+def test_the_screener_is_reached_only_when_fmp_comes_back_empty(monkeypatch):
+    monkeypatch.setattr(comps, "_fmp_peers", lambda t: [])
+    monkeypatch.setattr(comps, "_screener_peers", lambda t: ["SPG", "KIM"])
+    assert comps.suggest_peers("O") == ["SPG", "KIM"]
+
+
+def test_fmp_still_wins_over_the_screener(monkeypatch):
+    """The tier is ordered below FMP so that it can only fill a gap. Above it,
+    shipping this would change the answer for anyone holding a key."""
+    monkeypatch.setattr(comps, "_fmp_peers", lambda t: ["FROM_FMP"])
+    monkeypatch.setattr(comps, "_screener_peers", lambda t: ["SPG"])
+    assert comps.suggest_peers("O") == ["FROM_FMP"]
+
+
+def test_a_curated_list_still_wins_over_both_discovery_tiers(monkeypatch):
+    monkeypatch.setattr(comps, "_fmp_peers", lambda t: ["WRONG"])
+    monkeypatch.setattr(comps, "_screener_peers", lambda t: ["ALSO_WRONG"])
+    assert comps.suggest_peers("UPS") == ["FDX", "GXO", "CHRW", "EXPD"]
+
+
 def test_peer_beta_inputs_skips_peers_with_no_beta(stub):
     """resolve_beta needs a beta to unlever; a snapshot without one is noise.
 

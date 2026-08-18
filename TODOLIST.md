@@ -221,106 +221,48 @@ composite at all.
 
 ---
 
+### 🟡 Two tests in the "offline" suite reach live yfinance
+
+**Found 2026-08-19** while proving the new peer tier does not leak, and **pre-existing** — the
+same two fail identically at `bc597ff`, before any of that change.
+`test_the_endpoint_prices_the_bridge_before_returning` and
+`test_a_bank_gets_no_bridge_from_the_endpoint` both go through `main.comps_endpoint`. The call
+that fires is the price refresh, not the bars:
+
+```
+main.py:351  comps_endpoint -> _guard(_fundamentals, ticker)
+main.py:107  _fundamentals  -> with_fresh_price(f)
+data_provider.py:248         -> live_price(ticker)
+data_provider.py:219         -> yf.Ticker(ticker).info
+```
+
+`_market_bars` → `provider.get_history` leaks too (`data_provider.py:324`), but it is the
+*second* site, not the one that fires first. `wired_endpoint` patches `get_fundamentals`,
+`_peer_beta_inputs` and `get_peer_snapshot` — not the refresh.
+
+**🟡 rather than 🔴, and the downgrade is the interesting part.** A first draft of this entry
+said an outage "turns two green tests red". It does not. Both leak sites swallow ordinary
+exceptions (`data_provider.py:222`, `main.py:126`), and the suite was re-run with
+`yf.Ticker`/`download`/`screen` all raising a plain `Exception` — the shape a real outage takes
+— and reported **467 passed**. So the cost is wasted latency and a hidden dependency on a
+vendor being up, not a CI failure. Recording the wrong severity would have sent whoever picked
+this up hunting a failure mode that cannot occur.
+
+**How it was found, since the technique is reusable and the severity claim depends on it.** A
+throwaway pytest plugin replacing `yfinance.screen`/`Ticker`/`download` with functions raising
+a **`BaseException` subclass**. An ordinary `Exception` is swallowed at every one of these
+sites, so the leak is invisible to any probe that raises one — which is exactly why the first
+severity reading was wrong. Not committed; it is twenty lines and rebuilding it is cheaper than
+maintaining it.
+
+**Fix:** stub `main.with_fresh_price` (or `data_provider.live_price`) in `wired_endpoint`, **and**
+`main._market_bars` — stubbing only the bars was tried and both tests still leak, one line
+further up. **Trigger: next time `test_comps.py`'s endpoint tests are touched** — they assert on
+the bridge and the bank path, neither of which needs a live price or real bars.
+
+---
+
 ## Next
-
-### 🟡 Peer discovery has no tier below FMP, and the free one that exists was never wired in
-
-**Accepted 2026-08-18.** `suggest_peers` is two tiers — `PEER_SUGGESTIONS.get(t) or _fmp_peers(t)`
-([comps.py:122](backend/comps.py#L122)) — so a ticker outside the 23 curated names with no FMP
-key, or an FMP call that fails, gets **no peers at all**. For a company type whose DCF is
-refused (REIT, bank, pre-profit) that means **no model-based valuation whatsoever**: measured on
-`O`, the football field drops to `methods_scored: []` and only the analyst-target row remains,
-which `triangulate` deliberately excludes from scoring.
-
-**This was not a missing option — it was an unmeasured one.**
-[docs/financial-models-reference.md:922](docs/financial-models-reference.md#L922) already listed
-`obb.equity.screener(...)` with **yfinance in the free-provider column** and *"peer building"*
-as the use case. It was never measured and never carried into a peer decision, and
-[README.md:464](README.md#L464) warns that column *"predates the measurements above"*. Measured
-2026-08-18:
-
-**† Live, 2026-08-18.** Both columns required a network call and the FMP column a credential.
-Neither is reproducible from a checkout, and vendor peer lists drift — see the provenance note
-at the top of this file.
-
-| target | yfinance screener, **no key** — raw, market-cap ranked † | FMP, with key † |
-|---|---|---|
-| O | *O*, SPG, URMCY, UNBLF, STGPF, KIM, **SPG-PJ** | SPG, KIM, REG, FRT |
-| **RIVN** | **TSLA, TOYOF, TM, BYDDY, BYDDF, GM, RACE** | HMC, MGA, GPC, **BBY** |
-| 0700.HK | *0700.HK*, 9888.HK, 1024.HK, 1698.HK, 9626.HK | 9888.HK, 1024.HK, 1698.HK, 2518.HK |
-| 1177.HK | 1276.HK, 3692.HK, 2196.HK, 2096.HK, 3320.HK | 2269.HK, 1801.HK, 1093.HK, 3759.HK |
-
-**Shown raw on purpose.** A first draft of this table showed the screener column already
-hand-filtered — 2, 5, 3 and 3 entries against FMP's consistent 4 — which read as though the
-screener found *fewer* peers when it actually finds more and needs cleaning.
-
-The `O` row is the instructive one: **seven rows, five distinct companies.** Italics mark the
-target itself. `SPG-PJ` is a Simon Property preferred, so **SPG appears twice**; `URMCY` and
-`UNBLF` are *both* Unibail-Rodamco-Westfield SE, a second duplicate pair — and both are foreign
-listings, as is `STGPF` (Scentre Group), which is the only foreign name here that is *not* also
-a duplicate. `RIVN` is seven rows and five companies too (`TOYOF`/`TM` are one Toyota,
-`BYDDY`/`BYDDF` one BYD) — **but not the same story**: `O` and `0700.HK` include themselves and
-`RIVN` and `1177.HK` do not, so the usable peer counts are 4 and 5 respectively. **Each obstacle
-fires on two of the four rows, and they are different pairs** — self-inclusion on `O` and
-`0700.HK`, duplicate securities on `O` and `RIVN`, overlapping only on `O`. Neither HK row
-carries a duplicate pair. *(A draft said obstacle 3 fires "on all of it", which the table three
-rows up refutes; a first correction then said the two obstacles fire on "the same half", which
-it also refutes.)* All identities confirmed against
-`longName` †, not inferred from the ticker — which is how `URMCY` and `UNBLF` were caught as one
-company rather than two.
-
-Equivalent on two, worse on one, decisively better on RIVN — where FMP returned a
-consumer-electronics retailer for a pre-profit EV maker. `info['sector']`/`info['industry']`
-are already in the `INFO_KEYS` whitelist and populated on all seven fixtures, HK included, so
-the input costs nothing.
-
-**Does not conflict with *"Rewriting the curated peer map"*** below — that entry keeps the
-curated map first, and this sits below FMP, not in place of either.
-
-**Five obstacles, all found by running it rather than predicting them.** Two of the five are
-**checkable offline** against the pinned yfinance — the accepted `industry` and `region`
-spellings are literal dicts in `yfinance/const.py`, so obstacles 1 and 5 can be verified with the
-network unplugged. Obstacles 2, 3 and 4 are † live: they describe what a screen actually
-*returned* on 2026-08-18.
-
-1. The screener's industry labels use an **em-dash** (`REIT—Retail`) where `info['industry']`
-   uses a hyphen (`REIT - Retail`). Not a cosmetic difference — it raises `Invalid EQ value`
-   and needs a mapping, not a naive character replace. *Offline-checkable: the accepted
-   spellings are `EQUITY_SCREENER_EQ_MAP['industry']` in `yfinance/const.py`, so the
-   `ValueError` reproduces with the network unplugged. `sector` needs no mapping — its 11
-   values are the same display strings on both sides.*
-2. **The target appears in its own results** (`O`, `0700.HK` above).
-3. **Share classes, ADRs and cross-listings all duplicate, and there is no single tell.**
-   `TM`+`TOYOF` are one Toyota, `BYDDY`+`BYDDF` one BYD, `URMCY`+`UNBLF` one Unibail, and
-   `SPG-PJ` is a Simon preferred sitting alongside `SPG` itself. Undeduped, one company votes
-   two or three times in a median. **Note `SPG-PJ` reports `quoteType=EQUITY`**, so quoteType
-   cannot filter preferreds — `marketCap == 0` is the only signal it gives.
-4. **Genuinely foreign names arrive mixed in too** — `STGPF` is Scentre Group, an Australian
-   retail REIT, correctly classified and not a duplicate of anything. Whether a foreign listing
-   belongs in a peer set is a judgement the implementation must make explicitly rather than
-   inherit.
-5. **Region must be derived from the ticker suffix** — `.HK` → `hk`, else `us`. Same rule and
-   same known limit as `home_index()`: a US-listed Chinese ADR still reads `us`.
-
-**One trap to handle in the same commit.** Nothing leaks today — both tests that call
-`suggest_peers` monkeypatch `_fmp_peers` to return *non-empty*
-([test_comps.py:713-722](backend/tests/test_comps.py#L713-L722)). Add a third tier and any
-*future* test returning `[]` would silently reach the live network inside the offline suite.
-Needs an `autouse` fixture stubbing the screener, the same shape as `conftest.py`'s
-`pinned_risk_free_rate`.
-
-**Note for whoever measures this.** The byte-comparison harness used on 2026-08-18 injects peers
-directly and never calls `suggest_peers`, so it will correctly report zero change. That proves
-the *valuation layer* is untouched; it is **not** evidence that nothing changed. The effect is
-visible only through `/api/stock/{ticker}/comps`.
-
-*And the harness is not in this repo* — no † needed, because the absence is checkable: nothing
-under `backend/tests/` implements it. It was built ad hoc for that session: a git worktree at
-the prior commit, plus a script dumping ten model surfaces across the seven fixtures and
-SHA-256'ing the result. Nothing under `backend/tests/` implements it, so **a future reader cannot
-run it by finding it.** Recorded rather than quietly assumed: the golden-score snapshots in
-`test_scoring.py` are the committed, runnable version of the same guarantee, and are what any
-claim of "no numeric change" should actually rest on.
 
 ### 🟡 The methodology reference is truncated, not retrieved
 
@@ -824,6 +766,88 @@ by construction (`if "." in ticker: return []`).
 ---
 
 ## Done
+
+### ✅ 2026-08-19 — peer discovery gets a tier that needs no key
+
+**Was:** `suggest_peers` was two tiers — `PEER_SUGGESTIONS.get(t) or _fmp_peers(t)` — so a
+ticker outside the 23 curated names with no FMP key, or an FMP call that failed, got **no peers
+at all**. For a company type whose DCF is refused (REIT, bank, pre-profit) that meant **no
+model-based valuation whatsoever**: measured on `O`, the football field dropped to
+`methods_scored: []` and only the analyst-target row remained, which `triangulate` deliberately
+excludes from scoring.
+
+**Now:** `PEER_SUGGESTIONS.get(t) or _fmp_peers(t) or _screener_peers(t)`
+([comps.py](backend/comps.py)) — a third tier on yfinance's keyless screener. Ordered *below*
+FMP deliberately, which makes it purely additive: it can only fill a gap that is currently
+empty, so no existing answer changes for anyone holding a key.
+
+**Measured 2026-08-19 †, 18 non-curated names across both regions: peers for 18 of 18, a full
+four for 16.** The two thin ones are genuinely thin industries, not failures — `0388.HK` (HKEX)
+returns one HK peer and `0823.HK` (Link REIT) two. Product-level effect on a keyless install,
+through the real pipeline on the `O` fixture: `peers_used` 0 → 4, implied values 0 → 5, and the
+"Peer multiples" bar appears on the football field where there had been none.
+
+**The five predicted obstacles, against what implementing them actually cost.** All five were
+real. Three turned out cheaper than written, and one was wrong in a way only running it caught.
+
+1. **Industry em-dash — real, and cheaper.** The entry said it "needs a mapping, not a naive
+   character replace". The mapping is right but the reason given was not: measured 2026-08-19, a
+   plain replace round-trips **all 145** industries, and no screener label contains a spaced
+   hyphen of its own. `comps._SCREENER_INDUSTRY` is derived from `yfinance/const.py` in two
+   lines and is used for a different reason — an industry the pinned build does not know misses
+   the lookup and yields no peers, where a replace would emit a rejected spelling that looks
+   identical to an empty screen. `backend/data_provider.py`'s comment carried the same
+   overstatement and was corrected with this change.
+2. **Self-inclusion — real, one condition.**
+3. **Duplicates — real, and the stated tell was wrong.** The entry said `marketCap == 0` is the
+   only signal for `SPG-PJ`. Live it is `marketCap: None`, not `0`; a truthiness test covers
+   both, but an equality test against `0` would have passed it straight through.
+4. **Foreign names — real, and it collapsed into 3.** One filter handles both: OTC listings are
+   where every cross-listing sits, so dropping them removes `TOYOF`, `BYDDF` and `UNBLF` *and*
+   the genuinely foreign `STGPF` in one rule. That a peer should trade where the target trades
+   is the answer to obstacle 4, not a side effect of fixing 3.
+5. **Region from suffix — real, one line.**
+
+**The obstacle nobody predicted, and it was found only after the first implementation passed.**
+OTC arrives under **four** exchange codes, not one. A filter written against the obvious
+`exchange == "PNK"` passed `WMMVF` (OTCID) and `WMMVY` (OTCQX) — both Walmart de México — as
+**two of Costco's four peers**, and `CMPGY`+`CMPGF` as two of Starbucks'. Measured over 36
+screens — 18 industries x 2 regions, 1,162 rows †: PNK 412, OQX 23, OID 9, OQB 3 — 35 rows the
+first filter would have leaked, on 447 OTC rows total. All four share a `fullExchangeName`
+prefix (`"OTC Markets ..."`) and nothing else, and that field was present on all 1,162 rows, so
+the tier matches the name rather than the code. After the fix Costco screens to WMT, TGT, DG,
+DLTR and Starbucks to MCD, CMG, YUM, QSR.
+
+**The trap was handled in the same commit,** as the entry demanded: `conftest.no_live_screener`
+is an `autouse` fixture stubbing `_screener_peers`, the same shape as `pinned_risk_free_rate`.
+It stubs the whole function rather than `yf.screen`, because the target's own snapshot is
+fetched *first* — patching only the screen call would still leak.
+
+**Every guard is mutation-tested: 13 mutations, 13 caught.** Two needed a unique anchor first —
+`[:MAX_AUTO_PEERS]` also appears in `_fmp_peers`, which is the same wrong-function landing
+recorded on 2026-08-18. **Three of the thirteen were added because a first pass of eight left
+them alive**, and one of those three was the worst survivor available: flipping `sortAsc=False`
+to `True` turns "the four largest names in the industry" into "the four smallest micro-caps",
+a total inversion of peer quality, and it passed all 467 tests. The fixture was capturing
+`yf.screen`'s kwargs and discarding them. **A mutation set that only mutates what you thought
+to test is a measure of the test suite's self-consistency, not its coverage.**
+
+**The cache is keyed on `(region, industry)`, not on the ticker** — see `_screened_industry`.
+An earlier revision keyed it per ticker while its own docstring claimed it kept the platform to
+"one screen per industry rather than one per name". It did the opposite: `score_batch` fans a
+watchlist across a thread pool, so fifty REITs would have issued fifty concurrent
+unauthenticated screens. The self-exclusion moved to read time, which is the only part of the
+answer that varies within an industry — and it made the returned list a fresh slice, so a cached
+ranking shared across threads can no longer be mutated by whoever received it.
+
+**Left open, deliberately: the ordering.** FMP sits above a tier that beat it on every name
+where the two disagreed and a human can judge — `RIVN` (TSLA, TM, GM, RACE vs Honda, Magna,
+**Best Buy**, Genuine Parts), `SBUX` (MCD, CMG, YUM, QSR vs Airbnb, Marriott, MercadoLibre,
+Royal Caribbean), `ABNB`, `CAT`, `LMT` †. They agreed exactly on `O` and differed on 17 of 18.
+That is suggestive, not sufficient: judging peer quality by eye across 18 names is not a
+measurement, and reversing the order would change the answer for key-holders, which is precisely
+what ordering it below avoided. **Reopening condition: a scored peer-quality metric.** Until one
+exists there is nothing to decide on.
 
 ### ✅ 2026-08-17 (f) — a dispersion band, and two indicators tested rather than argued
 

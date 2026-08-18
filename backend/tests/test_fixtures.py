@@ -106,10 +106,10 @@ def test_peer_snapshot_carries_every_field_its_consumers_read(monkeypatch):
     the `INFO_KEYS` drift did — invisibly.
 
     `sector` and `industry` are the two that would go unnoticed longest. They
-    are read by peer *discovery*, which is why they are here; note that as of
-    2026-08-18 nothing consumes them yet — the screener tier that will is not
-    written. When it is, losing them degrades a screen to "no peers found",
-    which is indistinguishable from a genuinely empty screen.
+    are read by peer *discovery* — `comps._screener_peers` since 2026-08-19,
+    which is what this guard was captured a day ahead of. Losing `industry`
+    degrades a screen to "no peers found", which is indistinguishable from a
+    genuinely empty screen.
 
     Offline by construction — `yf` is stubbed, so this runs in CI rather than
     behind `-m network`, which is where such drift would otherwise hide.

@@ -5,10 +5,19 @@ the hand-curated list where one exists (UPS -> HWM, GD, MMM, WM — generic
 industrials rather than freight), but it covers HK and turns "no peers at all"
 into "usually usable" for the ~everything else. Users can always edit the peer
 list in the UI, so a bad suggestion is visible and correctable.
+
+Below FMP sits a third tier that needs no API key at all — see
+`_screener_peers`. It exists because the two tiers above it leave a clone of
+this repo with peers for exactly 23 tickers: FMP is the only credential the
+platform reads, and without it `suggest_peers` returned an empty list for
+everything else.
 """
 from __future__ import annotations
 
 from statistics import median, quantiles
+
+import yfinance as yf
+from yfinance.const import EQUITY_SCREENER_EQ_MAP
 
 from backend import financial_models as fm
 from backend import sector_weights
@@ -91,7 +100,41 @@ ANALYST_DISPERSION_TIGHT, ANALYST_DISPERSION_WIDE = 0.30, 0.60
 CONVICTION_HIGH, CONVICTION_MEDIUM = 0.15, 0.30
 DIVERGENCE_CALLOUT = 0.40
 
+# How many rows to ask the screener for. Much larger than MAX_AUTO_PEERS on
+# purpose: the filters in `_screener_peers` are aggressive, so the request has
+# to carry the wastage. Measured at 50 across the seven fixture industries,
+# 2026-08-19 — only 148 of 319 rows survived, and the thinnest case was RIVN's
+# 11 (38 of its 50 rows were OTC). It is one request either way.
+SCREENER_SIZE = 50
+
+# Yahoo's screener spells an industry with an em-dash ("REIT—Retail") where
+# `info['industry']` hands back a spaced hyphen ("REIT - Retail"). This maps one
+# onto the other, derived from the pinned yfinance's own list rather than
+# hand-written — and derived in that direction rather than rewriting the
+# incoming string, so that an industry this build does not know misses the
+# lookup and yields no peers instead of being quietly reshaped into a spelling
+# the screener would reject anyway.
+#
+# Measured against yfinance 1.5.2 on 2026-08-19: 145 industries produce 145
+# distinct hyphen forms, so nothing collides, and all seven fixtures'
+# `info['industry']` values are keys here. `sector` needs no such treatment —
+# its 11 values are the same strings on both sides — which is why the query
+# below screens on industry alone.
+_SCREENER_INDUSTRY = {
+    label.replace("—", " - "): label
+    for group in EQUITY_SCREENER_EQ_MAP["industry"].values()
+    for label in group
+}
+
 _FMP_PEER_CACHE: dict[str, list[str]] = {}
+
+# Keyed on (region, industry) rather than on the ticker, because the screen is a
+# property of the industry and every name in one shares it. `/api/score/batch`
+# fans a whole watchlist across a thread pool (`main.score_batch`), so a
+# ticker-keyed cache would put fifty concurrent unauthenticated screens on Yahoo
+# for fifty REITs where one will do. The target is removed at read time instead,
+# which is the only part of the answer that varies by name.
+_SCREENED_INDUSTRY_CACHE: dict[tuple[str, str], list[str]] = {}
 
 
 def _fmp_peers(ticker: str) -> list[str]:
@@ -116,10 +159,102 @@ def _fmp_peers(ticker: str) -> list[str]:
     return peers
 
 
-def suggest_peers(ticker: str) -> list[str]:
-    """Curated list when we have one, FMP discovery otherwise."""
+def _screener_peers(ticker: str) -> list[str]:
+    """Same-industry names from yfinance's screener. No API key of any kind.
+
+    The tier below FMP, and the only one that works on an install carrying no
+    credentials — which is every install but the author's. Without it, a ticker
+    outside the 23-name curated map gets no peers at all, and that is not a
+    degraded comps table but a missing half of the product: no peer medians, no
+    "Peer multiples" bar on the football field, and `triangulate` left with one
+    method, at which point it declines to report an overlap or a conviction at
+    all. A cloned repo is in that state today for everything but those 23.
+
+    Ordered *below* FMP deliberately. Above it, this would change the answer for
+    anyone who does hold a key; below it, it can only fill a gap that is
+    currently empty — which is what makes the tier shippable without first
+    re-measuring FMP's peer quality across a panel.
+
+    The screen itself is cached by industry rather than by ticker — see
+    `_screened_industry` — so this is the cheap half: classify the target,
+    drop it from its own industry's ranking, take the top few.
+    """
+    try:
+        # The target's own classification, read through the TTL-cached snapshot
+        # rather than passed in: `peer_beta_inputs` and the /peers endpoint both
+        # reach here with nothing but a ticker.
+        industry = _SCREENER_INDUSTRY.get(
+            provider.get_peer_snapshot(ticker).get("industry"))
+    except Exception:
+        return []  # unknown ticker, or the provider is having a bad day
+    if industry is None:
+        return []
+    # Suffix-based, and it inherits the limit `data_provider.home_index` already
+    # documents for the same rule: a US-listed ADR of a Hong Kong company still
+    # screens as `us`.
+    region = "hk" if ticker.upper().endswith(".HK") else "us"
     t = ticker.upper()
-    return PEER_SUGGESTIONS.get(t) or _fmp_peers(t)
+    # `O` and `0700.HK` both come back at the top of their own screen. Removed
+    # here rather than inside the cached ranking, because it is the one part of
+    # the answer that differs between two names in the same industry.
+    return [s for s in _screened_industry(region, industry)
+            if s.upper() != t][:MAX_AUTO_PEERS]
+
+
+def _screened_industry(region: str, industry: str) -> list[str]:
+    """Symbols in one region and industry, market-cap ranked. Cached per process.
+
+    Successes are cached for the process lifetime and failures are not, the same
+    rule as `_fmp_peers` and for the same reason.
+    """
+    key = (region, industry)
+    if key in _SCREENED_INDUSTRY_CACHE:
+        return _SCREENED_INDUSTRY_CACHE[key]
+    try:
+        rows = yf.screen(
+            yf.EquityQuery("and", [
+                yf.EquityQuery("eq", ["region", region]),
+                yf.EquityQuery("eq", ["industry", industry]),
+            ]),
+            sortField="intradaymarketcap", sortAsc=False, size=SCREENER_SIZE,
+        )["quotes"]
+    except Exception:
+        return []  # network, quota, or a shape change in an unofficial scraper
+
+    # Two filters, each for a row the live screener really returns — measured
+    # 2026-08-19 over 50 rows per industry across all seven fixtures.
+    #
+    # market cap: `SPG-PJ`, a Simon Property preferred, reports
+    #   `quoteType=EQUITY` with a null market cap. quoteType cannot separate a
+    #   preferred from its common, so the missing cap is the only signal — and
+    #   `comps_analysis` discards a capless peer downstream regardless.
+    # OTC: where every cross-listing sits — `TOYOF` beside `TM`, `BYDDF` beside
+    #   `BYDDY`, `UNBLF` beside `URMCY`. Left in, one company votes two or three
+    #   times in a median. Matched on `fullExchangeName` rather than the
+    #   `exchange` code on purpose: OTC arrives under **four** codes, and a
+    #   filter written against the obvious one (`PNK`) let `WMMVF` and `WMMVY`
+    #   — both Walmart de México — through as two of Costco's four peers.
+    #   Measured 2026-08-19 over 36 screens — 18 industries x 2 regions,
+    #   1,162 rows: PNK 412, OQX 23, OID 9, OQB 3. Every one is named
+    #   "OTC Markets ...", and `fullExchangeName` was on all 1,162.
+    #
+    #   This also drops foreign names that are *not* duplicates (`STGPF`,
+    #   Scentre Group, an Australian retail REIT), and that is the intended
+    #   answer rather than a side effect: a peer should trade where the target
+    #   trades, and judging that case by case is not work a fallback tier
+    #   should be doing.
+    symbols = [r["symbol"] for r in rows
+               if r.get("symbol") and r.get("marketCap")
+               and not (r.get("fullExchangeName") or "").startswith("OTC Markets")]
+    if symbols:
+        _SCREENED_INDUSTRY_CACHE[key] = symbols
+    return symbols
+
+
+def suggest_peers(ticker: str) -> list[str]:
+    """Curated list when we have one, then FMP, then the keyless screener."""
+    t = ticker.upper()
+    return PEER_SUGGESTIONS.get(t) or _fmp_peers(t) or _screener_peers(t)
 
 
 def peer_beta_inputs(ticker: str) -> list[dict]:

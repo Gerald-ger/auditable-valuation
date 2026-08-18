@@ -7,6 +7,107 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-19 — peer discovery stops needing a credential
+
+Backend **452 → 467**, frontend 100 unchanged. No model output moved, and the argument for that is
+**not** the golden-score snapshots: `conftest.no_live_screener` stubs the new tier to `[]` for
+every test in the suite, so those snapshots are blind to this change by construction and could
+not have failed. The real argument is the fixtures themselves — five of the seven are in the curated map, and the
+two that are not (`O`, `RIVN`) both report a beta inside the credibility band, so
+`main._peer_beta_inputs` returns `None` and never asks for peers at all.
+
+### Added
+
+- **A third peer tier that needs no API key.** `suggest_peers` becomes
+  `curated → FMP → yfinance screener → []`. The gap it closes is larger than "peer quality":
+  FMP is the only credential this platform reads, so on any install without one — which is
+  every clone of this repo — a ticker outside the 23 curated names got **no peers at all**. Not
+  a thinner comps table: no peer medians, no "Peer multiples" bar on the football field, and
+  `triangulate` left with one method, at which point it declines to report an overlap or a
+  conviction. For a REIT or a bank, whose DCF is refused by design, that was the whole
+  valuation.
+
+  Measured on a keyless install through the real pipeline, `O` fixture: `peers_used` **0 → 4**,
+  implied values **0 → 5**, and a peer bar at **35.66–91.14** where there had been none.
+  Across 18 non-curated names in both regions †, peers for **18 of 18** and a full four for 16;
+  the short ones are thin industries, not failures (`0388.HK` returns one HK peer).
+
+  **Ordered below FMP deliberately.** It can only fill a gap that is currently empty, so
+  nothing changes for anyone holding a key — which is what made it shippable without first
+  re-measuring FMP across a panel.
+
+- **An industry-keyed screen cache.** `_screened_industry` caches on `(region, industry)`, not
+  on the ticker, so one screen serves every name in an industry — `score_batch` fans a watchlist
+  across a thread pool, and a ticker-keyed cache would have issued fifty concurrent
+  unauthenticated screens for fifty REITs. The first revision did exactly that while its
+  docstring claimed the opposite.
+
+- **`conftest.no_live_screener`,** an `autouse` fixture stubbing the tier, in the same commit
+  that created the hazard. It stubs the whole function rather than `yf.screen`, because the
+  target's own snapshot is fetched first and patching only the screen call would still leak.
+
+- **A live contract test** under `-m network`, for the same reason the rest of that file
+  exists: the em-dash industry spelling and the OTC venue names are undocumented Yahoo
+  taxonomy with no API contract.
+
+### Fixed
+
+- **An OTC filter that caught one of four tiers.** The first implementation filtered
+  `exchange == "PNK"` and passed its own tests. Live, it returned `WMMVF` **and** `WMMVY` — one
+  company, Walmart de México — as two of Costco's four peers, and `CMPGY`+`CMPGF` as two of
+  Starbucks'. Measured 2026-08-19 over 36 screens — 18 industries x 2 regions, 1,162 rows †:
+  **PNK 412, OQX 23, OID 9, OQB 3** — 35 leaked rows of 447 OTC rows. All four share the
+  `fullExchangeName` prefix `"OTC Markets "` and nothing else, and that field was present on
+  every one of the 1,162 rows, so the filter now matches the name rather than the code. After
+  the fix Costco screens to WMT, TGT, DG, DLTR and Starbucks to MCD, CMG, YUM, QSR.
+
+  **This is the entry's real content.** The mutation tests passed, the unit tests passed, ruff
+  passed, and the defect was visible only by running the thing against the live source and
+  reading the names out loud. The `PNK` code came from a measurement of six rows on one
+  industry; the correction came from 1,162 rows across thirty-six screens.
+
+  The same lesson landed twice. A first mutation set of eight all passed; three more were then
+  added and **all three survived**, the worst being `sortAsc=False` → `True` — "the four largest
+  names in the industry" becoming "the four smallest micro-caps", green across all 467 tests,
+  because the test fixture captured `yf.screen`'s kwargs and threw them away. Final tally: **13
+  mutations, 13 caught.** A mutation set that only mutates what you thought to test measures the
+  suite's self-consistency, not its coverage.
+
+- **Two overstatements from 2026-08-18,** both in claims this change made load-bearing.
+  `data_provider.get_peer_snapshot`'s comment said matching the industry spellings "needs a
+  mapping, not a character replace" — measured now, a plain replace round-trips **all 145**
+  industries. The mapping is still the right implementation, for a reason the comment did not
+  give: an industry the pinned build does not know misses the lookup and yields no peers, where
+  a replace emits a rejected spelling that looks identical to an empty screen. And `SPG-PJ`
+  reports `marketCap: None`, not `0` as recorded — a truthiness test covers both, the equality
+  test as written would not have.
+
+### Found, not fixed
+
+- **Two tests in the "offline" suite make live network calls,** and have since before this
+  change — the same two fail identically at `bc597ff`. Both reach `main.comps_endpoint`, whose
+  `_fundamentals` → `with_fresh_price` → `live_price` path calls `yf.Ticker`. `wired_endpoint`
+  patches the fundamentals, the peer betas and the snapshots, but not the price refresh.
+  Logged in `TODOLIST.md` rather than repaired here, because it is not this change's mess.
+
+  Found with a throwaway pytest plugin replacing `yfinance.screen`/`Ticker`/`download` with
+  functions raising a **`BaseException` subclass**. That detail is the finding: with an
+  ordinary `Exception` — which is what a real outage looks like — the suite still reports
+  **467 passed**, because every one of these call sites swallows `Exception` by design. So it
+  is hidden vendor coupling and wasted latency, **not** a red-CI risk, and it is visible only
+  to a probe built to escape the swallowing.
+
+### Not done, deliberately
+
+- **Reordering FMP below the screener.** The screener won on every name where the two
+  disagreed and a human can judge — `RIVN` (TSLA, TM, GM, RACE against Honda, Magna, **Best
+  Buy**, Genuine Parts), `SBUX` (MCD, CMG, YUM, QSR against Airbnb, Marriott, MercadoLibre,
+  Royal Caribbean), `ABNB`, `CAT`, `LMT` † — and the two agreed exactly on 1 of 18. Judging
+  peer sets by eye is not a measurement, and reversing the order would change the answer for
+  key-holders, which ordering it below specifically avoided. It waits on a scored metric.
+
+---
+
 ## 2026-08-18 (b) — the corrections needed more correcting than the text did
 
 Backend **450 → 452**, frontend 100 unchanged. No model output moved — the golden-score

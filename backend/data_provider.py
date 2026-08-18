@@ -433,15 +433,23 @@ class YFinanceProvider:
             #
             # `industry` here is Yahoo's display string ("REIT - Retail",
             # hyphen-spaced) and is NOT interchangeable with the spelling
-            # yfinance's screener accepts ("REIT—Retail", em-dash). Matching one
-            # against the other needs a mapping, not a character replace.
+            # yfinance's screener accepts ("REIT—Retail", em-dash):
+            # EquityQuery('eq', ['industry', 'REIT - Retail']) raises ValueError
+            # with the network unplugged, because the accepted spellings are a
+            # literal dict in the pinned yfinance — EQUITY_SCREENER_EQ_MAP
+            # ['industry'] in yfinance/const.py.
             #
-            # Checkable offline, and worth doing before relying on it: the
-            # accepted spellings are a literal dict in the pinned yfinance —
-            # EQUITY_SCREENER_EQ_MAP['industry'] in yfinance/const.py — so
-            # EquityQuery('eq', ['industry', 'REIT - Retail']) raises
-            # ValueError with the network unplugged. `sector` needs no such
-            # mapping: its 11 values are the same display strings on both sides.
+            # `comps._SCREENER_INDUSTRY` translates between them, derived from
+            # that dict. This note used to say the translation "needs a mapping,
+            # not a character replace", which overstated the evidence: measured
+            # 2026-08-19, a plain replace round-trips all 145 industries. The
+            # derived lookup is used for a different reason — an industry the
+            # pinned build does not know misses it and yields no peers, where a
+            # replace would emit a spelling the screener rejects and look
+            # identical to an empty screen.
+            #
+            # `sector` needs no such treatment: its 11 values are the same
+            # display strings on both sides.
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             # beta rides along free on the same info call; financial_models uses

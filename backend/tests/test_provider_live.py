@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 import yfinance as yf
 
+from backend import comps
 from backend import financial_models as fm
 from backend import statements
 from backend.data_provider import fx_rate, provider
@@ -206,3 +207,33 @@ def test_hk_analyst_targets_arrive_in_the_trading_currency():
     price_ratio = hk["currentPrice"] / adr["currentPrice"]
     target_ratio = hk["targetMeanPrice"] / adr["targetMeanPrice"]
     assert target_ratio / price_ratio == pytest.approx(1.0, rel=0.08)
+
+
+# `conftest.no_live_screener` stubs `comps._screener_peers` for every test in
+# the suite, including this one — so hold the real function, bound at import.
+_real_screener_peers = comps._screener_peers
+
+
+def test_the_keyless_peer_screener_still_answers_the_query_the_tier_builds():
+    """The third peer tier, end to end and with no credential of any kind.
+
+    Two pieces of undocumented Yahoo taxonomy hold it up — the em-dash industry
+    spelling and the `PNK` exchange code marking OTC cross-listings — and
+    neither has an API contract. This is what says so before the UI does.
+
+    `SPG` rather than an exact list: Simon Property is the largest US retail
+    REIT by roughly 5x, so its rank is stable, while the names below it are not.
+    """
+    peers = _real_screener_peers("O")
+    assert len(peers) == comps.MAX_AUTO_PEERS
+    assert "O" not in peers
+    assert "SPG" in peers
+    assert "SPG-PJ" not in peers  # a Simon preferred, quoteType=EQUITY, null cap
+
+    # The OTC filter, named against the rows it was written for. Asserting only
+    # "no `-` in the symbol" left this test unable to fail when the filter was
+    # deleted: `URMCY` and `UNBLF` are one Unibail — the duplicate-vote case the
+    # filter exists for — and `STGPF` is Scentre Group, the foreign name. All
+    # three rank inside the top handful of this screen, so their absence is a
+    # live check rather than a coincidence.
+    assert not {"URMCY", "UNBLF", "STGPF"} & set(peers)

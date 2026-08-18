@@ -280,6 +280,38 @@ inherit; and the
 region has to be derived from the ticker suffix, inheriting `home_index()`'s known limit that a
 US-listed Chinese ADR still reads `us`.
 
+### Built 2026-08-19 — and three things this section got wrong
+
+`comps._screener_peers` ships the tier described above, ordered **below** FMP so it can only
+fill a gap rather than change an existing answer. Measured across 18 non-curated names in both
+regions †: peers for **18 of 18**, a full four for 16. The two short sets are thin industries
+rather than failures — `0388.HK` (HKEX) has one HK peer, `0823.HK` (Link REIT) two.
+
+Three corrections to what is written above, all forced by implementing it:
+
+1. **"needs a mapping rather than a character replace"** overstated the evidence. The mapping is
+   the right implementation, but measured 2026-08-19 a plain replace round-trips **all 145**
+   industries and no screener label carries a spaced hyphen of its own. The derived lookup earns
+   its place for a different reason: an unknown industry misses it and yields no peers, where a
+   replace emits a rejected spelling indistinguishable from an empty screen.
+2. **`SPG-PJ` is `marketCap: None`, not `marketCap 0`.** A truthiness test covers both; the
+   equality test this section implied would have passed it straight through.
+3. **The obstacle list was one short, and the missing one was the expensive one.** OTC arrives
+   under **four** exchange codes. A filter written against `PNK` alone passed `WMMVF` (OTCID)
+   and `WMMVY` (OTCQX) — one company, Walmart de México — as two of Costco's four peers.
+   Measured over 36 screens — 18 industries x 2 regions, 1,162 rows †: PNK 412, OQX 23, OID 9,
+   OQB 3. All four share the `fullExchangeName` prefix `"OTC Markets "` and nothing else, and
+   that field was present on every one of the 1,162 rows, so the filter matches the name.
+
+That third one also **collapsed obstacles 3 and 4 into one rule**: dropping OTC listings removes
+every cross-listed duplicate *and* the genuinely foreign `STGPF`, because "a peer should trade
+where the target trades" answers both.
+
+**The ordering is left open on purpose.** The screener beat FMP on every name where the two
+disagreed and a human can judge — RIVN, SBUX, ABNB, CAT, LMT † — and they agreed exactly on one
+of 18 (`O`). That is suggestive, not a measurement, and reversing the order would change the
+answer for key-holders. It stays below FMP until a scored peer-quality metric exists.
+
 ---
 
 ## 6. Two fixes that need no new source at all

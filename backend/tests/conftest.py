@@ -94,6 +94,25 @@ def pinned_fx_rate(monkeypatch):
     monkeypatch.setattr(financial_models, "fx_rate", fake_fx_rate)
 
 
+@pytest.fixture(autouse=True)
+def no_live_screener(monkeypatch):
+    """Keep the third peer tier off the network in the default suite.
+
+    `suggest_peers` falls through curated -> FMP -> screener, so a test that
+    reaches it with an uncurated ticker and an `_fmp_peers` stub returning `[]`
+    would call live yfinance twice — once for the target's own snapshot, once
+    for the screen — inside a suite that is meant to be offline. Nothing does
+    that today; the point is that nothing can start doing it by accident.
+
+    Stubbing the whole function rather than `yf.screen` is deliberate: the
+    snapshot fetch happens first, so patching only the screen call would still
+    leak. `test_comps.py` holds a reference to the real function, captured at
+    import, for the tests that exercise it.
+    """
+    from backend import comps
+    monkeypatch.setattr(comps, "_screener_peers", lambda t: [])
+
+
 @pytest.fixture
 def fundamentals():
     return load_fundamentals

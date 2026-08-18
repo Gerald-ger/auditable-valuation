@@ -39,7 +39,7 @@ Each ticker is here because it exercises a distinct branch of `sector_weights.cl
 technology, bank, REIT, energy, pre-profit and the Hong Kong / non-USD reporting path.
 Regenerating with different names would silently stop testing those branches.
 
-Committing them is what lets the 447-test backend suite run **entirely offline**, in CI on a
+Committing them is what lets the 467-test backend suite run **entirely offline**, in CI on a
 clean runner, with no network access and no API key. `pytest.ini` deselects the 16
 `network`-marked tests by default for the same reason.
 
