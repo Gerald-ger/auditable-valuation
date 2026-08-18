@@ -7,6 +7,129 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-18 (b) — the corrections needed more correcting than the text did
+
+Backend **450 → 452**, frontend 100 unchanged. No model output moved — the golden-score
+snapshots cover every fixture and would have failed.
+
+Two pieces of work: a pass over the data-source record, and one small provider change. The
+record pass went through **five review rounds and produced 69 corrections**, and the shape of
+that number is the finding. Round 1 found 6, round 2 found 7 more, round 3 found 5, round 4
+found 22, round 5 found 29. **Four of round 3's defects were introduced by round 2's fixes**,
+and several of round 5's by round 4's. Writing a correction is not safer than writing the
+original claim, and this entry exists partly so that is on the record rather than merely
+learned.
+
+### Added
+
+- **`sector` and `industry` on `get_peer_snapshot`.** Both ride free on the `info` call the
+  method already makes — the same justification already written into that function for
+  `currency`, `beta` and `total_debt`. **Nothing reads them yet**: the peer-discovery tier that
+  will is not written, and the test says so rather than implying a consumer exists.
+
+  The API payload does grow, because `comps_analysis` appends whole snapshots. Verified
+  harmless: the comps table in `ScorecardTab.jsx` has hard-coded columns, and the three
+  `Object.entries` call sites in the frontend are on `card.pillars` and `data.metrics`, never
+  on a peer row.
+
+- **A snapshot contract test, in the file that exists for this failure mode.**
+  `test_fixtures.py`'s own docstring records `regularMarketTime` being added to `info` and
+  *"nothing failed… the drift was found by auditing the file, not by running it."* A dropped
+  `industry` would degrade a screen to "no peers found" — indistinguishable from a genuinely
+  empty screen.
+
+  **A key-set assertion alone is not enough, and this is the interesting part.** Every field is
+  `info.get(...)`, so `set(snap) == PEER_SNAPSHOT_KEYS` passes even against `info = {}` — all 17
+  keys present, holding `None`. The stub is therefore complete and the test also asserts no
+  value came back `None`, which is what actually catches a mistyped Yahoo key.
+
+  Proven by mutation: `trailingPE → trailingPe` inside `get_peer_snapshot` fails it. **The first
+  attempt at that mutation passed**, because `pe_trailing` appears in `get_quote` too and the
+  replacement hit that copy instead — a mutation nobody checked the landing site of is not
+  evidence, only a green run wearing its clothes.
+
+  `name`'s fallback to `shortName` gets its own test: it is the branch the fixtures never
+  exercise, so it is the one that can rot unnoticed.
+
+- **A provenance convention — `†` marks a figure that needed a network call or a credential**
+  and cannot be reproduced from a checkout. Defined in `TODOLIST.md` and
+  `docs/data-sources-review.md`.
+
+  It is a **reproducibility** marker, not a confidence one. A live measurement is often the
+  better evidence; what `†` warns is that such a figure goes stale with nothing here failing.
+  FMP's UPS peers already did, between 2026-08-14 and 2026-08-18, while the conclusion drawn
+  from them held.
+
+### Changed
+
+- **README test counts** 450 → 452 and 466 → 468 collected.
+
+- **`docs/data-sources-review.md` §5 and §7 substantially rewritten**, and a
+  `Peer classification is free` subsection added recording that yfinance's screener filters on
+  `sector`/`industry` with no key. `docs/financial-models-reference.md:922` had listed that
+  endpoint with yfinance in the free-provider column all along — it was never measured and
+  never carried into a peer-discovery decision, and `README.md:464` warns that column predates
+  the 2026-08-02 measurements.
+
+- **`ARCHITECTURE-REVIEW-VERIFIED.md` retired.** Five items existed nowhere else and were
+  migrated into `TODOLIST.md`: CSS Modules, the `useResource` hook, `Protocol`/`TypedDict`,
+  parameterising `risk_free_rate`/`fx_rate`, and the leave-alone guidance on the backend DAG and
+  comment density. `#7` and `#8` needed no migration — already published here. **Three of its
+  figures were wrong when written rather than drifted**, verified by re-running the analysis at
+  the commit it was written against.
+
+### Fixed
+
+- **"FMP's free plan is US-only" is false**, and contradicted this repo's own README.
+  `equity.compare.peers` is a free-tier endpoint and covers HK. The real reason is stronger —
+  FMP free returns `402` on all fundamentals endpoints — and is now stated as the **inference**
+  it is, since no FMP fundamentals call against a `.HK` symbol is recorded anywhere here.
+
+- **The HKMA entry named an endpoint that cannot supply a ten-year.** Exchange Fund Bills &
+  Notes stops at 2 years; issuance above that ceased in 2015, with longer tenors in the
+  Government Bond Programme series. It also paired HKD against a CNY problem, and said "twelve
+  days apart" of an interval that is four.
+
+- **`data-sources-review.md` pointed at §6 for the risk-free gating.** §6 is the beta section;
+  it has always been §7. And §7 still carried `624.90 → 1,225.93 "roughly doubling"`, the
+  spot-versus-forward worry **inverted and discharged on 2026-08-17**, and a gate that the very
+  document discharging it had satisfied.
+
+- **`financial_models.py` asserted both retracted claims** inside the comment block `TODOLIST`
+  tells refactorers to preserve as the audit trail. The measured rows now appear together,
+  because **`+50.5%` is the −260bp row** and pairing it with −320bp — as a first correction did —
+  mismatches them. The −320bp row is `1,043.30`, `+53.2%`; the 1.8% between them is what netting
+  the CNY default spread is worth.
+
+- **A false positive in the provenance convention, on the day it was added.** The screener's
+  em-dash labels were marked as unverifiable-from-here. They are a literal dict in the pinned
+  `yfinance/const.py`, and `EquityQuery('eq', ['industry', 'REIT - Retail'])` raises with the
+  network unplugged — one of the most reproducible claims in the changeset, asserted as the
+  least.
+
+- **`0005.HK` and `0941.HK` are not HKD-reporting** — HSBC reports USD, China Mobile CNY. Both
+  were offered as the case HKMA could settle. Checking properly found something larger: **none
+  of the six HK names in `PEER_SUGGESTIONS` reports in HKD**, though across 48 resolved HK large
+  caps the split is 30 CNY / 14 HKD / 4 USD, so the segment is real and the curated six are
+  simply unrepresentative of it.
+
+- **A migrated entry violated the reopening-condition criterion added in the same commit** —
+  "the FX pin producing a wrong test" is reconsidering an item on its own merits, which the new
+  rule explicitly excludes.
+
+### Not done, deliberately
+
+- **The CNY risk-free rate**, still the largest known valuation defect. Converting CNY cash
+  flows to HKD does not help: it needs CNY/HKD **forward rates**, one per projection year, while
+  discounting in the cash-flow currency and translating the result at spot is algebraically
+  identical and needs no forward curve. It needs a China 10Y, which HKMA does not publish.
+
+- **Wiring HKMA.** Blocked on reachability — `502` on 2026-08-14, `http_code=000` after 25 s on
+  2026-08-18 while the host itself answered `404` in 1.2 s. Two observations from one machine,
+  neither distinguishing a broken endpoint from a filtered route.
+
+---
+
 ## 2026-08-18 — guards where there were none, and four claims that did not survive checking
 
 Backend **423 → 450**, frontend **54 → 100**. No model output moved: the full dump for all
