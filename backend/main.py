@@ -30,6 +30,7 @@ from backend import forensics
 from backend import scoring
 from backend import search
 from backend import sector_weights
+from backend import statements
 from backend import store
 from backend.data_provider import home_index, provider, with_fresh_price
 
@@ -356,7 +357,7 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
     # does not fit, so the classification has to be resolved here — the same
     # statement-verified FCF the scorer uses, for the same reason (see
     # sector_weights.classify's docstring on info["freeCashflow"]).
-    statement_fcf = financial_models._statement_fcf(f["cash_flow"])
+    statement_fcf = statements.statement_fcf(f["cash_flow"])
     classification = sector_weights.classify(
         f["info"], statement_fcf[1] if statement_fcf else None)
     result["classification"] = classification

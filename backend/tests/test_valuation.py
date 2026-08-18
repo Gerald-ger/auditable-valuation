@@ -15,6 +15,7 @@ import pytest
 from conftest import TEST_CNY_HKD, load_bars, load_fundamentals
 
 from backend import financial_models as fm
+from backend import statements
 
 
 # ── beta resolution (item 1) ─────────────────────────────────────────
@@ -186,7 +187,7 @@ def test_credit_spread_defaults_when_coverage_is_unavailable():
 def test_interest_coverage_never_crosses_two_periods():
     income = {"2025-12-31": {"EBIT": 500.0},                        # no interest row
               "2023-12-31": {"EBIT": 300.0, "Interest Expense": 10.0}}
-    coverage, period = fm.interest_coverage(income)
+    coverage, period = statements.interest_coverage(income)
     assert period == "2023-12-31"
     assert coverage == pytest.approx(30.0)        # 300/10, not 500/10
 
@@ -194,11 +195,11 @@ def test_interest_coverage_never_crosses_two_periods():
 def test_interest_coverage_prefers_the_newest_complete_period():
     income = {"2025-12-31": {"EBIT": 500.0, "Interest Expense": 10.0},
               "2023-12-31": {"EBIT": 300.0, "Interest Expense": 10.0}}
-    assert fm.interest_coverage(income) == (pytest.approx(50.0), "2025-12-31")
+    assert statements.interest_coverage(income) == (pytest.approx(50.0), "2025-12-31")
 
 
 def test_interest_coverage_is_none_when_no_period_reports_both():
-    assert fm.interest_coverage({"2025-12-31": {"EBIT": 500.0}}) == (None, None)
+    assert statements.interest_coverage({"2025-12-31": {"EBIT": 500.0}}) == (None, None)
 
 
 def test_aapl_interest_coverage_reads_one_year(monkeypatch):
@@ -207,14 +208,14 @@ def test_aapl_interest_coverage_reads_one_year(monkeypatch):
     ratio, and fresh-over-stale is not."""
     monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
-    coverage, period = fm.interest_coverage(f["income_statement"])
+    coverage, period = statements.interest_coverage(f["income_statement"])
     assert period == "2023-09-30"
-    ebit = fm._value_at(f["income_statement"], period, "EBIT", "Operating Income")
-    interest = fm._value_at(f["income_statement"], period, "Interest Expense")
+    ebit = statements.value_at(f["income_statement"], period, "EBIT", "Operating Income")
+    interest = statements.value_at(f["income_statement"], period, "Interest Expense")
     assert coverage == pytest.approx(ebit / abs(interest))
     # the ratio the two-call version produced, for the record
     assert coverage != pytest.approx(
-        fm._latest(f["income_statement"], "EBIT", "Operating Income") / abs(interest))
+        statements.latest(f["income_statement"], "EBIT", "Operating Income") / abs(interest))
 
 
 def test_ratio_analysis_reports_the_period_its_coverage_came_from():
@@ -724,7 +725,7 @@ def test_a_normalised_base_never_replaces_the_reported_one(monkeypatch):
     monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("MSFT")
     d = fm.dcf_valuation(f)
-    reported = fm._statement_fcf(f["cash_flow"])[1]
+    reported = statements.statement_fcf(f["cash_flow"])[1]
     q = d["diagnostics"]["base_fcf_quality"]
 
     assert q["normalised_fcf"] != reported          # an alternative exists
@@ -833,7 +834,7 @@ def test_explicit_tax_rate_still_overrides(monkeypatch):
 # ── period pinning (item 5) ──────────────────────────────────────────
 
 def test_statement_fcf_returns_the_period_it_used():
-    period, fcf = fm._statement_fcf(load_fundamentals("MSFT")["cash_flow"])
+    period, fcf = statements.statement_fcf(load_fundamentals("MSFT")["cash_flow"])
     assert period == "2026-06-30"
     assert fcf == pytest.approx(66_987_000_000.0)
 
@@ -843,13 +844,13 @@ def test_statement_fcf_requires_both_legs_in_one_period():
         "2025-12-31": {"Operating Cash Flow": 100.0},               # no CapEx
         "2024-12-31": {"Operating Cash Flow": 90.0, "Capital Expenditure": -30.0},
     }
-    assert fm._statement_fcf(cash_flow) == ("2024-12-31", 60.0)
+    assert statements.statement_fcf(cash_flow) == ("2024-12-31", 60.0)
 
 
 def test_value_at_does_not_reach_into_another_period():
     statement = {"2025-12-31": {"Net Income": 100.0}, "2024-12-31": {"Net Income": 90.0}}
-    assert fm._value_at(statement, "2025-12-31", "Net Income") == 100.0
-    assert fm._value_at(statement, "2023-12-31", "Net Income") is None
+    assert statements.value_at(statement, "2025-12-31", "Net Income") == 100.0
+    assert statements.value_at(statement, "2023-12-31", "Net Income") is None
 
 
 def test_dcf_reports_the_fcf_period(monkeypatch):
@@ -879,16 +880,16 @@ def test_interest_in_financing_gets_no_addback():
     """IFRS may classify interest paid as financing, leaving CFO already
     unlevered. 0700.HK does; adding interest back would overstate FCFF."""
     f = load_fundamentals("0700_HK")
-    period, _ = fm._statement_fcf(f["cash_flow"])
-    addback, basis = fm._fcff_interest_addback(f["cash_flow"], period, 0.165)
+    period, _ = statements.statement_fcf(f["cash_flow"])
+    addback, basis = statements.fcff_interest_addback(f["cash_flow"], period, 0.165)
     assert (addback, basis) == (0.0, "not_required_interest_in_financing")
 
 
 def test_us_gaap_cash_interest_is_added_back_after_tax():
     """XOM discloses 1,752M paid in the same period its FCF comes from."""
     f = load_fundamentals("XOM")
-    period, _ = fm._statement_fcf(f["cash_flow"])
-    addback, basis = fm._fcff_interest_addback(f["cash_flow"], period, 0.21)
+    period, _ = statements.statement_fcf(f["cash_flow"])
+    addback, basis = statements.fcff_interest_addback(f["cash_flow"], period, 0.21)
     assert basis == "cash_interest_paid"
     assert addback == pytest.approx(1_752_000_000.0 * 0.79)
 
@@ -897,19 +898,19 @@ def test_unverifiable_classification_is_left_alone():
     """MSFT reports no interest row in any captured period. Guessing which side
     of the cash-flow statement it sits on would be worse than not adjusting."""
     f = load_fundamentals("MSFT")
-    period, _ = fm._statement_fcf(f["cash_flow"])
-    addback, basis = fm._fcff_interest_addback(f["cash_flow"], period, 0.21)
+    period, _ = statements.statement_fcf(f["cash_flow"])
+    addback, basis = statements.fcff_interest_addback(f["cash_flow"], period, 0.21)
     assert (addback, basis) == (0.0, "unverified_interest_classification")
 
 
 def test_no_statement_period_means_no_addback():
     """The info["freeCashflow"] fallback has no period to pin interest to."""
-    assert fm._fcff_interest_addback({}, None, 0.21) == (0.0, "no_statement_fcf")
+    assert statements.fcff_interest_addback({}, None, 0.21) == (0.0, "no_statement_fcf")
 
 
 def test_addback_uses_magnitude_not_sign():
     cash_flow = {"2025-12-31": {"Interest Paid Supplemental Data": -400.0}}
-    addback, _ = fm._fcff_interest_addback(cash_flow, "2025-12-31", 0.25)
+    addback, _ = statements.fcff_interest_addback(cash_flow, "2025-12-31", 0.25)
     assert addback == pytest.approx(300.0)
 
 
@@ -917,7 +918,7 @@ def test_financing_classification_wins_over_a_cash_interest_row():
     """If both appear, operating cash flow is still unlevered — do not add back."""
     cash_flow = {"2025-12-31": {"Interest Paid Cff": -400.0,
                                 "Interest Paid Supplemental Data": 400.0}}
-    assert fm._fcff_interest_addback(cash_flow, "2025-12-31", 0.21)[1] == \
+    assert statements.fcff_interest_addback(cash_flow, "2025-12-31", 0.21)[1] == \
         "not_required_interest_in_financing"
 
 
@@ -925,7 +926,7 @@ def test_statement_fcf_stays_levered_for_the_scoring_metrics():
     """fcf_yield divides by market cap and fcf_conversion by net income, both of
     which are after interest. Unlevering here would corrupt both."""
     f = load_fundamentals("XOM")
-    period, fcf = fm._statement_fcf(f["cash_flow"])
+    period, fcf = statements.statement_fcf(f["cash_flow"])
     rows = f["cash_flow"][period]
     assert fcf == pytest.approx(rows["Operating Cash Flow"] + rows["Capital Expenditure"])
 
@@ -1019,7 +1020,7 @@ def test_the_margin_decomposition_is_exact(stem):
     attribution would be a guess wearing arithmetic's clothes.
     """
     f = load_fundamentals(stem)
-    ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
+    ctx = fm.base_year_context(f, statements.statement_fcf(f["cash_flow"])[0])
     assert ctx["history"], f"{stem} produced no history"
     for h in ctx["history"]:
         assert h["fcf_margin"] == pytest.approx(
@@ -1071,7 +1072,7 @@ def test_the_driver_separates_spending_more_from_earning_less():
     AAPL's capex barely moved. The label must tell those apart."""
     def driver(stem):
         f = load_fundamentals(stem)
-        return fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])["driver"]
+        return fm.base_year_context(f, statements.statement_fcf(f["cash_flow"])[0])["driver"]
 
     assert driver("MSFT") == "capital_spending"
     assert driver("XOM") == "capital_spending"
@@ -1082,7 +1083,7 @@ def test_a_representative_year_names_no_driver():
     """There is nothing to explain when the base year is already normal, and
     naming a driver anyway would invent a story out of rounding."""
     f = load_fundamentals("AAPL")
-    period = fm._statement_fcf(f["cash_flow"])[0]
+    period = statements.statement_fcf(f["cash_flow"])[0]
     inc = f["income_statement"]
     # force the newest year onto the mean by rebuilding it from the others
     ctx = fm.base_year_context(f, period)
@@ -1109,7 +1110,7 @@ def test_the_reported_year_stays_the_headline():
     """The band is shown beside the answer, never substituted for it."""
     f = load_fundamentals("MSFT")
     d = fm.dcf_valuation(f)
-    statement_fcf = fm._statement_fcf(f["cash_flow"])[1]
+    statement_fcf = statements.statement_fcf(f["cash_flow"])[1]
     assert d["assumptions"]["base_fcf"] == statement_fcf + d["assumptions"]["fcf_interest_addback"]
     assert d["diagnostics"]["base_year"]["fair_value_normalised"] != d["fair_value_per_share"]
 
@@ -1124,7 +1125,7 @@ def test_the_decomposition_reconciles_against_the_average_on_screen():
     """
     for stem in ("MSFT", "XOM", "AAPL", "0700_HK"):
         f = load_fundamentals(stem)
-        ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
+        ctx = fm.base_year_context(f, statements.statement_fcf(f["cash_flow"])[0])
         gap = ctx["latest_fcf_margin"] - ctx["mean_fcf_margin"]
         # The identity is exact on the underlying figures. Four of them are
         # rounded to 4dp for display, so the reconciliation of the *published*
@@ -1196,7 +1197,7 @@ def test_the_note_never_contradicts_the_driver_on_real_data():
                       "spending_less_offset_weaker_earnings"}
     for stem in ("MSFT", "XOM", "AAPL", "0700_HK"):
         f = load_fundamentals(stem)
-        ctx = fm.base_year_context(f, fm._statement_fcf(f["cash_flow"])[0])
+        ctx = fm.base_year_context(f, statements.statement_fcf(f["cash_flow"])[0])
         if ctx["driver"] == "operating_cash":
             assert ctx["driver_note"] not in spending_notes, stem
 

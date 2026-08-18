@@ -20,6 +20,7 @@ import pytest
 from conftest import FIXTURES, load_fundamentals, load_market_bars
 
 from backend import financial_models as fm
+from backend import statements
 from backend import scoring
 from backend import sector_weights
 
@@ -83,7 +84,7 @@ def test_fcf_metrics_use_the_cash_flow_statement(stem):
     """
     f = load_fundamentals(stem)
     raw, flags = scoring.extract_metrics(f)
-    statement = fm._statement_fcf(f["cash_flow"])
+    statement = statements.statement_fcf(f["cash_flow"])
     assert statement is not None, "fixture must exercise the statement path"
 
     mcap = f["info"]["marketCap"]
@@ -100,8 +101,8 @@ def test_fcf_conversion_legs_share_one_period():
     """FCF over net income is only a conversion rate if both legs are annual."""
     f = load_fundamentals("MSFT")
     raw, _ = scoring.extract_metrics(f)
-    period, fcf = fm._statement_fcf(f["cash_flow"])
-    net_income = fm._value_at(f["income_statement"], period,
+    period, fcf = statements.statement_fcf(f["cash_flow"])
+    net_income = statements.value_at(f["income_statement"], period,
                               "Net Income", "Net Income Common Stockholders")
     assert net_income is not None
     assert raw["fcf_conversion"] == pytest.approx(fcf / net_income, rel=1e-9)
@@ -416,7 +417,7 @@ def test_no_runway_without_a_cash_balance():
 def test_rivn_runway_is_the_measured_free_cash_flow_burn():
     f = load_fundamentals("RIVN")
     m, _ = scoring.extract_metrics(f)
-    period, fcf = fm._statement_fcf(f["cash_flow"])
+    period, fcf = statements.statement_fcf(f["cash_flow"])
     assert m["cash_runway_q"] == pytest.approx(
         f["info"]["totalCash"] / (abs(fcf) / 4), rel=1e-9)
     assert 8 < m["cash_runway_q"] < 9        # 8.5 quarters; was 27.3 on OCF alone

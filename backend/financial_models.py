@@ -20,6 +20,7 @@ from statistics import median
 
 from backend import market_series
 from backend import sector_weights
+from backend import statements
 from backend.data_provider import fx_rate, risk_free_rate
 
 # Assumption defaults (user-overridable via the API)
@@ -133,229 +134,6 @@ CREDIT_SPREAD_LADDER = [
 DEFAULT_CREDIT_SPREAD = 0.015  # when coverage cannot be computed
 
 
-def _latest(statement: dict, *row_names):
-    """Most recent non-null value for any of the given row names."""
-    for period in sorted(statement.keys(), reverse=True):
-        rows = statement[period]
-        for name in row_names:
-            v = rows.get(name)
-            if v is not None:
-                return v
-    return None
-
-
-def _value_at(statement: dict, period: str, *row_names):
-    """Value for the given period only — used where two figures must share a period."""
-    rows = statement.get(period)
-    if not rows:
-        return None
-    for name in row_names:
-        if rows.get(name) is not None:
-            return rows[name]
-    return None
-
-
-def equity_bridge(bal: dict, period: str | None) -> dict:
-    """The EV→equity terms beyond net debt, read from one balance-sheet date.
-
-    `financial-models-reference.md` §1.1 states the bridge as five terms:
-
-        Equity = EV - Net Debt - Minority Interest - Preferred + Non-operating Assets
-
-    The model implemented one. The other three are on the balance sheet the app
-    already fetches, and on 0700.HK they are worth 28% of enterprise value —
-    enough to reverse its verdict — while on the other six fixtures they are
-    worth 1-4pp. Absent, they are not merely imprecise: a reader sees a fair
-    value that silently excludes a quarter of the company.
-
-    Three of the terms are read; the fourth is only reported.
-
-      minority_interest, preferred   subtracted. Book value is the conventional
-                                     basis for both, and the reference doc asks
-                                     for them by name.
-      marked_securities             added. `Investmentin Financial Assets` is
-                                     exactly `Available For Sale Securities` +
-                                     `Financial Assets at FVTPL` (verified on
-                                     both of 0700.HK's reported periods), and
-                                     both of those are *already carried at fair
-                                     value*. Using them reads a filed mark; it
-                                     does not make one.
-      associates_at_cost            returned, never added. Held at cost, and
-                                     cost is not value — that is a judgement the
-                                     platform does not make. Same treatment as
-                                     the normalised base year: shown beside the
-                                     headline, excluded from it.
-
-    `Long Term Equity Investment` is the parent of `Investmentsin Associatesat
-    Cost` and `Investmentsin Joint Venturesat Cost` — on 0700.HK the three
-    satisfy 342,409 + 6,303 = 348,712 exactly, in both reported periods. Reading
-    the parent is what avoids the double count that kept this unimplemented;
-    never sum the children. Issuers that report no children still report the
-    parent, so nothing is lost by ignoring them.
-
-    **Period-pinned, and deliberately without a fallback.** `_value_at` reads one
-    date; `_latest` would walk backwards until it found a number. MSFT is the
-    live case: its `Long Term Equity Investment` row exists at 2025-06-30 and is
-    absent at 2026-06-30, so a fallback would import a year-old balance into
-    today's valuation. This codebase has been bitten by exactly that twice — see
-    `paired_latest` below, where interest coverage was FY2025 EBIT over FY2023
-    interest. A row that is not reported is unknown, and unknown stays out.
-
-    An absent row is read as zero here, unlike the net-debt legs, and the
-    difference is deliberate. Every issuer has debt and cash, so a missing
-    `totalDebt` is a vendor failure worth naming. Most issuers genuinely have no
-    preferred stock and no associates, so a missing row is the balance sheet
-    saying "nil" — flagging it would put a warning on all seven fixtures and
-    teach the reader to ignore warnings.
-
-    What *is* worth naming is a row that **used to be reported and no longer
-    is**, which is a real signal and a real defect this vendor produces: MSFT
-    carried `Long Term Equity Investment` at 2025-06-30 and carries nothing at
-    2026-06-30. That may be a disposal or a dropped row, and the filing does not
-    say which — so it is reported as `disappeared` rather than guessed at.
-    """
-    out = {"minority_interest": 0.0, "preferred": 0.0, "marked_securities": 0.0,
-           "associates_at_cost": 0.0, "period": period, "disappeared": []}
-    if not period:
-        return out
-
-    earlier = [p for p in bal if p < period]
-    for key, names in (
-        ("minority_interest", ("Minority Interest",)),
-        ("preferred", ("Preferred Stock", "Preferred Securities Outside Stock Equity")),
-        ("marked_securities", ("Investmentin Financial Assets",)),
-        ("associates_at_cost", ("Long Term Equity Investment",)),
-    ):
-        value = _value_at(bal, period, *names)
-        if value is None:
-            if any(_value_at(bal, p, *names) is not None for p in earlier):
-                out["disappeared"].append(key)
-        else:
-            out[key] = float(value)
-    return out
-
-
-def paired_latest(statement: dict, names_a: tuple, names_b: tuple):
-    """(period, a, b) from the newest period reporting **both**, else None.
-
-    Two independent `_latest` calls will happily pair this year's numerator with
-    a years-old denominator, because each walks back until it finds anything.
-    Measured on the AAPL fixture 2026-08-10: `_latest` for EBIT resolves
-    2025-09-30 while `_latest` for Interest Expense resolves 2023-09-30 — yfinance
-    stopped reporting the row — so the interest coverage on screen was FY2025
-    operating income over FY2023 interest, a ratio of two different businesses.
-
-    This is the same discipline `_statement_fcf` enforces by returning its period
-    and `fcf_conversion` inherits from it: a ratio is only a ratio when both legs
-    describe one period. A stale-but-consistent answer beats a fresh-looking
-    mixed one, and the period is returned so callers can say which year it is.
-    """
-    for period in sorted(statement.keys(), reverse=True):
-        a = _value_at(statement, period, *names_a)
-        b = _value_at(statement, period, *names_b)
-        if a is not None and b is not None:
-            return period, a, b
-    return None
-
-
-EBIT_ROWS = ("EBIT", "Operating Income")
-INTEREST_ROWS = ("Interest Expense",)
-
-
-def interest_coverage(income_statement: dict):
-    """(coverage, period) — EBIT over interest expense, both from one period."""
-    pair = paired_latest(income_statement, EBIT_ROWS, INTEREST_ROWS)
-    if pair is None:
-        return None, None
-    period, ebit, interest = pair
-    if not interest:
-        return None, period
-    return ebit / abs(interest), period
-
-
-def _series(statement: dict, *row_names) -> list[tuple[str, float]]:
-    """(period, value) oldest-first for the first row name that has data."""
-    out = []
-    for period in sorted(statement.keys()):
-        rows = statement[period]
-        for name in row_names:
-            if rows.get(name) is not None:
-                out.append((period, rows[name]))
-                break
-    return out
-
-
-def _statement_fcf(cash_flow: dict) -> tuple[str, float] | None:
-    """(period, **levered** FCF) from the newest period reporting both legs.
-
-    CapEx is negative, so this is `CFO - CapEx`. Under US GAAP interest paid sits
-    inside operating cash flow, which makes this a levered measure — closer to
-    free cash flow to equity before net borrowing than to FCFF. That is the right
-    quantity for `scoring.fcf_yield` (divided by market cap) and
-    `scoring.fcf_conversion` (divided by net income), both of which are after
-    interest. It is **not** the right quantity to discount at WACC:
-    `dcf_valuation` adds interest back through `_fcff_interest_addback` instead.
-    Do not "fix" this function — three of its four callers want it levered.
-
-    Returns the period as well as the value so callers that divide FCF by another
-    statement figure can demand the same period. Mixing this year's operating
-    cash flow with last year's CapEx — or this year's FCF with last year's net
-    income — would silently distort the result.
-    """
-    for period in sorted(cash_flow.keys(), reverse=True):
-        rows = cash_flow[period]
-        ocf = rows.get("Operating Cash Flow")
-        if ocf is None:
-            ocf = rows.get("Cash Flow From Continuing Operating Activities")
-        capex = rows.get("Capital Expenditure")
-        if ocf is not None and capex is not None:
-            return period, ocf + capex
-    return None
-
-
-def _fcff_interest_addback(cash_flow: dict, period: str | None,
-                           tax_rate: float) -> tuple[float, str]:
-    """(after-tax interest to add back, basis) turning levered FCF into FCFF.
-
-    `_statement_fcf` is levered where interest paid runs through operating
-    activities, so discounting it at WACC *and* subtracting net debt would charge
-    the debt twice. The add-back is `Interest x (1 - Tc)`.
-
-    Whether it applies at all is **read from the statement, not assumed**. US
-    GAAP requires interest paid to be disclosed as supplemental data alongside an
-    operating-activities classification; IFRS permits classifying it in
-    financing, in which case operating cash flow is *already* unlevered and
-    adding interest back would overstate FCFF rather than correct it. Measured
-    2026-08-09 across the fixtures: 0700.HK reports `Interest Paid Cff` in all
-    four captured periods (and `Interest Received Cfi`, so its interest income is
-    outside operating too), while every US filer reports `Interest Paid
-    Supplemental Data`. Keying on the row that is actually present means a new
-    IFRS listing is handled correctly without anyone having to know its GAAP.
-
-    The cash figure is used rather than the income statement's accrual, because
-    the quantity being adjusted is cash. The two diverge when interest is
-    capitalised — XOM's accrual is 603M against 1,752M paid, a factor of 2.9.
-
-    Interest *income* is deliberately not netted off: on a cash basis US filers
-    disclose no matching "interest received" row, so netting would mean adding a
-    cash figure and subtracting an accrual one. The consequence is that cash is
-    valued twice for a net-cash issuer — once through the `EV - net_debt` bridge
-    and once through the perpetual interest it earns inside operating cash flow.
-    Measured, that is worth about +3% of FCF on MSFT and AAPL.
-
-    Returns 0.0 with a stated reason whenever the adjustment cannot be justified,
-    so an unverifiable case is left alone rather than guessed at.
-    """
-    if period is None:
-        return 0.0, "no_statement_fcf"
-    rows = cash_flow.get(period) or {}
-    if rows.get("Interest Paid Cff") is not None:
-        return 0.0, "not_required_interest_in_financing"
-    cash_interest = rows.get("Interest Paid Supplemental Data")
-    if cash_interest is not None:
-        # Disclosed as an outflow; sign convention varies, magnitude does not.
-        return abs(cash_interest) * (1 - tax_rate), "cash_interest_paid"
-    return 0.0, "unverified_interest_classification"
 
 
 def tax_rate_for(info: dict) -> float:
@@ -619,10 +397,10 @@ def _credit_spread(f: dict) -> tuple[float, float | None, str | None]:
     """(spread, interest_coverage, coverage_period) — cost of debt reflects leverage.
 
     The period comes back so the audit row can say which year the coverage that
-    set this spread was measured in; see `paired_latest` for why it is one year
+    set this spread was measured in; see `statements.paired_latest` for why it is one year
     rather than the newest of each leg.
     """
-    coverage, period = interest_coverage(f["income_statement"])
+    coverage, period = statements.interest_coverage(f["income_statement"])
     if coverage is None:
         return DEFAULT_CREDIT_SPREAD, None, period
     for floor, spread in CREDIT_SPREAD_LADDER:
@@ -635,16 +413,16 @@ def ratio_analysis(f: dict) -> dict:
     info = f["info"]
     inc, bal = f["income_statement"], f["balance_sheet"]
 
-    revenue = _latest(inc, "Total Revenue")
-    net_income = _latest(inc, "Net Income", "Net Income Common Stockholders")
-    equity = _latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
-    assets = _latest(bal, "Total Assets")
+    revenue = statements.latest(inc, "Total Revenue")
+    net_income = statements.latest(inc, "Net Income", "Net Income Common Stockholders")
+    equity = statements.latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
+    assets = statements.latest(bal, "Total Assets")
 
     def div(a, b):
         return round(a / b, 4) if a is not None and b not in (None, 0) else None
 
-    # both legs from one period — see paired_latest
-    coverage, coverage_period = interest_coverage(inc)
+    # both legs from one period — see statements.paired_latest
+    coverage, coverage_period = statements.interest_coverage(inc)
     ev_ebitda_1c, ev_revenue_1c = ev_multiples_for(info)
 
     dupont = {
@@ -842,14 +620,14 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     # Statement first: yfinance's info["freeCashflow"] is annual for some issuers
     # and a single quarter for others (MSFT reports ~0.24x the statement figure),
     # which silently rescales the entire valuation.
-    statement = _statement_fcf(f["cash_flow"])
+    statement = statements.statement_fcf(f["cash_flow"])
     fcf_source = "cash_flow_statement"
     fcf = statement[1] if statement else None
     if fcf is None:
         fcf, fcf_source = info.get("freeCashflow"), "info_freecashflow"
     # Levered -> unlevered. Gate on the adjusted figure, since that is what gets
     # discounted; a company only positive before the add-back is still a DCF.
-    interest_addback, fcff_basis = _fcff_interest_addback(
+    interest_addback, fcff_basis = statements.fcff_interest_addback(
         f["cash_flow"], statement[0] if statement else None, tax_rate)
     if fcf is not None:
         fcf += interest_addback
@@ -942,12 +720,12 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     net_debt_assumed = [name for name, value in
                         (("total_debt", total_debt), ("total_cash", total_cash))
                         if value is None]
-    # The other three terms of the bridge (see `equity_bridge`). Read from the
+    # The other three terms of the bridge (see `statements.equity_bridge`). Read from the
     # newest balance-sheet date — a balance sheet is a snapshot, so the latest
     # one is the company's current financial position, where the FCF above is a
     # flow across a year.
     bal = f["balance_sheet"]
-    bridge = equity_bridge(bal, sorted(bal)[-1] if bal else None)
+    bridge = statements.equity_bridge(bal, sorted(bal)[-1] if bal else None)
     # One figure, subtracted everywhere EV is turned into equity. There are four
     # such places — the headline below, the WACC x terminal-growth grid, the
     # growth sweep and the normalised base year — and they must agree, or the
@@ -1096,7 +874,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             "fcf_source": fcf_source,
             "fcf_period": statement[0] if statement else None,
             # 0.0 with a basis of anything but "cash_interest_paid" means the
-            # figure above is still levered — see _fcff_interest_addback.
+            # figure above is still levered — see statements.fcff_interest_addback.
             "fcf_interest_addback": round(interest_addback),
             "fcff_basis": fcff_basis,
             "growth_rate_year1": round(growth_rate, 4),
@@ -1238,10 +1016,10 @@ def base_fcf_quality(f: dict, period: str | None) -> dict:
         return out
 
     def conversion(p: str):
-        ocf = _value_at(cf, p, "Operating Cash Flow",
+        ocf = statements.value_at(cf, p, "Operating Cash Flow",
                         "Cash Flow From Continuing Operating Activities")
-        capex = _value_at(cf, p, "Capital Expenditure")
-        net_income = _value_at(inc, p, "Net Income")
+        capex = statements.value_at(cf, p, "Capital Expenditure")
+        net_income = statements.value_at(inc, p, "Net Income")
         if ocf is None or capex is None or not net_income or net_income <= 0:
             return None
         return (ocf + capex) / net_income
@@ -1262,12 +1040,12 @@ def base_fcf_quality(f: dict, period: str | None) -> dict:
     if abs(out["deviation"]) <= CASH_CONVERSION_BREAK:
         return out
 
-    ocf = _value_at(cf, period, "Operating Cash Flow",
+    ocf = statements.value_at(cf, period, "Operating Cash Flow",
                     "Cash Flow From Continuing Operating Activities")
-    capex = _value_at(cf, period, "Capital Expenditure")
-    wc = _value_at(cf, period, "Change In Working Capital")
+    capex = statements.value_at(cf, period, "Capital Expenditure")
+    wc = statements.value_at(cf, period, "Change In Working Capital")
     normal_wc = median([w for p in cf if p != period
-                        and (w := _value_at(cf, p, "Change In Working Capital")) is not None]
+                        and (w := statements.value_at(cf, p, "Change In Working Capital")) is not None]
                        or [0.0])
     if ocf is None or capex is None or wc is None:
         # the break is real but cannot be decomposed into filed lines, so it is
@@ -1342,10 +1120,10 @@ def base_year_context(f: dict, period: str | None) -> dict:
     # across periods and then show up as a panel whose columns do not add up.
     raw = []   # (period, fcf margin, operating cash margin, capex intensity)
     for p in sorted(cf):
-        revenue = _value_at(inc, p, "Total Revenue", "Operating Revenue")
-        ocf = _value_at(cf, p, "Operating Cash Flow",
+        revenue = statements.value_at(inc, p, "Total Revenue", "Operating Revenue")
+        ocf = statements.value_at(cf, p, "Operating Cash Flow",
                         "Cash Flow From Continuing Operating Activities")
-        capex = _value_at(cf, p, "Capital Expenditure")
+        capex = statements.value_at(cf, p, "Capital Expenditure")
         if not revenue or ocf is None or capex is None:
             continue
         # capex is reported negative; carried as the positive intensity a reader
@@ -1375,7 +1153,7 @@ def base_year_context(f: dict, period: str | None) -> dict:
     # absolute past free cash flow instead would anchor to a smaller company and
     # is wrong for any grower — measured, it moves MSFT only 1.06x against the
     # 1.29x its own margin history supports.
-    revenue = _value_at(inc, period, "Total Revenue", "Operating Revenue")
+    revenue = statements.value_at(inc, period, "Total Revenue", "Operating Revenue")
     out["latest_revenue"] = revenue
     if revenue:
         out["normalised_statement_fcf"] = round(mean_margin * revenue)
@@ -1596,7 +1374,7 @@ def _growth_is_plausible(required: float, consensus: float | None) -> bool:
 
 def revenue_trend(f: dict) -> list[dict]:
     return [{"period": p, "revenue": v}
-            for p, v in _series(f["income_statement"], "Total Revenue")]
+            for p, v in statements.series(f["income_statement"], "Total Revenue")]
 
 
 def full_analysis(f: dict, peers: list[dict] | None = None,

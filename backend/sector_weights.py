@@ -193,7 +193,7 @@ def classify(info: dict, free_cash_flow: float | None = None) -> str:
     (docs/scoring-system-design.md §3).
 
     `free_cash_flow` is the caller's annual, period-verified FCF — the same
-    figure `financial_models._statement_fcf` resolves. It matters because this
+    figure `statements.statement_fcf` resolves. It matters because this
     function chooses the *profile*, and the profile decides which metrics are
     scored and how they are weighted; a misroute here changes the whole model,
     not one number. `info["freeCashflow"]` is the wrong input for that decision:

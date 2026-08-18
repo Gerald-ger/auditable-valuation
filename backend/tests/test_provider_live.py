@@ -12,6 +12,7 @@ import pytest
 import yfinance as yf
 
 from backend import financial_models as fm
+from backend import statements
 from backend.data_provider import fx_rate, provider
 
 pytestmark = pytest.mark.network
@@ -40,12 +41,12 @@ def test_fundamentals_still_carry_the_fields_scoring_depends_on():
 def test_cash_flow_statement_still_has_both_fcf_legs():
     """The DCF and both FCF scoring metrics depend on this path existing."""
     f = provider.get_fundamentals("AAPL")
-    statement = fm._statement_fcf(f["cash_flow"])
+    statement = statements.statement_fcf(f["cash_flow"])
     assert statement is not None
     period, fcf = statement
     assert fcf > 0
     # fcf_conversion is dropped unless net income exists for the SAME period
-    assert fm._value_at(f["income_statement"], period,
+    assert statements.value_at(f["income_statement"], period,
                         "Net Income", "Net Income Common Stockholders") is not None
 
 

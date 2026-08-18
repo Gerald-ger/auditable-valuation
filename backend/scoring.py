@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from backend import financial_models as fm
 from backend import market_series
 from backend import sector_weights
+from backend import statements
 
 # Anchor tables: ascending x, linear interpolation, clipped at the ends.
 # Values grounded in financial-models-reference.md §4.1 / Appendix B.
@@ -97,16 +98,16 @@ def extract_metrics(f: dict,
     price = info.get("currentPrice") or info.get("regularMarketPrice")
     mcap = info.get("marketCap")
     eps = info.get("forwardEps") or info.get("trailingEps")
-    net_income = fm._latest(inc, "Net Income", "Net Income Common Stockholders")
-    ebit = fm._latest(inc, "EBIT", "Operating Income")
-    equity = fm._latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
-    assets = fm._latest(bal, "Total Assets")
-    dep_amort = fm._latest(cf, "Depreciation And Amortization", "Depreciation Amortization Depletion")
+    net_income = statements.latest(inc, "Net Income", "Net Income Common Stockholders")
+    ebit = statements.latest(inc, "EBIT", "Operating Income")
+    equity = statements.latest(bal, "Stockholders Equity", "Total Equity Gross Minority Interest")
+    assets = statements.latest(bal, "Total Assets")
+    dep_amort = statements.latest(cf, "Depreciation And Amortization", "Depreciation Amortization Depletion")
     # Same source discipline as dcf_valuation: info["freeCashflow"] is a single
     # quarter for some issuers (measured 2026-08-06: MSFT 0.244x, GOOGL 0.309x of
     # the annual statement) and annual for others. That silently rescaled fcf_yield
     # and made fcf_conversion mix a quarter of FCF over a full year of net income.
-    statement_fcf = fm._statement_fcf(cf)
+    statement_fcf = statements.statement_fcf(cf)
     fcf_period = statement_fcf[0] if statement_fcf else None
     fcf = statement_fcf[1] if statement_fcf else None
     if fcf is None:
@@ -201,10 +202,10 @@ def extract_metrics(f: dict,
     m["gross_margin"] = _clamp(info.get("grossMargins"), -2, 2)
     # FCF / net income is only a conversion rate when both legs cover the same
     # annual period. The net income used here is therefore pinned to the period
-    # _statement_fcf resolved, not the newest one available; when FCF fell back
+    # statements.statement_fcf resolved, not the newest one available; when FCF fell back
     # to info["freeCashflow"] there is no verified period and the metric is
     # dropped rather than computed on a mixed basis.
-    conversion_ni = fm._value_at(inc, fcf_period, "Net Income",
+    conversion_ni = statements.value_at(inc, fcf_period, "Net Income",
                                  "Net Income Common Stockholders") if fcf_period else None
     if fcf_period and conversion_ni is None:
         flags.append("fcf_conversion_period_mismatch")
@@ -219,7 +220,7 @@ def extract_metrics(f: dict,
     # FY2023 interest — 33.8x, a ratio of two different years. `ebit` above
     # stays unpinned on purpose: NOPAT wants the most recent operating income,
     # and it is divided by a balance-sheet figure, not another income row.
-    coverage, _ = fm.interest_coverage(inc)
+    coverage, _ = statements.interest_coverage(inc)
     m["interest_coverage"] = _clamp(coverage, -50, 200)
     m["current_ratio"] = _clamp(info.get("currentRatio"), 0, 20)
     de = div(total_debt, equity) if equity and equity > 0 else None
@@ -234,7 +235,7 @@ def extract_metrics(f: dict,
     # quarters** and 63. Overstated by 3.2x, on the single metric the pre-profit
     # Health pillar leans hardest on.
     #
-    # The rate is `OCF + CapEx` from `_statement_fcf`, so both legs share a
+    # The rate is `OCF + CapEx` from `statements.statement_fcf`, so both legs share a
     # period by construction — the discipline `fcf_conversion` already inherits.
     #
     # Trigger and rate deliberately ask different questions, and the split is
@@ -246,7 +247,7 @@ def extract_metrics(f: dict,
     # trigger to free-cash-flow-negative would hand a runway to a company that
     # is only burning because it chose to expand.
     # Capex is never positive, so `ocf < 0` already implies the burn is negative.
-    period_ocf = fm._value_at(cf, fcf_period, "Operating Cash Flow",
+    period_ocf = statements.value_at(cf, fcf_period, "Operating Cash Flow",
                               "Cash Flow From Continuing Operating Activities") \
         if fcf_period else None
     burn = statement_fcf[1] if statement_fcf else None
@@ -257,7 +258,7 @@ def extract_metrics(f: dict,
     m["equity_assets"] = _clamp(div(equity, assets), -1, 1)
 
     m["revenue_growth"] = _clamp(info.get("revenueGrowth"), -1, 3)
-    rev = fm._series(inc, "Total Revenue")
+    rev = statements.series(inc, "Total Revenue")
     if len(rev) >= 3 and rev[0][1] and rev[0][1] > 0:
         years = len(rev) - 1
         m["revenue_cagr_3y"] = _clamp((rev[-1][1] / rev[0][1]) ** (1 / years) - 1, -1, 3)
@@ -314,7 +315,7 @@ def score_company(f: dict, dcf: dict | None = None,
     info = f["info"]
     # The profile decides which metrics are scored and how they are weighted, so
     # the classifier must not read info["freeCashflow"] — see classify's docstring.
-    statement_fcf = fm._statement_fcf(f["cash_flow"])
+    statement_fcf = statements.statement_fcf(f["cash_flow"])
     classification = sector_weights.classify(
         info, statement_fcf[1] if statement_fcf else None)
     profile = sector_weights.get_profile(classification)
