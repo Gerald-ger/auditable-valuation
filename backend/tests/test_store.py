@@ -89,3 +89,76 @@ def test_delete_position(temp_db):
     temp_db.upsert_position("AAPL", 1, 100.0)
     temp_db.delete_position("aapl")
     assert temp_db.list_positions() == []
+
+
+# ── schema migrations ────────────────────────────────────────────────
+#
+# The machinery, not any particular migration — `_MIGRATIONS` is empty today, so
+# without these the first entry anyone appends would be the first time the
+# mechanism ever ran. It has to be proven while there is nothing at stake.
+
+
+def _columns(store, table):
+    with store._conn() as c:
+        return [r[1] for r in c.execute(f"PRAGMA table_info({table})")]
+
+
+def _version(store):
+    with store._conn() as c:
+        return c.execute("PRAGMA user_version").fetchone()[0]
+
+
+def test_a_fresh_database_is_stamped_with_the_current_schema_version(temp_db):
+    # `temp_db` has already called init(). A fresh database must come out at the
+    # same version as a migrated one, or the next migration runs twice on one of
+    # them and not at all on the other.
+    assert _version(temp_db) == len(temp_db._MIGRATIONS)
+
+
+def test_a_migration_upgrades_an_existing_database_without_losing_its_rows(
+        temp_db, monkeypatch):
+    """The property that matters. A schema change must reach a database that
+    already has history in it — `score_history` cannot be backfilled, so
+    recreating the table instead of altering it silently restarts the
+    calibration record that table exists to accumulate."""
+    card, info = _card()
+    temp_db.record_score(card, info)
+    assert len(temp_db.score_history(card["ticker"])) == 1
+
+    monkeypatch.setattr(
+        temp_db, "_MIGRATIONS",
+        ["ALTER TABLE score_history ADD COLUMN scoring_engine_version TEXT;"])
+    temp_db.init()
+
+    assert "scoring_engine_version" in _columns(temp_db, "score_history")
+    assert _version(temp_db) == 1
+    assert len(temp_db.score_history(card["ticker"])) == 1, "the row must survive"
+
+
+def test_a_migration_is_not_applied_twice(temp_db, monkeypatch):
+    # `ALTER TABLE ... ADD COLUMN` raises on a column that already exists, so a
+    # second init() re-running the same entry would fail loudly here.
+    monkeypatch.setattr(
+        temp_db, "_MIGRATIONS",
+        ["ALTER TABLE positions ADD COLUMN broker TEXT;"])
+    temp_db.init()
+    temp_db.init()
+    assert _version(temp_db) == 1
+    assert _columns(temp_db, "positions").count("broker") == 1
+
+
+def test_migrations_resume_from_the_recorded_version(temp_db, monkeypatch):
+    """Appending a second entry must apply only that entry to a database already
+    carrying the first — the case that breaks if the version is ignored."""
+    monkeypatch.setattr(temp_db, "_MIGRATIONS",
+                        ["ALTER TABLE positions ADD COLUMN broker TEXT;"])
+    temp_db.init()
+
+    monkeypatch.setattr(temp_db, "_MIGRATIONS",
+                        ["ALTER TABLE positions ADD COLUMN broker TEXT;",
+                         "ALTER TABLE positions ADD COLUMN account TEXT;"])
+    temp_db.init()
+
+    columns = _columns(temp_db, "positions")
+    assert "broker" in columns and "account" in columns
+    assert _version(temp_db) == 2

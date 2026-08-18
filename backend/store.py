@@ -25,6 +25,13 @@ DB_PATH = Path(__file__).resolve().parent / "data" / "app.db"
 
 PILLARS = ("valuation", "quality", "health", "growth", "momentum")
 
+# The version-0 baseline, and **frozen**. Every statement here is
+# `CREATE TABLE IF NOT EXISTS`, which does nothing at all to a database that
+# already has the table — including one that is missing a column added later.
+# Verified 2026-08-18: running `CREATE TABLE IF NOT EXISTS t (a, b)` and then
+# `CREATE TABLE IF NOT EXISTS t (a, b, c)` leaves the table at two columns and
+# raises nothing. So a column added *here* reaches a fresh clone and silently
+# skips every database already in use. Schema changes go in `_MIGRATIONS` below.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS score_history (
     ticker         TEXT    NOT NULL,
@@ -73,6 +80,23 @@ CREATE TABLE IF NOT EXISTS positions (
 """
 
 
+# Ordered schema upgrades. Entry `i` takes a database from `user_version` i to
+# i+1, and `init()` applies whichever ones a given database has not run yet.
+#
+# **Append only.** Never edit or reorder an entry that has shipped: a database
+# elsewhere has already run it, and the sole record of that is the integer left
+# in `user_version`.
+#
+# Empty today, and added while it is empty on purpose. The first schema change is
+# precisely when the absence of this list stops being visible — the author's own
+# database is usually the fresh one that works, while every database with history
+# in it starts raising `no such column` at runtime, from code that passed CI.
+# `score_history` is the table that matters: it accumulates one row per ticker
+# per day and cannot be backfilled, because scoring a past date would need
+# point-in-time fundamentals the data source does not expose.
+_MIGRATIONS: list[str] = []
+
+
 @contextmanager
 def _conn():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -86,9 +110,21 @@ def _conn():
 
 
 def init() -> None:
+    """Create the tables if they are absent, then apply any unrun migrations.
+
+    Safe to call on every startup: the baseline is idempotent and each migration
+    runs once, gated on the `user_version` the last run left behind.
+    """
     with _conn() as c:
         c.execute("PRAGMA journal_mode=WAL")  # batch writes must not block UI reads
         c.executescript(_SCHEMA)
+        version = c.execute("PRAGMA user_version").fetchone()[0]
+        for i, statement in enumerate(_MIGRATIONS[version:], start=version):
+            c.executescript(statement)
+            # PRAGMA takes no parameter binding — verified, it raises
+            # OperationalError — so the version is interpolated. It is a loop
+            # index over a module constant, never anything a caller supplies.
+            c.execute(f"PRAGMA user_version = {i + 1}")
 
 
 def _utc_now() -> str:
