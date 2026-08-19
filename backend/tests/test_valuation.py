@@ -12,7 +12,8 @@ import math
 
 import pytest
 
-from conftest import FIXTURES, TEST_CNY_HKD, load_bars, load_fundamentals
+from conftest import (FIXTURES, TEST_CNY_HKD, load_bars, load_fundamentals,
+                      load_market_bars)
 
 from backend import data_provider
 from backend import financial_models as fm
@@ -268,6 +269,14 @@ def test_conversion_scales_the_valuation_by_exactly_the_rate():
     reporting-currency debt balance, so correcting that legitimately moves the
     discount rate too (0700.HK 7.69% -> 7.66%). Holding it fixed isolates the one
     thing under test here.
+
+    **Terminal growth has to be pinned as well, since 2026-08-19.** `wacc_override`
+    used to be enough because both variants shared one risk-free rate. They no
+    longer do: the CNY side is priced off the CGB curve and the HKD side off the
+    US proxy, and the rate drives `min(TERMINAL_GROWTH, rf)` as well as the WACC —
+    which `wacc_override` does not reach. Left unpinned the two sides run
+    different terminal growth and the scaling identity fails for a reason that
+    has nothing to do with FX.
     """
     f = load_fundamentals("0700_HK")
     # same company, told its statements are already in HKD -> no conversion
@@ -275,8 +284,9 @@ def test_conversion_scales_the_valuation_by_exactly_the_rate():
     g["info"]["financialCurrency"] = "HKD"
 
     wacc = fm.dcf_valuation(g)["assumptions"]["wacc_used"]
-    converted = fm.dcf_valuation(f, wacc_override=wacc)
-    unconverted = fm.dcf_valuation(g, wacc_override=wacc)
+    pins = {"wacc_override": wacc, "terminal_growth": 0.025}
+    converted = fm.dcf_valuation(f, **pins)
+    unconverted = fm.dcf_valuation(g, **pins)
 
     assert unconverted["assumptions"]["fx_basis"] == "single_currency"
     for key in ("fair_value_per_share", "enterprise_value", "equity_value"):
@@ -313,16 +323,22 @@ def test_conversion_leaves_the_unit_free_diagnostics_alone():
     The WACC is compared separately: its capital-structure weights *do* change,
     because they weigh a trading-currency market cap against a reporting-currency
     debt balance and that comparison was mixed before.
+
+    Terminal growth is pinned alongside the WACC for the reason given in
+    `test_conversion_scales_the_valuation_by_exactly_the_rate`: the two variants
+    now draw their risk-free rate from different curves, and the rate sets the
+    growth ceiling as well as the discount rate.
     """
     f = load_fundamentals("0700_HK")
     converted = fm.dcf_valuation(f)
 
     g = load_fundamentals("0700_HK")
     g["info"]["financialCurrency"] = "HKD"
-    unconverted = fm.dcf_valuation(g)
+    unconverted = fm.dcf_valuation(g, terminal_growth=0.025)
 
-    # hold WACC fixed so only the conversion is under test
-    same_wacc = fm.dcf_valuation(f, wacc_override=unconverted["assumptions"]["wacc_used"])
+    # hold WACC and the growth ceiling fixed so only the conversion is under test
+    same_wacc = fm.dcf_valuation(f, terminal_growth=0.025,
+                                 wacc_override=unconverted["assumptions"]["wacc_used"])
     for key in ("terminal_value_share", "implied_exit_ev_ebitda"):
         assert same_wacc["diagnostics"][key] == pytest.approx(
             unconverted["diagnostics"][key], rel=1e-6), key
@@ -615,14 +631,28 @@ def test_each_growth_provenance_gets_its_own_label(monkeypatch):
 
 
 def test_a_reconcilable_gap_names_the_assumption_that_closes_it(monkeypatch):
-    """0700.HK's DCF sits above the price, but only on the terminal assumption —
-    it meets the market at a terminal rate below what an economy grows. That is
-    a forecast disagreement, and saying so is different from saying the market
-    is wrong."""
+    """0700.HK's DCF sits above the price and the model can still name what would
+    close it. That is a forecast disagreement, and saying so is different from
+    saying the market is wrong.
+
+    **Which assumption closes it changed on 2026-08-19**, and the change is the
+    finding rather than a break. On the US proxy the gap shut on the *terminal*
+    rate (-0.78%, below what an economy grows). Priced off the CGB curve the gap
+    is far wider, no terminal rate inside the model's own band reaches it — so
+    `required_terminal_growth` is `None`, which is the documented way of saying
+    exactly that — and the reconciliation falls through to the near-term leg,
+    where roughly -9.6% closes it.
+
+    The verdict is unchanged and that is the point: the platform still refuses to
+    call the market wrong, it has simply moved which forecast it is disagreeing
+    about.
+    """
     f = load_fundamentals("0700_HK")
     r = fm.reconcile_to_price(f, fm.dcf_valuation(f))
     assert r["verdict"] == "reconcilable"
-    assert r["required_terminal_growth"] <= fm.NOMINAL_GDP_GROWTH
+    assert r["required_terminal_growth"] is None
+    assert r["required_growth_rate"] < 0
+    assert fm.GROWTH_VALIDITY_RANGE[0] <= r["required_growth_rate"]
 
 
 @pytest.mark.parametrize("stem", ["AAPL", "MSFT"])
@@ -1210,7 +1240,10 @@ def test_a_non_usd_currency_says_the_rate_is_a_stand_in(monkeypatch):
     # before this parameter existed.
     assert data_provider.risk_free_rate(0.043, None) == (0.0431, "us_treasury_10y")
 
-    for ccy in ("HKD", "CNY", "JPY"):
+    # CNY is deliberately absent: since 2026-08-19 it has a curve of its own and
+    # is covered by test_cny_is_priced_off_chinas_own_curve_net_of_its_default_
+    # spread. These are the currencies that still have no local source.
+    for ccy in ("HKD", "JPY", "EUR"):
         rate, source = data_provider.risk_free_rate(0.043, ccy)
         assert (rate, source) == (0.0431, "usd_proxy"), ccy
 
@@ -1267,6 +1300,150 @@ def test_the_hkd_filer_discloses_the_mismatch_between_its_two_capm_halves():
     assert (us["risk_free_source"],
             us["equity_risk_premium_market"]) == ("us_treasury_10y", "United States")
     assert us["risk_free_rate"] == a["risk_free_rate"]  # same number, still
+
+
+# ── CNY gets a rate of its own ───────────────────────────────────────
+#
+# The one currency where a stand-in was not merely undisclosed but wrong:
+# 0700.HK's cash flows are CNY, and CNY is not pegged to anything. These pin the
+# arithmetic, the failure contract, and the boundary — that the spread comes off
+# a *local* sovereign yield and never off the US one.
+
+def test_cny_is_priced_off_chinas_own_curve_net_of_its_default_spread(monkeypatch):
+    """A local government yield is not risk-free: China's 10Y carries China's
+    own default risk, and the country-inclusive ERP paired with it carries that
+    same spread again. Subtracting once removes the double count."""
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: 0.016864)
+
+    rate, source = data_provider.risk_free_rate(0.043, "CNY", 0.006)
+    assert (round(rate, 6), source) == (0.010864, "cgb_10y_less_spread")
+
+    # The spread is the caller's, read from the same table the ERP comes from,
+    # so the two legs cannot disagree about a market.
+    assert fm.sovereign_default_spread("CNY") == 0.006
+
+
+def test_the_default_spread_never_comes_off_the_us_rate(monkeypatch):
+    """`USD.default_spread` is 0.0023 and is deliberately *not* netted. The US
+    10Y is the mature-market base the whole Damodaran table is built on;
+    subtracting there would move every USD valuation for no corresponding gain,
+    and would be this change leaking out of its own scope."""
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
+    monkeypatch.setattr(data_provider, "_cgb_10y",
+                        lambda: pytest.fail("the USD path must not touch the CGB curve"))
+
+    assert fm.sovereign_default_spread("USD") == 0.0023  # published, and unused
+    assert data_provider.risk_free_rate(0.043, "USD", 0.0023) == (0.0472, "us_treasury_10y")
+
+
+def test_an_unreachable_chinabond_degrades_to_the_old_behaviour(monkeypatch):
+    """The failure contract that matters: a bad day at ChinaBond must return the
+    platform to what it did before this existed — the US rate, labelled as the
+    stand-in it is — never an error and never a stale CNY number."""
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: None)
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
+
+    assert data_provider.risk_free_rate(0.043, "CNY", 0.006) == (0.0472, "usd_proxy")
+
+
+def test_an_unknown_market_is_left_double_counted_rather_than_guessed(monkeypatch):
+    """No published spread means no subtraction. The sovereign risk stays double
+    counted, which is visible in the number, rather than corrected by a figure
+    nobody sourced."""
+    assert fm.sovereign_default_spread("JPY") == 0.0
+    assert fm.sovereign_default_spread(None) == 0.0
+
+
+def _cgb_page(rows):
+    """A ChinaBond response, shaped like the real one.
+
+    Real payloads carry three curves per date — government, commercial-bank AAA
+    and CP&Note AAA — which is why the parse matches on the curve name rather
+    than on position. `rows` is (curve, date, yield-as-published-percent).
+    """
+    body = "".join(f"<tr><td>{c}</td><td>{d}</td><td>{y}</td></tr>" for c, d, y in rows)
+    return ("<html><body><table>"
+            "<tr><th>Yield Curve Name</th><th>Date</th><th>10Y</th></tr>"
+            f"{body}</table></body></html>")
+
+
+# `conftest.pinned_risk_free_rate` replaces `_cgb_10y` for every test, so the
+# real one has to be held at import — otherwise these would assert against the
+# stub and pass no matter what the parse did.
+_real_cgb_10y = data_provider._cgb_10y
+
+
+def _stub_cgb(monkeypatch, html):
+    """Replace the HTTP call, not the function, so the parse itself runs."""
+    class _Resp:
+        def read(self): return html.encode("utf-8")
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(data_provider, "urlopen", lambda *a, **k: _Resp())
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+    return _real_cgb_10y()
+
+
+GOV = "ChinaBond Government Bond Yield Curve"
+CP = "ChinaBond CP&Note Yield Curve (AAA)"
+
+
+def test_the_cgb_parse_takes_the_newest_government_row_as_a_ratio(monkeypatch):
+    """The three things the parse has to get right, none of which has a contract.
+
+    Dates deliberately out of order: the live table happens to arrive
+    newest-first and nothing documents that it always will, so the parse takes
+    the max by date rather than the first row.
+    """
+    rate = _stub_cgb(monkeypatch, _cgb_page([
+        (CP, "2026-08-18", "2.0493"),      # a different curve, higher — must lose
+        (GOV, "2026-08-17", "1.6924"),
+        (GOV, "2026-08-18", "1.6864"),     # newest, but not first
+        (GOV, "2026-08-14", "1.6964"),
+    ]))
+    # published as percent, consumed as a ratio
+    assert rate == pytest.approx(0.016864)
+
+
+def test_two_rows_on_one_date_do_not_become_the_higher_yield(monkeypatch):
+    """`max(rows)` on (date, yield) tuples silently breaks ties on the *yield*,
+    so a duplicated date would serve the larger number — and a spurious 9.99%
+    clears the sanity band, arriving as a plausible 0.0999 rate. Keyed on the
+    date alone, the first row for that date wins and the tie-break never runs."""
+    rate = _stub_cgb(monkeypatch, _cgb_page([
+        (GOV, "2026-08-18", "1.6864"),
+        (GOV, "2026-08-18", "9.9999"),
+    ]))
+    assert rate == pytest.approx(0.016864)
+
+
+@pytest.mark.parametrize("rows, why", [
+    ([], "empty table — what a >1yr range or a holiday week returns, with HTTP 200"),
+    ([(CP, "2026-08-18", "2.0493")], "no government row, only other curves"),
+    ([(GOV, "2026-08-18", "68.64")], "absurd level — a units change would look like this"),
+    ([(GOV, "2026-08-18", "--")], "non-numeric placeholder"),
+])
+def test_the_cgb_parse_returns_none_rather_than_a_wrong_number(monkeypatch, rows, why):
+    """Every one of these degrades CNY to the US proxy, which is the pre-2026-08-19
+    behaviour — never an exception and never a plausible-looking wrong rate."""
+    assert _stub_cgb(monkeypatch, _cgb_page(rows)) is None, why
+
+
+def test_the_cny_fixture_now_carries_a_chinese_rate_end_to_end(monkeypatch):
+    """0700_HK through the real model, which is the only place the pairing is
+    visible: a Chinese premium and a Chinese rate, where it was a Chinese
+    premium and an American rate until 2026-08-19."""
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: 0.016864)
+    f = load_fundamentals("0700_HK")
+
+    a = fm.dcf_valuation(f, market_bars=load_market_bars("0700_HK"))["assumptions"]
+    assert a["risk_free_source"] == "cgb_10y_less_spread"
+    assert a["equity_risk_premium_market"] == "China"
+    assert a["risk_free_rate"] == round(0.016864 - 0.006, 4)
+    # The growth ceiling binds, which is where most of the valuation change
+    # comes from — see docs/currency-consistent-discounting.md §5.
+    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
+    assert a["terminal_growth"] == pytest.approx(0.0109, abs=1e-4)
 
 
 def test_the_audit_row_carries_the_precision_of_the_beta_it_used(monkeypatch):

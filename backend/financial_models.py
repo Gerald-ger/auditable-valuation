@@ -221,6 +221,24 @@ def equity_risk_premium_for(reporting_currency: str | None
     return EQUITY_RISK_PREMIUM, "platform_default", None
 
 
+def sovereign_default_spread(reporting_currency: str | None) -> float:
+    """This market's sovereign default spread, or 0.0 where none is published.
+
+    The other half of the pair `equity_risk_premium_for` returns, read from the
+    same vendored snapshot so the two can never disagree about a market. It is
+    subtracted from a *local* sovereign yield in `data_provider.risk_free_rate`,
+    which is where the reason lives.
+
+    Zero for an unknown market is the safe default rather than a lazy one: a
+    market with no published spread also has no local curve wired up, so the
+    value is never reached. If one is ever added without a spread, the effect is
+    to leave the sovereign risk double-counted — visible in the number rather
+    than silently corrected by a figure nobody sourced.
+    """
+    entry = (_market_premiums().get("markets") or {}).get(reporting_currency or "")
+    return (entry or {}).get("default_spread") or 0.0
+
+
 def statement_to_market_fx(trading_currency, reporting_currency):
     """(rate, mismatch) taking a statement figure into the trading currency.
 
@@ -529,10 +547,12 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     # also asserts 1.1-1.7% perpetual growth for Tencent. See TODOLIST.
     # Both halves of CAPM now read the same currency. They did not until
     # 2026-08-19: the premium was Hong Kong's while the rate was America's.
-    rf, rf_source = risk_free_rate(RISK_FREE_RATE, info.get("financialCurrency"))
-    # The ERP half of the same pair, and the half that can be sourced today.
-    erp, erp_source, erp_market = equity_risk_premium_for(
-        info.get("financialCurrency"))
+    reporting_ccy = info.get("financialCurrency")
+    rf, rf_source = risk_free_rate(RISK_FREE_RATE, reporting_ccy,
+                                   sovereign_default_spread(reporting_ccy))
+    # The ERP half of the same pair. Both legs now read one currency and one
+    # vendored table, which is what stops them naming two different countries.
+    erp, erp_source, erp_market = equity_risk_premium_for(reporting_ccy)
     cost_of_equity = rf + beta * erp
     market_cap = info.get("marketCap") or 0
     # the capital-structure weights compare a trading-currency market cap with a

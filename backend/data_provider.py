@@ -8,10 +8,12 @@ line.
 from __future__ import annotations
 
 import math
+import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from threading import Lock
+from urllib.request import urlopen
 
 import yfinance as yf
 
@@ -109,6 +111,77 @@ def _clean(value):
 
 
 _RF_CACHE: tuple[str, float] | None = None  # (date, rate) — treasury rates move once a day
+_CGB_CACHE: tuple[str, float] | None = None  # (date, rate) — same, for the CGB curve
+
+# ChinaBond (CCDC) publishes the official China Government Bond curve; the PBOC
+# points at it rather than republishing. `gjqx=10` selects the 10-year tenor and
+# `qxId=ycqx` the government curve, but the response still carries the
+# commercial-bank and CP&Note curves beside it, so the row has to be matched by
+# name and not by position.
+CGB_URL = "https://yield.chinabond.com.cn/cbweb-pbc-web/pbc/historyQuery"
+CGB_CURVE = "ChinaBond Government Bond Yield Curve"
+# Wide enough to clear a Chinese New Year or Golden Week closure — those run to
+# nine consecutive days, and a window that lands entirely inside one returns an
+# empty table indistinguishable from an outage. Measured 2026-08-19: 20 calendar
+# days is 15 trading rows, 19.8 KB, 3.2 s.
+CGB_WINDOW_DAYS = 20
+# Measured 1.3-3.8 s across ~20 calls on 2026-08-19, with one outright miss in
+# that run. A hard ceiling because the HKMA endpoint hung for 25 s on two
+# separate attempts — a slow day has to degrade the number, never the request.
+#
+# 10 s is ~2.6x the worst observation rather than a generous margin, and that is
+# affordable only because a failure is **not cached**: a miss degrades one
+# request to the USD proxy and the next request retries. Were failures sticky
+# this would need to be far longer, since the gap between the two rates is worth
+# 30% of Tencent's fair value.
+CGB_TIMEOUT_S = 10
+
+
+def _cgb_10y() -> float | None:
+    """The live China 10-year government yield, or **None**. Percent, not a ratio.
+
+    Same contract as `_us_treasury_10y`: at most one fetch per calendar day, and
+    a failure is never cached, so an outage degrades one day's number instead of
+    pinning a stale one for the life of the process.
+
+    **A range wider than a year returns HTTP 200 with an empty table** rather
+    than an error, and so does a window containing no trading days. Both parse
+    to `None` here, which is the same outcome as an outage and the reason the
+    parse is checked rather than the status code.
+    """
+    global _CGB_CACHE
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _CGB_CACHE and _CGB_CACHE[0] == today:
+        return _CGB_CACHE[1]
+    try:
+        start = (datetime.now(timezone.utc)
+                 - timedelta(days=CGB_WINDOW_DAYS)).strftime("%Y-%m-%d")
+        url = (f"{CGB_URL}?gjqx=10&qxId=ycqx&locale=en_US"
+               f"&startDate={start}&endDate={today}")
+        with urlopen(url, timeout=CGB_TIMEOUT_S) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+        rows = []
+        for row in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+            cells = [c for c in (re.sub(r"<[^>]+>", "", x).strip()
+                                 for x in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S))
+                     if c]
+            if len(cells) == 3 and cells[0] == CGB_CURVE:
+                rows.append((cells[1], float(cells[2])))
+        # By date rather than by position: the table happens to arrive
+        # newest-first, and nothing documents that it always will. Keyed on the
+        # date *alone* — a bare `max(rows)` falls through to comparing yields
+        # when two rows share a date, which would quietly serve the higher one,
+        # and a spurious 9.99% clears the sanity band below. ISO dates make
+        # lexicographic order chronological, so no parsing is needed.
+        rate = max(rows, key=lambda r: r[0])[1] / 100 if rows else None
+        # Same sanity band as the treasury feed, for the same reason — the page
+        # quotes percent, so a switch to ratios would silently divide by 100.
+        if rate is not None and 0 < rate < 0.25:
+            _CGB_CACHE = (today, rate)
+            return rate
+    except Exception:
+        pass
+    return None
 
 
 def _us_treasury_10y() -> float | None:
@@ -142,7 +215,8 @@ def _us_treasury_10y() -> float | None:
 
 
 def risk_free_rate(fallback: float,
-                   currency: str | None = None) -> tuple[float, str]:
+                   currency: str | None = None,
+                   sovereign_spread: float = 0.0) -> tuple[float, str]:
     """(rate, source) for the currency the discounted cash flows are in.
 
     Reads `financialCurrency`, the same *field* and for the same reason as
@@ -161,25 +235,38 @@ def risk_free_rate(fallback: float,
     not. `None` means the caller did not say; it is treated as USD, which is
     what this function did before the parameter existed.
 
-    **This function changes no number today, and that is the whole of it.**
-    Every currency resolves to the US 10-year, exactly as before. What it adds
-    is that the substitution is now *named* in `dcf["assumptions"]` instead of
-    being invisible, and that there is one place for a second source to attach.
+    Four sources, mirroring `equity_risk_premium_for`:
+      us_treasury_10y       USD cash flows, and the Fed feed answered
+      platform_default      USD cash flows, no feed — `fallback` stands in
+      cgb_10y_less_spread   CNY cash flows, priced off China's own curve
+      usd_proxy             a non-USD currency with no curve of its own; a US
+                            rate is standing in
 
-    Three sources, mirroring `equity_risk_premium_for`:
-      us_treasury_10y   USD cash flows, and the Fed feed answered
-      platform_default  USD cash flows, no feed — `fallback` stands in
-      usd_proxy         the cash flows are **not** USD; a US rate is standing in
+    `sovereign_spread` is subtracted from a **local sovereign yield only**, and
+    is the caller's to supply because it comes from the same vendored table the
+    caller reads the equity premium from. A government bond yield is not
+    risk-free: China's 10-year contains China's own default risk, and the
+    country-inclusive ERP paired with it contains that spread again. Subtracting
+    once removes the double count. It is deliberately *not* applied to the US
+    10-year, which is the mature-market base the whole table is built on —
+    netting it there would move every USD valuation for no corresponding gain.
 
     A non-USD currency reports `usd_proxy` whether the US number came from the
     feed or from `fallback`. The distinction the reader needs is that no rate
-    for *this* currency was used, and that is identical in both cases.
+    for *this* currency was used, and that is identical in both cases. **CNY
+    degrades to exactly that** when ChinaBond cannot be reached, so a bad day
+    returns the platform to its pre-2026-08-19 behaviour rather than to an error.
     """
-    rate = _us_treasury_10y()
     # `str(...)` because this reads straight off a vendor payload: a non-string
     # here used to be harmless and would now raise inside `_wacc`, which is a
     # fragility this change would have introduced rather than found.
-    if str(currency or "USD").upper() != "USD":
+    ccy = str(currency or "USD").upper()
+    if ccy == "CNY":
+        cgb = _cgb_10y()
+        if cgb is not None:
+            return cgb - sovereign_spread, "cgb_10y_less_spread"
+    rate = _us_treasury_10y()
+    if ccy != "USD":
         return (fallback if rate is None else rate), "usd_proxy"
     if rate is None:
         return fallback, "platform_default"

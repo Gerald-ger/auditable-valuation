@@ -12,6 +12,7 @@ import pytest
 import yfinance as yf
 
 from backend import comps
+from backend import data_provider
 from backend import financial_models as fm
 from backend import statements
 from backend.data_provider import fx_rate, provider
@@ -237,3 +238,27 @@ def test_the_keyless_peer_screener_still_answers_the_query_the_tier_builds():
     # three rank inside the top handful of this screen, so their absence is a
     # live check rather than a coincidence.
     assert not {"URMCY", "UNBLF", "STGPF"} & set(peers)
+
+
+# `conftest.pinned_risk_free_rate` stubs `_cgb_10y` for every test in the suite,
+# including this one — so hold the real function, bound at import.
+_real_cgb_10y = data_provider._cgb_10y
+
+
+def test_chinabond_still_publishes_a_parseable_ten_year():
+    """The CNY risk-free rate, live and with no credential.
+
+    Nothing here has an API contract: the response is an HTML table, it carries
+    the commercial-bank and CP&Note curves beside the government one, and a
+    query wider than a year returns HTTP 200 with an empty table rather than an
+    error. A shape change would parse to `None`, degrade every CNY valuation to
+    the US proxy, and do it silently — this is what says so first.
+
+    A band rather than a level: China's 10Y has run 1.6%-2.6% over the three
+    years to 2026-08, and it was 1.6864% the day this was written. The band is
+    wide enough not to fail on a normal market and narrow enough to catch a
+    units change, which is the failure that would actually hurt.
+    """
+    rate = _real_cgb_10y()
+    assert rate is not None, "ChinaBond unreachable or its table changed shape"
+    assert 0.005 < rate < 0.06, rate

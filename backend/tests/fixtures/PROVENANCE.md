@@ -52,8 +52,8 @@ rate in a currency other than USD. The obvious HKD names cannot — `classify` r
 `sector == "real estate"` and `"bank" in industry` away from the model before the rate is
 reached.
 
-Committing them is what lets the 482-test backend suite run **entirely offline**, in CI on a
-clean runner, with no network access and no API key. `pytest.ini` deselects the 17
+Committing them is what lets the 493-test backend suite run **entirely offline**, in CI on a
+clean runner, with no network access and no API key. `pytest.ini` deselects the 18
 `network`-marked tests by default for the same reason.
 
 ## Standing

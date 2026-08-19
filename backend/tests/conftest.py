@@ -48,6 +48,14 @@ def load_market_bars(stem: str) -> tuple[list[dict], list[dict]]:
     return load_bars(stem), load_bars(HOME_INDEX.get(stem, "_GSPC"))
 
 
+# China 10-year government yield. A round test constant, not a market quote, for
+# the same reason TEST_CNY_HKD below is one: what these tests pin is that a CNY
+# filer is discounted at a Chinese rate, not what that rate was on a given day.
+# ChinaBond published 1.6864% on 2026-08-19. Net of the vendored CNY default
+# spread of 0.60% this leaves a round 1.10% risk-free.
+TEST_CGB_10Y = 0.017
+
+
 @pytest.fixture(autouse=True)
 def pinned_risk_free_rate(monkeypatch):
     """Pin the CAPM risk-free rate for every test.
@@ -69,6 +77,17 @@ def pinned_risk_free_rate(monkeypatch):
     from backend import data_provider, financial_models
     monkeypatch.setattr(data_provider, "_us_treasury_10y",
                         lambda: financial_models.RISK_FREE_RATE)
+    # `_cgb_10y` too, and in the same fixture rather than a second one, because
+    # the hazard is identical: `0700_HK` reports CNY, so any test running a DCF
+    # over it would reach ChinaBond over the network from inside the offline
+    # suite.
+    #
+    # Pinned to a *rate* rather than to `None`. `None` would have been quieter —
+    # every currency would degrade to the US proxy and no golden would move —
+    # and that is exactly why it is wrong: the goldens would go on pinning the
+    # ChinaBond-is-down path while production ran the other one, which is the
+    # trap docs/currency-consistent-discounting.md warned about, one level down.
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: TEST_CGB_10Y)
 
 
 # CNY -> HKD. A round test constant, not a market quote: the point is that the

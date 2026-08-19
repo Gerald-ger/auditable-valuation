@@ -11,6 +11,25 @@ import { DISPLAY_TZ_LABEL, DISPLAY_TZ_OFFSET_S } from '../charttime';
  * reader sees HK times read naturally. A quote stamp shown in a different zone
  * from the chart directly above it would be worse than showing no stamp.
  */
+/**
+ * Where the CAPM risk-free rate came from, for the tag beside it.
+ *
+ * `RF_STAND_INS` drives the styling and is the distinction that matters: both
+ * of these mean *no rate for this currency was used*, and they get the muted
+ * treatment the other `src-tag` fallbacks get. Everything else is a real curve
+ * for the currency being discounted and reads as sourced — so a new local curve
+ * added here is styled correctly by default rather than mislabelled a fallback,
+ * which is what an `=== 'us_treasury_10y'` test did to the CGB rate.
+ */
+const RF_STAND_INS = new Set(['usd_proxy', 'platform_default']);
+
+const RF_SOURCE_LABEL = {
+  us_treasury_10y: 'US 10Y',
+  cgb_10y_less_spread: 'China 10Y − default spread',
+  usd_proxy: 'USD proxy',
+  platform_default: 'platform default',
+};
+
 function priceClock(epochSeconds) {
   if (typeof epochSeconds !== 'number') return null;
   return new Date((epochSeconds + DISPLAY_TZ_OFFSET_S) * 1000)
@@ -225,14 +244,16 @@ function DcfAudit({ dcf }) {
           {' · '}WACC <b>{pct(a.wacc_used)}</b>
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>
           {/* Tagged for the same reason the premium below is, and it is the
-              half that used to hide: an HKD or CNY filer is discounted at the
-              US ten-year, so this tag and the market in brackets below can name
-              two different countries. That disagreement is the disclosure —
-              without it the two numbers look like one consistent pair. */}
+              half that used to hide: an HKD filer is still discounted at the US
+              ten-year, so this tag and the market in brackets below can name two
+              different countries. That disagreement is the disclosure — without
+              it the two numbers look like one consistent pair. A CNY filer no
+              longer disagrees: it reads China's own curve. */}
           {a.risk_free_source && (
-            <span className={`src-tag ${a.risk_free_source === 'us_treasury_10y'
-              ? 'reported' : 'default'}`}>
-              {a.risk_free_source.replace(/_/g, ' ')}
+            <span className={`src-tag ${RF_STAND_INS.has(a.risk_free_source)
+              ? 'default' : 'reported'}`}>
+              {RF_SOURCE_LABEL[a.risk_free_source]
+                ?? a.risk_free_source.replace(/_/g, ' ')}
             </span>
           )}
           {/* The ERP was a bare 5% for every market on earth until it was

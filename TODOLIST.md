@@ -613,7 +613,7 @@ Testing it needs the `openbb` import stubbed rather than the function replaced �
 touches this function; not worth a commit of its own, since the untested code is a cache and a
 guard whose failure modes are a slow request and a rejected absurd rate.
 
-### 🔵 HK stocks still use the USD risk-free rate *(the ERP half was fixed 2026-08-14)*
+### 🔵 HK stocks still use the USD risk-free rate *(CNY resolved 2026-08-19; HKD still open)*
 
 **The ERP leg is done.** `EQUITY_RISK_PREMIUM = 0.05` is replaced by Damodaran's published
 country table, vendored dated at `backend/market_risk_premiums.json` and keyed on
@@ -621,16 +621,24 @@ country table, vendored dated at `backend/market_risk_premiums.json` and keyed o
 and 0700.HK **down** 1.8%, so it is two-directional and cannot be read as tuning. See the
 2026-08-14 Done entry and `docs/data-sources-review.md` §4.
 
-**The risk-free leg is not**, and after measuring it, that is deliberate rather than
-pending. `_wacc()` still applies the US 10Y to every issuer.
+**The risk-free leg is now half done.** `_wacc()` applies the US 10Y to every issuer
+*except* a CNY-reporting one, which since 2026-08-19 is priced off ChinaBond's CGB 10-year net
+of the vendored CNY default spread and reported as `cgb_10y_less_spread`. Measured on the
+`0700_HK` fixture: **469.48 → 611.62, +30.3%**, golden composite 71 → 73, no other fixture
+touched. Against the 481.40 price the model moves from −2.5% to +27.1% — *away* from agreement
+with the quote, which is what makes it a correction rather than tuning.
 
-**What changed 2026-08-19: the substitution is now declared, not performed silently.**
-`risk_free_rate(fallback, currency)` returns `(rate, source)`, and a non-USD reporting
-currency comes back as **`usd_proxy`** in `dcf["assumptions"]`, beside the
-`equity_risk_premium_market` that names Hong Kong or China. **No number moved** — the seven
-pre-existing fixtures' full DCF payloads are byte-identical — so this closes nothing on its
-own. What it removes is the invisibility: a reader can now see that the two halves of CAPM
-name different countries, and there is one place for an HKD source to attach.
+**What is still open is HKD**, and it is open for a data reason rather than a modelling one: an
+HKD-reporting issuer such as `0002_HK` still gets `usd_proxy`, because HKMA has not responded on
+three attempts across six days (`502` on 08-14, `http_code=000` on 08-18 and again on 08-19).
+The peg argument below is the standing justification for that half, and it is sound for HKD in
+a way it never was for CNY.
+
+**How it got here, in two steps on the same day.** `risk_free_rate(fallback, currency)`
+first returned `(rate, source)` with every currency still resolving to the US 10-year — no number
+moved, and the point was only that the substitution became visible as `usd_proxy` beside the
+`equity_risk_premium_market` naming Hong Kong or China. That made the seam; the CNY source then
+attached to it. The HKD source still has nowhere to attach *from*, which is the remaining gap.
 
 **The peg argument is weaker than this item used to claim (found 2026-08-13).** The code
 justifies the USD risk-free rate by the HKD peg, and for an HKD-reporting issuer that
@@ -677,7 +685,7 @@ those were never the app's figures. With them:
 |---|---|---|---|---|
 | 4.30% (today) | 10.43% | 2.50% | **469.48** | **−2.5%** |
 | 1.70% (China 10Y raw) | 7.87% | 1.70% | 601.62 | +25.0% |
-| 1.10% (10Y − spread) | 7.28% | 1.10% | **611.62** | +27.0% |
+| 1.10% (10Y − spread) | 7.28% | 1.10% | **611.62** | +27.1% |
 
 **The effect is +30.3%, not +53.2%** — and the baseline now sits *within 2.5% of the market
 price*, where the old figure claimed +41.5% undervalued. A correction that takes the model from

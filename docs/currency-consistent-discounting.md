@@ -1,6 +1,17 @@
 # Currency-consistent discounting — 2026-08-17
 
-**Status: analysis only. No code was changed.**
+**Status: ~~analysis only. No code was changed.~~ Implemented 2026-08-19.**
+
+`risk_free_rate` now reads ChinaBond's CGB 10-year for a CNY-reporting issuer, net of the
+vendored CNY default spread, and reports it as `cgb_10y_less_spread`. The measured effect on the
+`0700_HK` fixture is **469.48 → 611.62 (+30.3%)**; the golden composite moves 71 → 73 and no
+other fixture moves at all. What follows is the analysis that decided it, left as written except
+where a figure was re-measured — the §4 tables and the §7 test carry their own correction notes.
+
+**The second question this document ended on — the terminal-growth ceiling — was answered by
+choosing to let it bind.** A 1.09% CNY risk-free asserts 1.09% perpetual growth for Tencent, and
+that is a consequence of a market observable rather than a forecast anyone here made. The
+alternative considered and rejected was showing both endpoints and declining to pick.
 
 `_wacc()` applies the US 10-year treasury yield to every issuer. For 0700.HK, whose statements
 are in CNY, that discounts CNY cash flows at a rate built in USD. TODOLIST recorded this as open
@@ -22,7 +33,7 @@ Inside one function, four inputs sit on three different bases
 
 | Input | Keyed on | Currency |
 |---|---|---|
-| Risk-free rate | `financialCurrency` since 2026-08-19 — but every currency still resolves to the US 10-year, now labelled `usd_proxy` | **USD, always** |
+| Risk-free rate | `financialCurrency` since 2026-08-19 — CNY reads China's own curve (`cgb_10y_less_spread`); everything else still resolves to the US 10-year, labelled `usd_proxy` | **CNY for CNY; USD otherwise** |
 | Equity risk premium | `financialCurrency` | reporting currency |
 | Tax rate | `currency` | trading currency |
 | Capital-structure weights | `totalDebt × fx` against `marketCap` | trading currency |
@@ -84,9 +95,10 @@ CNY risk-free = China 10Y − CNY default spread
               = 1.10%
 ```
 
-That is −320bp against the current 4.30%, not the −260bp TODOLIST recorded. The JSON already
-carries the number, currently marked "for audit, NOT to be added to anything" — this would be its
-first use in arithmetic, and the note would have to change with it.
+That is −320bp against the current 4.30%, not the −260bp TODOLIST recorded. The JSON carried the
+number marked "for audit, NOT to be added to anything"; **this became its first use in arithmetic
+on 2026-08-19**, and that note was rewritten to say so — subtracted from the yield, never added
+to the premium, and only where a local curve exists.
 
 ## 4. What it actually does, measured
 
@@ -105,7 +117,7 @@ and the second is what this document used to report.
 |---|---|---|---|---|
 | **4.30%** (US 10Y, today) | 10.43% | 2.50% | **469.48** | **−2.5%** |
 | **1.70%** (China 10Y, raw) | 7.87% | 1.70% | **601.62** | +25.0% |
-| **1.10%** (China 10Y − spread) | 7.28% | 1.10% | **611.62** | +27.0% |
+| **1.10%** (China 10Y − spread) | 7.28% | 1.10% | **611.62** | +27.1% |
 
 **The effect is +30.3%** (469.48 → 611.62), not the +53.2% recorded until today.
 
@@ -198,7 +210,7 @@ Applied to "use a CNY risk-free rate for a CNY-reporting issuer"
 
 | | Verdict |
 |---|---|
-| **1. Direction blindness** — would you do it if it moved fair value *away* from price? | **Pass, and more decisively after the 2026-08-19 re-measurement.** Fixture price 481.40. The model currently says **469.48 — within 2.5% of the price**, i.e. it agrees with the market. The change pushes it to **611.62 (+27.0%)**, breaking that agreement. A change that takes the model *from* agreeing with the quote *to* disagreeing by a quarter cannot be reverse-engineering the quote. (This row previously argued the same point from 680.99 → 1,024.98, figures measured without `market_bars`; see §4.) |
+| **1. Direction blindness** — would you do it if it moved fair value *away* from price? | **Pass, and more decisively after the 2026-08-19 re-measurement.** Fixture price 481.40. The model currently says **469.48 — within 2.5% of the price**, i.e. it agrees with the market. The change pushes it to **611.62 (+27.1%)**, breaking that agreement. A change that takes the model *from* agreeing with the quote *to* disagreeing by a quarter cannot be reverse-engineering the quote. (This row previously argued the same point from 680.99 → 1,024.98, figures measured without `market_bars`; see §4.) |
 | **2. Independent justification** | **Pass.** Discount rate and cash flow in the same currency is a consistency requirement, not a preference, and is standard in every international-valuation text. |
 | **3. No output-chosen parameters** | **Pass.** The rate is a published sovereign yield; the spread subtraction comes from the same table already vendored. Neither is picked by looking at the answer. |
 | **4. Cross-sectional** | **Pass.** It touches non-USD-reporting issuers only. Of the eight fixtures, exactly one — `0700_HK` — is affected; `0002_HK` reports HKD and the other six USD. It cannot be a price tracker because it does not move most names at all. |

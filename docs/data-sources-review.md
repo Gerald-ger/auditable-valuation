@@ -21,14 +21,14 @@ could. But a `†` figure can go stale without anything here failing, and vendor
 demonstrably do: FMP's UPS peers changed between 2026-08-14 and 2026-08-18 †, with
 `backend/tests/test_comps.py:714-715` still recording the earlier list and the later one written
 down nowhere in the repo — the marker illustrating itself. Where a `†` claim becomes
-load-bearing, this repo's own answer is to capture a fixture, which is what the HKD-reporting
-case needs before anything is built on it.
+load-bearing, this repo's own answer is to capture a fixture — which is what the HKD-reporting
+case got on 2026-08-19, as `0002_HK`.
 
 ---
 
 ## 1. What the platform actually depends on
 
-Four external systems. Not four data sources — **one data source and three narrow helpers.**
+Five external systems. Not five data sources — **one data source and four narrow helpers.**
 
 | System | What it feeds | Auth | Fallback when it fails |
 |---|---|---|---|
@@ -36,7 +36,18 @@ Four external systems. Not four data sources — **one data source and three nar
 | OpenBB → `federal_reserve` | US 10Y treasury yield → CAPM | none | `RISK_FREE_RATE = 0.043`, uncached so it self-heals |
 | OpenBB → `sec` | SEC filing markers, the 10,398-symbol search index | none | `[]` / stale disk cache |
 | OpenBB → `fmp` | peer discovery where no curated list exists | key | `[]`, curated map is consulted first |
+| **ChinaBond** (CCDC), direct HTTP *(added 2026-08-19)* | China 10Y government yield → CAPM for CNY-reporting issuers | none | degrades to the US 10Y labelled `usd_proxy`, uncached |
 | Ollama (local) | commentary only — never a number | none | features disable with a note |
+
+**ChinaBond is fetched at runtime and never vendored, and that is a licensing choice.** CCDC
+asserts *"版权所有 未经允许 请勿转载"* — the restriction is on redistribution, not access — so
+committing the curve into this public repo is the act the notice addresses and calling the
+endpoint is not. That inverts the pattern used for Damodaran's premiums next door, which are
+vendored precisely because Damodaran *publishes* a dated annual snapshot; the CGB curve is
+published daily, and a snapshot taken 2023-08-21 would be **85bp wrong** by 2026-08.
+
+It is the same licence class as yfinance — see §3, whose conclusion covers both: acceptable
+while the platform is personal, resolve before it is hosted.
 
 The swap point is deliberate and documented: `YFinanceProvider` exposes six methods
 (`get_quote`, `get_history`, `get_news`, `get_peer_snapshot`, `get_filings`,
@@ -101,7 +112,7 @@ eventual swap a bounded job rather than a rewrite — it is worth keeping clean.
 | Gap | Data actually needed | Free source? |
 |---|---|---|
 | ERP flat 5% for every market | per-market equity risk premium | ✅ **done 2026-08-14** — Damodaran, vendored |
-| HK/CNY discounted at the US 10Y | per-currency sovereign yield | ⚠️ HKMA publishes HKD, so it cannot serve the CNY case at all; **gated, see §7** *(this row pointed at §6 until 2026-08-18 — §6 is the beta/momentum section; the risk-free gating has always been §7)* |
+| HK/CNY discounted at the US 10Y | per-currency sovereign yield | ✅ **CNY done 2026-08-19** — ChinaBond's CGB 10Y, keyless, net of the vendored default spread. ⚠️ **HKD still open**: HKMA has not answered on three attempts across six days, and it was never able to serve the CNY case anyway. See §7 *(this row pointed at §6 until 2026-08-18 — §6 is the beta/momentum section; the risk-free gating has always been §7)* |
 | Interest income not netted from FCFF | cash interest *received*, per period | ✅ likely — SEC XBRL `CompanyFacts` (US only) |
 | AAPL/MSFT get no FCFF add-back | interest paid, every period | ✅ likely — same source |
 | Interest coverage mixing FY2025 and FY2023 | statements with explicit period labels | ✅ same source |
@@ -384,7 +395,7 @@ until spot-versus-forward is settled in writing with a worked example."*
    |---|---|---|---|---|
    | 4.30% — US 10Y, today | **469.48** | — | **−2.5%** | — |
    | 1.70% — China 10Y raw | 601.62 | **+28.1%** | +25.0% | −260bp |
-   | 1.10% — 10Y − CNY default spread | **611.62** | **+30.3%** | +27.0% | −320bp |
+   | 1.10% — 10Y − CNY default spread | **611.62** | **+30.3%** | +27.1% | −320bp |
 
    **Both rows, because they are not interchangeable.** `+28.1%` is the −260bp row; the
    applicable move is −320bp, whose row is `+30.3%`. Netting the default spread is worth only

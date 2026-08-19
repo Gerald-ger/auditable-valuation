@@ -326,12 +326,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 482 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 493 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 100 tests
 ```
 
-Of the 499 collected, 17 are `network`-marked and deselected by default.
+Of the 511 collected, 18 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; the three component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock. Rendering is
@@ -437,6 +437,14 @@ fallback when the fetch fails:
 So OpenBB is not an optional extra: without it you lose SEC chart depth, typo tolerance
 and peer betas as well as the live risk-free rate.
 
+**One rate does not come through OpenBB.** Since 2026-08-19 a CNY-reporting issuer — `0700.HK`
+is the one in the fixture set — is discounted at China's own 10-year rather than America's,
+read from ChinaBond's published CGB curve by a direct HTTP call in
+[backend/data_provider.py](backend/data_provider.py). No key, one fetch per calendar day, and an
+unreachable ChinaBond degrades to the US 10Y labelled `usd_proxy` — which is what the platform
+did before it existed. The curve is fetched at runtime and never stored here: CCDC restricts
+redistribution rather than access.
+
 **Free-tier reality check** (measured 2026-08-02 with valid Tiingo + FMP free keys, verified
 by raw HTTP against both vendors):
 
@@ -511,7 +519,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 482-test suite runs entirely offline against them. Provenance and capture dates in
+  the 493-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

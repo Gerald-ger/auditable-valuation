@@ -7,7 +7,93 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
-## 2026-08-19 (b) — both halves of CAPM finally read the same currency
+## 2026-08-19 (c) — Tencent stops being discounted at an American rate
+
+Backend **482 → 493**, live tests 17 → 18. **This one moves a number, deliberately**, and it is
+the first change in this sequence that does.
+
+`0700.HK` reports in CNY. CNY is not pegged to anything. Its cash flows were being discounted at
+the US 10-year — the defect the previous entry made *visible* as `usd_proxy` without fixing.
+`risk_free_rate` now reads China's own curve for CNY, and the pairing is complete: a Chinese
+premium against a Chinese rate.
+
+**Measured, and reproducible from a checkout** (`RISK_FREE_RATE` 4.30%, `TEST_CGB_10Y` 1.70%,
+CNY default spread 0.60%, CNY/HKD 1.10):
+
+| | risk-free | source | WACC | terminal g | fair value |
+|---|---|---|---|---|---|
+| before | 4.30% | `usd_proxy` | 10.43% | 2.50% | **469.48** |
+| after | 1.10% | `cgb_10y_less_spread` | 7.28% | 1.10% | **611.62** |
+
+**+30.3%**, and the golden moves with it: `0700_HK` `dcf_upside_pct` **47 → 80**, valuation pillar
+**62 → 70**, composite **71 → 73**, tier A throughout. **Every other fixture is untouched** —
+including `0002_HK`, which reports HKD and still gets the proxy.
+
+Against the 481.40 fixture price the model goes from **−2.5%** — agreeing with the market — to
+**+27.1%**. That direction is why this is a correction and not price-tuning: it *breaks* an
+existing agreement with the quote rather than manufacturing one.
+
+### Added
+
+- **`_cgb_10y()`** — ChinaBond's official CGB curve, **no API key of any kind**. Same contract as
+  `_us_treasury_10y`: one fetch per calendar day, failures never cached.
+
+  **Fetched, never vendored, and that is a licensing decision rather than an engineering one.**
+  CCDC asserts *"版权所有 未经允许 请勿转载"* — the restriction is on redistribution, not access,
+  so committing their numbers into a public AGPL repo is the act it addresses and calling the
+  endpoint is not. This inverts the Damodaran precedent next door, which works precisely because
+  Damodaran *publishes* a dated annual snapshot. The CGB curve is published daily.
+
+  The staleness argument agrees independently: a snapshot taken 2023-08-21 would be **85bp wrong
+  today**, roughly 12% on a perpetuity terminal value.
+
+- **Two traps the endpoint sets, both handled and both tested.** A range wider than a year
+  returns **HTTP 200 with an empty table** rather than an error, and so does a window containing
+  no trading days — hence a 20-day window, wide enough to clear a nine-day New Year closure.
+  Both parse to `None`, which is why the parse is checked and the status code is not.
+
+- **`sovereign_default_spread`**, and `CNY.default_spread` stops being audit-only. A local
+  government yield is not risk-free: China's 10Y contains China's own default risk and the
+  country-inclusive ERP contains it again. Subtracted once, **from the yield, never added to the
+  premium** — and never from the US 10Y, which is the mature-market base the table is built on.
+
+### Changed
+
+- **`test_a_reconcilable_gap_names_the_assumption_that_closes_it` changed branch, and the change
+  is the finding.** On the US proxy the gap shut on the *terminal* rate (−0.78%). Priced off the
+  CGB curve no terminal rate inside the model's band reaches it, so `required_terminal_growth` is
+  `None` — the documented way of saying exactly that — and the reconciliation falls through to
+  the near-term leg at roughly −9.6%. **The verdict is still `reconcilable`**: the platform has
+  not started calling the market wrong, it has moved which forecast it disagrees about.
+
+- **Two FX tests now pin terminal growth as well as WACC.** `wacc_override` used to isolate the
+  currency comparison because both variants shared one risk-free rate. They no longer do, and the
+  rate drives `min(TERMINAL_GROWTH, rf)` — which `wacc_override` does not reach.
+
+- **The offline pin returns a rate, not `None`.** `None` would have been quieter: every currency
+  would degrade to the proxy and no golden would move. That is exactly why it is wrong — the
+  goldens would pin the ChinaBond-is-down path while production ran the other one.
+
+### Verification
+
+**13 of 13 mutations caught** — 12 by the offline suite, and the thirteenth (a window past the
+one-year limit) only by the live contract test, which is the one failure mode that cannot be
+seen offline. Four of those 13 survived a first pass because they live inside the parser the
+autouse fixture stubs out; they are now covered by six tests that replace `urlopen` rather than
+the function, so the real parse runs.
+
+A hard probe confirms the offline suite **never reaches ChinaBond**: making `urlopen` raise on
+entry leaves all 493 tests passing. The probe is on the *socket*, not on `_cgb_10y` — an earlier
+version raised inside the function, which stopped meaning anything once six tests began calling
+it deliberately with the transport stubbed. Only a real socket call is a leak.
+
+**One transient miss was observed and is worth recording rather than smoothing over.** The live
+contract test failed once during a full `-m network` run and passed on retry; 8 rapid uncached
+calls immediately after all succeeded in 1.67-3.80 s, so ChinaBond is not throttling and the
+cause is unidentified. It matters little because failures are **not cached** — a miss degrades
+one request to the USD proxy, the next retries, and the source label says which happened. It
+would matter a great deal if failures were sticky, since the two rates are 30% of Tencent's fair
+value apart.
 
 Backend **467 → 482**. **No number moved, and this is measured rather than argued** — with its
 scope stated, because the first two drafts of this sentence overstated it. Dumping
