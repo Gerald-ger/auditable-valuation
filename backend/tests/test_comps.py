@@ -1016,7 +1016,6 @@ def wired_endpoint(monkeypatch):
     monkeypatch.setattr(main, "_peer_beta_inputs", lambda f: None)
     monkeypatch.setattr(comps.provider, "get_peer_snapshot",
                         lambda t: (_ for _ in ()).throw(ValueError("no peer")))
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     return main.comps_endpoint
 
 

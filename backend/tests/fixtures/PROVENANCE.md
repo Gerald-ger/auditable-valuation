@@ -7,19 +7,22 @@ covered by the repository's AGPL-3.0 licence.
 |---|---|
 | Source | Yahoo Finance, retrieved through [yfinance](https://github.com/ranaroussi/yfinance) |
 | Captured by | [`backend/tests/capture_fixtures.py`](../capture_fixtures.py) |
-| Captured on | fundamentals **2026-08-10**, weekly bars **2026-08-14** |
+| Captured on | fundamentals **2026-08-10**, weekly bars **2026-08-14** — except `0002_HK`, both halves **2026-08-19** |
 | Amended | **2026-08-18** — `regularMarketTime` and `exchangeDataDelayedBy` added as `null`; see below |
-| Size | 424 KB across 16 files |
+| Size | 421 KiB across 18 files |
 
 ## What is here
 
-**Fundamentals** (7 files) — one `get_fundamentals` payload per ticker: `income_statement`,
+**Fundamentals** (8 files) — one `get_fundamentals` payload per ticker: `income_statement`,
 `balance_sheet`, `cash_flow`, `estimates`, and a whitelisted `info` dict of the
 `data_provider.INFO_KEYS` fields, currently **51**.
 
-`AAPL` · `MSFT` · `JPM` · `O` · `XOM` · `RIVN` · `0700_HK`
+`AAPL` · `MSFT` · `JPM` · `O` · `XOM` · `RIVN` · `0700_HK` · `0002_HK`
 
-Two of those 51 are `null` in every file rather than captured. `regularMarketTime` and
+Two of those 51 are `null` in every file **captured before 2026-08-19** rather than
+captured — `0002_HK` came after the fix and carries real values for both, which makes it
+the only fixture here with no `null` among those 51. (Its *statements* carry 202, as every
+fixture's do — an absent line item is absent.) `regularMarketTime` and
 `exchangeDataDelayedBy` were added to `INFO_KEYS` on 2026-08-14, four days after the
 capture, and the fixtures went on being a 49-key subset of a 51-key contract with nothing
 able to notice — every test reading either field saw `None` and could not distinguish
@@ -29,18 +32,24 @@ match, so the next field added to `INFO_KEYS` fails the suite instead of passing
 Re-capturing would replace both nulls with real figures, at the cost of moving every
 pinned figure and golden score with them.
 
-**Bars** (`bars/`, 9 files) — weekly closes only, thinned to `{time, close}`, ~261 rows each.
-The same seven tickers plus `_GSPC` (S&P 500) and `_HSI` (Hang Seng) as regression benchmarks
+**Bars** (`bars/`, 10 files) — weekly closes only, thinned to `{time, close}`, ~261 rows each.
+The same eight tickers plus `_GSPC` (S&P 500) and `_HSI` (Hang Seng) as regression benchmarks
 for the beta and relative-strength calculations.
 
 ## Why they are committed
 
 Each ticker is here because it exercises a distinct branch of `sector_weights.classify` —
-technology, bank, REIT, energy, pre-profit and the Hong Kong / non-USD reporting path.
-Regenerating with different names would silently stop testing those branches.
+technology, bank, REIT, energy, pre-profit, utilities, and the Hong Kong / non-USD reporting
+path. Regenerating with different names would silently stop testing those branches.
 
-Committing them is what lets the 467-test backend suite run **entirely offline**, in CI on a
-clean runner, with no network access and no API key. `pytest.ini` deselects the 16
+`0002_HK` (CLP Holdings) carries a second job the others do not: it is the only filer here
+that both **reports in HKD** and is eligible for a DCF, so it is what exercises a discount
+rate in a currency other than USD. The obvious HKD names cannot — `classify` routes
+`sector == "real estate"` and `"bank" in industry` away from the model before the rate is
+reached.
+
+Committing them is what lets the 482-test backend suite run **entirely offline**, in CI on a
+clean runner, with no network access and no API key. `pytest.ini` deselects the 17
 `network`-marked tests by default for the same reason.
 
 ## Standing
@@ -60,4 +69,11 @@ Regenerate with:
 
 ```powershell
 backend\.venv\Scripts\python.exe backend\tests\capture_fixtures.py
+```
+
+That rewrites **every** file above and moves every pinned figure and golden score with them.
+To add or refresh one name without disturbing the rest — which is how `0002_HK` was added:
+
+```powershell
+backend\.venv\Scripts\python.exe backend\tests\capture_fixtures.py --only 0002.HK
 ```

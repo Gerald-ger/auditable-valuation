@@ -326,12 +326,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 467 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 482 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 100 tests
 ```
 
-Of the 484 collected, 17 are `network`-marked and deselected by default.
+Of the 499 collected, 17 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; the three component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock. Rendering is
@@ -510,8 +510,8 @@ source of the served work. Running it locally for yourself carries no such oblig
 **What the licence does not cover.** Two things in this repo are third-party material, included
 under attribution rather than owned:
 
-- `backend/tests/fixtures/` — captured Yahoo Finance responses for nine symbols, kept because
-  the 467-test suite runs entirely offline against them. Provenance and capture dates in
+- `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
+  the 482-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
@@ -649,8 +649,11 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   rather than presenting the clamped figure as the measurement.
 
   Deliberately **published rather than flagged**: a "fit too weak" threshold would be a
-  constant these seven fixtures cannot calibrate, since R² jumps 0.028 → 0.148 with nothing
-  in between. And note the asymmetry it introduces — beta now carries an interval while the
+  constant eight fixtures cannot calibrate. R² runs 0.028, 0.055, 0.148, 0.169, then a jump
+  to 0.42–0.69, so any cut in the weak range would sit between two adjacent observations
+  rather than be fitted to anything. *(This read "0.028 → 0.148 with nothing in between"
+  until 2026-08-19, when `0002_HK` landed at 0.055 — inside the gap the sentence rested on.
+  The conclusion survives the correction; that particular evidence for it did not.)* And note the asymmetry it introduces — beta now carries an interval while the
   growth rate and equity risk premium do not, which does not mean those are precise.
 - **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
   Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each

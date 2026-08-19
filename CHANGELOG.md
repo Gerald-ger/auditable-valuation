@@ -7,6 +7,105 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-19 (b) — both halves of CAPM finally read the same currency
+
+Backend **467 → 482**. **No number moved, and this time that is proved rather than argued:**
+the full `dcf_valuation` payload for all seven pre-existing fixtures — every assumption, every
+sensitivity cell — is **byte-identical** to the same dump taken at `HEAD` before the change.
+
+The defect was an asymmetry nobody had to introduce, because only one half was ever migrated.
+`equity_risk_premium_for` has read `financialCurrency` since the Damodaran snapshot landed, so
+CLP Holdings was priced off **Hong Kong's 5.01% equity risk premium** — and a **United States**
+risk-free rate. That pairing is not a rate in any market. It was invisible because both halves
+resolve to plausible-looking numbers.
+
+### Added
+
+- **`0002.HK` (CLP Holdings) as an eighth fixture** — the only one that both reports in HKD and
+  is eligible for a DCF, and the only one covering the `utilities` classification.
+
+  **The plan this came from named `0016.HK` or `2388.HK`, and both are unusable.** `classify`
+  routes `sector == "real estate"` to `real_estate_reit` and `"bank" in industry` to
+  `financials_bank`, and `dcf_applies` is `False` for both — a fixture that cannot run the model
+  cannot exercise the rate the model discounts at. `0066.HK` (MTR) fails differently: `railroad`
+  matches `LOGISTICS_INDUSTRY_HINTS`, and its free cash flow is **-7.72bn**, so its DCF errors.
+
+  It arrives with more protection than expected. Only **three** goldens police the risk-free
+  rate at all — `XOM`, `0700_HK` and now `0002_HK`. `JPM`, `O` and `RIVN` have no
+  `dcf_upside_pct`, and **`AAPL` and `MSFT` sit clamped at 0**, so a rise in the rate cannot move
+  a score already at the floor. The HKD case would otherwise have been the fixture set's
+  thinnest-covered path, not its best.
+
+- **`capture_fixtures.py --only TICKER`.** Adding a fixture had no safe path: both loops walk
+  all of `TICKERS`, so capturing an eighth name would have refetched the seven the valuation
+  tests are calibrated against and moved every golden with them. All 16 pre-existing files were
+  checksummed before and after and are unchanged.
+
+- **`risk_free_source` in `dcf["assumptions"]`** — `us_treasury_10y`, `platform_default`, or
+  `usd_proxy`. It sits beside `equity_risk_premium_market`, so a reader can see the two halves
+  of CAPM name different countries. **The deliverable is the label, not a number.**
+
+### Changed
+
+- **`risk_free_rate(fallback)` → `risk_free_rate(fallback, currency=None) -> (rate, source)`,**
+  keyed on `financialCurrency` for the same reason `equity_risk_premium_for` is: a discount rate
+  matches the currency of the cash flows, not of the shares. The fetch moved to
+  `_us_treasury_10y()`.
+
+- **The offline pin now patches the fetch, not the function.** `conftest.pinned_risk_free_rate`
+  replaces `data_provider._us_treasury_10y`, so the currency branch executes for real in all 482
+  tests. Patching `risk_free_rate` itself is exactly the trap
+  [currency-consistent-discounting.md](docs/currency-consistent-discounting.md) predicted before
+  the branch existed — it would satisfy every caller while guaranteeing no test ever ran the new
+  code, and the suite would stay green whether it worked or not.
+
+- **39 per-test monkeypatches deleted**, all identical and all redundant with that autouse
+  fixture. Proven by deletion, then confirmed load-bearing from the other side: mutating the
+  autouse pin to `0.1234` fails 10 tests. `test_a_low_rate_regime_pulls_the_terminal_rate_down`
+  lost its second patch too — the fixture reads `fm.RISK_FREE_RATE` when called, so moving the
+  constant already moves the pinned rate.
+
+### Fixed after an independent review of this change
+
+Ten mutations, ten caught. What the review found was almost entirely in the **prose**, which is
+where this change was weakest:
+
+- **`PROVENANCE.md` claimed "484 KB across 18 files".** The real figure is **421 KiB** — 484 was
+  `du -sk`, which reports disk blocks, not bytes. The pre-existing "424 KB across 16" was already
+  wrong the same way, and the edit propagated it rather than measuring. It also said "477-test
+  suite" while README and CHANGELOG said 482, and "no `null` at all" where the truth is no null
+  among the 51 `info` keys — the statements carry 202, as every fixture's do.
+- **`test_only_the_reit_moved` covered 7 of 8 fixtures while its docstring said "every other
+  fixture".** It hand-writes its list where `test_scoring` and `test_fixtures` parametrize over
+  `sorted(FIXTURES)` and picked the new name up for free. Now asserts
+  `set(expected) == set(FIXTURES)`, so the list cannot fall behind again.
+- **`.upper()` on vendor data was a new crash surface.** `risk_free_rate(0.043, 3.14)` raised
+  `AttributeError` inside `_wacc`; `equity_risk_premium_for` degrades on the same input. Coerced
+  with `str()` so the two halves are equally survivable.
+- **A docstring over-claimed.** It said this reads "the same input and for the same reason" as
+  `equity_risk_premium_for`. Same *field*, not same normalisation: this case-folds and the
+  premium half looks up exactly, so a lowercase `"hkd"` would report `usd_proxy` here and
+  `mature_market` there, naming no country. Unreachable — every vendor code is uppercase — and
+  documented rather than fixed, since folding both means changing the premium half.
+- **`comps.py:145` cited a rule that had moved.** It pointed at `risk_free_rate` for the
+  don't-cache-failures rule, which now lives in `_us_treasury_10y`.
+- **`README.md` said "nine symbols"** where `bars/` now holds ten.
+
+### Not done, deliberately
+
+- **The cache was not re-keyed to `(currency, date)`,** which the plan specified. Every currency
+  resolves to the same US 10-year today, so a currency-keyed cache would hold duplicate entries
+  of one value. It becomes right when a second source exists, which is 5c.
+
+- **CNY is still discounted at a US rate.** 5b makes that visible in `assumptions` instead of
+  buried in a code comment; it does not fix it. Segment B — 61% of HK large caps, including
+  `0700.HK` — needs a China 10-year and remains the largest known valuation defect here.
+
+- **HKMA is still not wired.** 5c stays blocked on reachability: `502` on 2026-08-14, and
+  `http_code=000` after 25s on 2026-08-18 while the same host answered `404` in 1.2s.
+
+---
+
 ## 2026-08-19 — peer discovery stops needing a credential
 
 Backend **452 → 467**, frontend 100 unchanged. No model output moved, and the argument for that is

@@ -22,7 +22,7 @@ Inside one function, four inputs sit on three different bases
 
 | Input | Keyed on | Currency |
 |---|---|---|
-| Risk-free rate | nothing — `risk_free_rate()` takes no country parameter | **USD, always** |
+| Risk-free rate | `financialCurrency` since 2026-08-19 — but every currency still resolves to the US 10-year, now labelled `usd_proxy` | **USD, always** |
 | Equity risk premium | `financialCurrency` | reporting currency |
 | Tax rate | `currency` | trading currency |
 | Capital-structure weights | `totalDebt × fx` against `marketCap` | trading currency |
@@ -185,9 +185,11 @@ The change passes all four. **The blocker is §6, not the test.**
 
 Recorded now so the estimate does not have to be rebuilt later.
 
-- `risk_free_rate()` ([data_provider.py:114-137](../backend/data_provider.py#L114-L137)) takes
-  `(fallback)` and caches one rate in a module global keyed only by date. It would need a currency
-  parameter and a per-currency cache, plus a source per market.
+- `risk_free_rate()` took `(fallback)` and cached one rate in a module global keyed only by
+  date. **Half-discharged 2026-08-19:** it now takes `(fallback, currency)` and returns
+  `(rate, source)`, the fetch having moved to `data_provider._us_treasury_10y`. The per-currency
+  cache was deliberately *not* added — with one source, currency keys would store duplicates of
+  a single value — so what remains is a source per market, which is the blocked part below.
 
   **Source availability, corrected 2026-08-18.** This bullet used to end *"China's 10-year is
   widely published; HKMA publishes Exchange Fund yields free (unverified from this machine —
@@ -205,9 +207,15 @@ Recorded now so the estimate does not have to be rebuilt later.
   single observations from one machine on one network. None is reproducible from a checkout,
   and neither failure distinguishes a broken endpoint from a filtered route. See the `†`
   convention at the top of [data-sources-review.md](data-sources-review.md).*
-- **`conftest.py`'s `pinned_risk_free_rate` is `autouse`** and returns one constant for every call.
-  If the rate becomes currency-aware, that fixture has to become currency-aware too, or **the new
-  path is never exercised by the suite** while every test still passes.
+- ~~**`conftest.py`'s `pinned_risk_free_rate` is `autouse`** and returns one constant for every
+  call. If the rate becomes currency-aware, that fixture has to become currency-aware too, or
+  **the new path is never exercised by the suite** while every test still passes.~~
+  **Discharged 2026-08-19, though not the way this predicted.** Making the *fixture*
+  currency-aware would have meant pinning a different rate per currency — a fiction, since
+  every currency genuinely resolves to the same US 10-year. The fixture instead moved down a
+  level to patch `data_provider._us_treasury_10y`, the network fetch, leaving the currency
+  branch itself unstubbed and executed by all 482 tests. The warning was right about the
+  hazard and wrong about the remedy.
 - `golden_scores.json` moves for `0700_HK`: `dcf_upside_pct` feeds the valuation pillar.
 - [test_valuation.py:355](../backend/tests/test_valuation.py#L355) pins AAPL's fair value at
   ≈146.49. AAPL reports USD and must not move — that test becomes the regression guard proving the

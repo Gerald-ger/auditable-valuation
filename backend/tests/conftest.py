@@ -30,7 +30,7 @@ BARS_DIR = FIXTURE_DIR / "bars"
 # rule has to be made deliberately here too — these fixtures were captured
 # against a specific index and silently re-pointing them would compare a
 # company's returns to an index its stored bars were never aligned with.
-HOME_INDEX = {"0700_HK": "_HSI"}
+HOME_INDEX = {"0700_HK": "_HSI", "0002_HK": "_HSI"}
 
 
 def load_bars(stem: str) -> list[dict]:
@@ -56,10 +56,19 @@ def pinned_risk_free_rate(monkeypatch):
     includes dcf_upside_pct, and _wacc() pulls the *live* US 10Y treasury yield
     through OpenBB. Left alone, every golden score would drift with the treasury
     market and this 'offline' suite would quietly require a network call.
+
+    Pins `_us_treasury_10y`, the fetch, rather than `risk_free_rate`, the
+    function that decides what to do per currency. Stubbing the outer function
+    is the trap docs/currency-consistent-discounting.md predicted before the
+    currency branch existed: it would satisfy every caller while guaranteeing
+    that no test ever executed the branch, and the suite would stay green
+    whether that branch worked or not. Patched on `data_provider` because
+    `risk_free_rate` resolves the name from its own module globals at call time
+    — `financial_models` imports only `risk_free_rate` itself.
     """
-    from backend import financial_models
-    monkeypatch.setattr(financial_models, "risk_free_rate",
-                        lambda fallback: financial_models.RISK_FREE_RATE)
+    from backend import data_provider, financial_models
+    monkeypatch.setattr(data_provider, "_us_treasury_10y",
+                        lambda: financial_models.RISK_FREE_RATE)
 
 
 # CNY -> HKD. A round test constant, not a market quote: the point is that the

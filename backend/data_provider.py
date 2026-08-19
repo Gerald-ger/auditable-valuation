@@ -111,12 +111,16 @@ def _clean(value):
 _RF_CACHE: tuple[str, float] | None = None  # (date, rate) — treasury rates move once a day
 
 
-def risk_free_rate(fallback: float) -> float:
-    """US 10-year treasury yield for CAPM (reference doc 1.1.2), via OpenBB.
+def _us_treasury_10y() -> float | None:
+    """The live US 10-year yield, or **None** when it cannot be fetched.
 
-    Fetched at most once per calendar day. Returns `fallback` — without caching
-    it — whenever OpenBB is missing or the Fed feed fails, so the DCF keeps
-    working offline and starts using live rates again as soon as it can.
+    Split out of `risk_free_rate` below so that the currency branch runs for
+    real under test. The offline suite pins *this* function rather than the one
+    above it, which is the difference between a fixture that keeps the suite
+    offline and a fixture that stubs out the very logic under test.
+
+    Fetched at most once per calendar day. A failure is **not** cached, so a
+    transient outage does not pin the fallback for the rest of the process.
     """
     global _RF_CACHE
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -134,7 +138,52 @@ def risk_free_rate(fallback: float) -> float:
             return rate
     except Exception:
         pass
-    return fallback
+    return None
+
+
+def risk_free_rate(fallback: float,
+                   currency: str | None = None) -> tuple[float, str]:
+    """(rate, source) for the currency the discounted cash flows are in.
+
+    Reads `financialCurrency`, the same *field* and for the same reason as
+    `financial_models.equity_risk_premium_for`: a discount rate has to match the
+    currency of the cash flows it discounts. Until now only the *premium* half
+    of CAPM obeyed that — 0002.HK was priced off Hong Kong's 5.01% equity risk
+    premium and a **United States** risk-free rate, which is not a rate in any
+    market.
+
+    The two halves do not *normalise* alike, and the claim above is about the
+    field, not the spelling: this case-folds, `equity_risk_premium_for` looks up
+    the code exactly. So a lowercase `"hkd"` would report `usd_proxy` here and
+    fall to `mature_market` there, naming no country. Unreachable rather than
+    handled — every code in `info["financialCurrency"]` is uppercase — and left
+    alone because folding both is a change to the premium half, which this is
+    not. `None` means the caller did not say; it is treated as USD, which is
+    what this function did before the parameter existed.
+
+    **This function changes no number today, and that is the whole of it.**
+    Every currency resolves to the US 10-year, exactly as before. What it adds
+    is that the substitution is now *named* in `dcf["assumptions"]` instead of
+    being invisible, and that there is one place for a second source to attach.
+
+    Three sources, mirroring `equity_risk_premium_for`:
+      us_treasury_10y   USD cash flows, and the Fed feed answered
+      platform_default  USD cash flows, no feed — `fallback` stands in
+      usd_proxy         the cash flows are **not** USD; a US rate is standing in
+
+    A non-USD currency reports `usd_proxy` whether the US number came from the
+    feed or from `fallback`. The distinction the reader needs is that no rate
+    for *this* currency was used, and that is identical in both cases.
+    """
+    rate = _us_treasury_10y()
+    # `str(...)` because this reads straight off a vendor payload: a non-string
+    # here used to be harmless and would now raise inside `_wacc`, which is a
+    # fragility this change would have introduced rather than found.
+    if str(currency or "USD").upper() != "USD":
+        return (fallback if rate is None else rate), "usd_proxy"
+    if rate is None:
+        return fallback, "platform_default"
+    return rate, "us_treasury_10y"
 
 
 _FX_CACHE: dict[tuple[str, str], tuple[str, float]] = {}  # (pair) -> (date, rate)

@@ -520,7 +520,9 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     #     count the interest differential.
     # What keeps it open is the terminal-growth ceiling: a 1.1-1.7% CNY rate
     # also asserts 1.1-1.7% perpetual growth for Tencent. See TODOLIST.
-    rf = risk_free_rate(RISK_FREE_RATE)
+    # Both halves of CAPM now read the same currency. They did not until
+    # 2026-08-19: the premium was Hong Kong's while the rate was America's.
+    rf, rf_source = risk_free_rate(RISK_FREE_RATE, info.get("financialCurrency"))
     # The ERP half of the same pair, and the half that can be sourced today.
     erp, erp_source, erp_market = equity_risk_premium_for(
         info.get("financialCurrency"))
@@ -540,6 +542,11 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
                (total_debt / total) * cost_of_debt * (1 - tax_rate)
     return {
         "risk_free_rate": round(rf, 4),
+        # `usd_proxy` means this rate is not this currency's. Reported beside
+        # `equity_risk_premium_market` below, which names the country the *other*
+        # half of CAPM came from, so a reader can see the two halves disagree —
+        # a Hong Kong premium against a United States rate.
+        "risk_free_source": rf_source,
         "beta": beta,
         "beta_source": beta_source,
         "beta_reported": info.get("beta"),

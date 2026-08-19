@@ -12,8 +12,9 @@ import math
 
 import pytest
 
-from conftest import TEST_CNY_HKD, load_bars, load_fundamentals
+from conftest import FIXTURES, TEST_CNY_HKD, load_bars, load_fundamentals
 
+from backend import data_provider
 from backend import financial_models as fm
 from backend import statements
 
@@ -122,7 +123,6 @@ def test_unknown_target_leverage_degrades_to_the_levered_median():
 
 def test_xom_reported_beta_is_replaced_by_the_peer_median(monkeypatch):
     """The whole point of item 1: yfinance's 0.173 made XOM look cheap."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("XOM")
     assert f["info"]["beta"] < fm.BETA_MIN, "fixture must still exercise this path"
 
@@ -139,7 +139,6 @@ def test_xom_reported_beta_is_replaced_by_the_peer_median(monkeypatch):
 @pytest.mark.parametrize("stem", ["XOM", "AAPL"])
 def test_fair_value_falls_as_beta_rises(stem, monkeypatch):
     """The invariant the 0.173 reading violated: more risk cannot be worth more."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals(stem)
     # peers only take effect when the reported beta is not credible
     f["info"]["beta"] = 0.0
@@ -206,7 +205,6 @@ def test_aapl_interest_coverage_reads_one_year(monkeypatch):
     """The fixture this was found on. The pinned period is stale — yfinance has
     not reported AAPL's interest since 2023 — but stale-and-consistent is a
     ratio, and fresh-over-stale is not."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     coverage, period = statements.interest_coverage(f["income_statement"])
     assert period == "2023-09-30"
@@ -228,7 +226,6 @@ def test_ratio_analysis_reports_the_period_its_coverage_came_from():
 def test_net_debt_names_the_leg_it_had_to_assume(monkeypatch):
     """`or 0` keeps the DCF working when one field is absent, but an unreported
     totalDebt otherwise reads as a debt-free company: AAPL 143.99 -> 147.41."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     assert fm.dcf_valuation(f)["diagnostics"]["net_debt_assumed_zero"] == []
 
@@ -237,7 +234,6 @@ def test_net_debt_names_the_leg_it_had_to_assume(monkeypatch):
 
 
 def test_both_missing_bridge_legs_are_named(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["info"]["totalDebt"] = f["info"]["totalCash"] = None
     diagnostics = fm.dcf_valuation(f)["diagnostics"]
@@ -386,7 +382,6 @@ def test_peer_leverage_is_put_on_one_basis_before_unlevering():
 
 def test_credit_spread_differentiates_real_companies(monkeypatch):
     """Previously every company paid an identical flat +1.5%."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     spreads = {}
     for stem in ("AAPL", "MSFT", "XOM", "O"):
         spreads[stem] = fm._credit_spread(load_fundamentals(stem))[0]
@@ -463,7 +458,6 @@ def test_enterprise_value_is_the_sum_of_the_two_legs():
 
 def test_two_stage_raises_valuation_versus_a_single_five_year_fade(monkeypatch):
     """A durable compounder gets more than five years before the fade starts."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("MSFT")
     ten_year = fm.dcf_valuation(f)
 
@@ -479,7 +473,6 @@ def test_two_stage_raises_valuation_versus_a_single_five_year_fade(monkeypatch):
 
 @pytest.mark.parametrize("stem", ["AAPL", "MSFT", "XOM", "0700_HK"])
 def test_dcf_reports_terminal_share_and_implied_exit_multiple(stem, monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     d = fm.dcf_valuation(load_fundamentals(stem))
     diag = d["diagnostics"]
     assert 0 < diag["terminal_value_share"] < 1
@@ -488,7 +481,6 @@ def test_dcf_reports_terminal_share_and_implied_exit_multiple(stem, monkeypatch)
 
 
 def test_terminal_share_rises_as_wacc_approaches_terminal_growth(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     tight = fm.dcf_valuation(f, wacc_override=0.05)["diagnostics"]["terminal_value_share"]
     wide = fm.dcf_valuation(f, wacc_override=0.12)["diagnostics"]["terminal_value_share"]
@@ -496,7 +488,6 @@ def test_terminal_share_rises_as_wacc_approaches_terminal_growth(monkeypatch):
 
 
 def test_implied_exit_multiple_is_absent_without_ebitda(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["info"]["ebitda"] = None
     assert fm.dcf_valuation(f)["diagnostics"]["implied_exit_ev_ebitda"] is None
@@ -511,7 +502,6 @@ def test_market_implied_growth_reproduces_the_traded_multiple(stem, monkeypatch)
     decoration. Feeding the solved rate back through
     `conv x (1+g)/(WACC-g)` must land on the traded multiple.
     """
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals(stem)
     d = fm.dcf_valuation(f)
     diag, a = d["diagnostics"], d["assumptions"]
@@ -529,7 +519,6 @@ def test_market_implied_growth_is_flagged_against_nominal_gdp(monkeypatch):
     growth, above the ~4% an economy grows; 0700.HK needs 3.23% and does not.
     That difference is the whole point of the flag — it separates 'the market is
     pricing supernormal growth' from 'the DCF disagrees about the forecast'."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     aapl = fm.dcf_valuation(load_fundamentals("AAPL"))["diagnostics"]
     tencent = fm.dcf_valuation(load_fundamentals("0700_HK"))["diagnostics"]
 
@@ -549,7 +538,6 @@ def test_a_negative_consensus_is_used_rather_than_floored_at_zero(monkeypatch):
     valuation tool. The ceiling stays, because erring there produces
     conservatism; the floor is now only a data-validity bound.
     """
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("XOM")
     d = fm.dcf_valuation(f)
     a = d["assumptions"]
@@ -568,7 +556,6 @@ def test_an_implausible_consensus_is_rejected_not_truncated(monkeypatch):
     data; one of 42.6% from 55 analysts is not, and the model must tell them
     apart rather than capping both.
     """
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["estimates"] = {"revenue_growth_fwd": 9.0}
     f["info"]["revenueGrowth"] = 0.08
@@ -583,7 +570,6 @@ def test_a_high_but_credible_consensus_is_used_as_published(monkeypatch):
     """NVDA's 42.6% from 55 analysts and AMD's 72.1% are observations, not noise.
     The old 25% ceiling truncated both, which produced the whole of NVDA's
     -58.7% verdict."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["estimates"] = {"revenue_growth_fwd": 0.7212}
     a = fm.dcf_valuation(f)["assumptions"]
@@ -609,7 +595,6 @@ def test_a_synthesised_default_growth_is_not_reported_as_measured(monkeypatch):
     number was previously labelled `trailing_revenue_growth` — indistinguishable
     downstream from a figure somebody actually measured, which is the silent
     assumption the platform is meant not to make."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["estimates"] = {}
     f["info"]["revenueGrowth"] = None
@@ -620,7 +605,6 @@ def test_a_synthesised_default_growth_is_not_reported_as_measured(monkeypatch):
 
 
 def test_each_growth_provenance_gets_its_own_label(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["estimates"] = {"revenue_growth_fwd": 0.11}
     assert fm.dcf_valuation(f)["assumptions"]["growth_source"] == "analyst_consensus_fwd"
@@ -635,7 +619,6 @@ def test_a_reconcilable_gap_names_the_assumption_that_closes_it(monkeypatch):
     it meets the market at a terminal rate below what an economy grows. That is
     a forecast disagreement, and saying so is different from saying the market
     is wrong."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("0700_HK")
     r = fm.reconcile_to_price(f, fm.dcf_valuation(f))
     assert r["verdict"] == "reconcilable"
@@ -655,7 +638,6 @@ def test_an_irreconcilable_gap_says_so_rather_than_blaming_the_company(stem, mon
     a 42bp move in the risk-free rate; testing it against consensus holds it
     steady from 4.0% to 5.2%.
     """
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals(stem)
     d = fm.dcf_valuation(f)
     r = fm.reconcile_to_price(f, d)
@@ -674,7 +656,7 @@ def test_the_verdict_does_not_flip_on_a_small_move_in_the_risk_free_rate(monkeyp
     f = load_fundamentals("AAPL")
     verdicts = set()
     for rate in (0.040, 0.043, 0.0472, 0.052):
-        monkeypatch.setattr(fm, "risk_free_rate", lambda fb, v=rate: v)
+        monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda v=rate: v)
         verdicts.add(fm.reconcile_to_price(f, fm.dcf_valuation(f))["verdict"])
     assert verdicts == {"irreconcilable"}
 
@@ -682,7 +664,6 @@ def test_the_verdict_does_not_flip_on_a_small_move_in_the_risk_free_rate(monkeyp
 def test_a_small_gap_is_left_alone(monkeypatch):
     """Within 10% there is no binding assumption to name, and naming one would
     be reading noise."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     d = fm.dcf_valuation(f)
     d["current_price"] = d["fair_value_per_share"] * 1.04
@@ -694,7 +675,6 @@ def test_a_small_gap_is_left_alone(monkeypatch):
 def test_the_back_solver_returns_none_outside_its_reachable_band(monkeypatch):
     """The generalised solver underneath both back-solves. 'No rate in this band
     gets you there' is the result that makes a gap irreconcilable."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     assert fm.solve_for_fair_value(f, 1e9, "growth_rate", 0.0, 0.25) is None
     hit = fm.solve_for_fair_value(
@@ -711,7 +691,6 @@ def test_the_base_fcf_bridge_is_auditable_and_sums(monkeypatch):
     here can be looked up in the filing. Under a no-hidden-adjustments rule the
     more transparent construction wins even though it looks more aggressive.
     """
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     q = fm.dcf_valuation(load_fundamentals("MSFT"))["diagnostics"]["base_fcf_quality"]
 
     assert q["anomalous"] is True
@@ -722,7 +701,6 @@ def test_a_normalised_base_never_replaces_the_reported_one(monkeypatch):
     """The platform can detect an anomaly but cannot read the notes to identify
     its cause, so the adjustment stays an alternative shown beside the headline.
     Substituting it would be exactly the silent correction the design forbids."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("MSFT")
     d = fm.dcf_valuation(f)
     reported = statements.statement_fcf(f["cash_flow"])[1]
@@ -737,7 +715,6 @@ def test_growth_alone_does_not_trip_the_base_anomaly_detector(monkeypatch):
     """Cash conversion is the trigger, not the level of free cash flow. Measured
     2026-08-13, an FCF-vs-own-median test fired on NVDA (+120%) and AMD (+144%)
     where nothing was wrong; both sit inside 8% on conversion."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     # triple the newest year's cash flow and earnings together: the business got
     # bigger, its conversion did not change, so nothing should be flagged
@@ -754,7 +731,6 @@ def test_growth_alone_does_not_trip_the_base_anomaly_detector(monkeypatch):
 def test_a_base_anomaly_needs_at_least_two_comparison_years(monkeypatch):
     """One prior year is not a history, and a reference drawn from it would be
     an opinion rather than a measurement."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("MSFT")
     periods = sorted(f["cash_flow"], reverse=True)
     f["cash_flow"] = {p: f["cash_flow"][p] for p in periods[:2]}
@@ -765,7 +741,6 @@ def test_a_base_anomaly_needs_at_least_two_comparison_years(monkeypatch):
 def test_market_implied_growth_is_absent_without_a_traded_multiple(monkeypatch):
     """No multiple, no question to ask — and a fabricated one would be worse
     than silence, the same rule the exit multiple above follows."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("AAPL")
     f["info"]["enterpriseToEbitda"] = None
     diag = fm.dcf_valuation(f)["diagnostics"]
@@ -800,9 +775,13 @@ def test_a_reit_is_not_charged_corporation_tax():
 def test_only_the_reit_moved(monkeypatch):
     """The exception must not leak into anything else. Every other fixture keeps
     the rate its listing currency implies."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     expected = {"AAPL": 0.21, "MSFT": 0.21, "XOM": 0.21, "JPM": 0.21,
-                "RIVN": 0.21, "0700_HK": 0.165, "O": 0.0}
+                "RIVN": 0.21, "0700_HK": 0.165, "0002_HK": 0.165, "O": 0.0}
+    # "Every other fixture" has to mean every one. This list is hand-written
+    # where test_scoring and test_fixtures parametrize over `sorted(FIXTURES)`
+    # and pick a new name up for free, so it silently covered 7 of 8 the moment
+    # an eighth arrived. The assertion below closes that.
+    assert set(expected) == set(FIXTURES)
     for stem, rate in expected.items():
         assert fm.tax_rate_for(load_fundamentals(stem)["info"]) == rate, stem
 
@@ -811,7 +790,6 @@ def test_charging_a_reit_tax_understated_its_cost_of_capital(monkeypatch):
     """The reason the exception is worth having: the shield it wrongly granted
     was the difference between a 6.05% and a 6.58% WACC on the committed
     fixture, and a fair value of 36.00 against 27.04."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("O")
     now = fm.dcf_valuation(f)
     charged = fm.dcf_valuation(f, tax_rate=0.21)
@@ -820,13 +798,11 @@ def test_charging_a_reit_tax_understated_its_cost_of_capital(monkeypatch):
 
 
 def test_hk_listing_uses_the_hk_rate(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     d = fm.dcf_valuation(load_fundamentals("0700_HK"))
     assert d["assumptions"]["tax_rate"] == 0.165
 
 
 def test_explicit_tax_rate_still_overrides(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     d = fm.dcf_valuation(load_fundamentals("0700_HK"), tax_rate=0.30)
     assert d["assumptions"]["tax_rate"] == 0.30
 
@@ -854,14 +830,12 @@ def test_value_at_does_not_reach_into_another_period():
 
 
 def test_dcf_reports_the_fcf_period(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     d = fm.dcf_valuation(load_fundamentals("AAPL"))
     assert d["assumptions"]["fcf_period"] == "2025-09-30"
     assert d["assumptions"]["fcf_source"] == "cash_flow_statement"
 
 
 def test_dcf_still_falls_back_to_info_freecashflow(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = copy.deepcopy(load_fundamentals("AAPL"))
     f["cash_flow"] = {}
     d = fm.dcf_valuation(f)
@@ -932,7 +906,6 @@ def test_statement_fcf_stays_levered_for_the_scoring_metrics():
 
 
 def test_dcf_raises_fair_value_when_interest_is_added_back(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("XOM")
     with_addback = fm.dcf_valuation(f)
 
@@ -947,7 +920,6 @@ def test_dcf_raises_fair_value_when_interest_is_added_back(monkeypatch):
 
 
 def test_dcf_reports_the_addback_it_applied(monkeypatch):
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     a = fm.dcf_valuation(load_fundamentals("0700_HK"))["assumptions"]
     assert a["fcf_interest_addback"] == 0
     assert a["fcff_basis"] == "not_required_interest_in_financing"
@@ -978,8 +950,9 @@ def test_a_low_rate_regime_pulls_the_terminal_rate_down(monkeypatch):
     prices. This is the only branch that changes a valuation, so it is the one
     worth pinning.
     """
+    # One patch, not two: `pinned_risk_free_rate` reads `fm.RISK_FREE_RATE` when
+    # it is called, so moving the constant moves the pinned rate with it.
     monkeypatch.setattr(fm, "RISK_FREE_RATE", 0.006)
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: 0.006)
     a = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
     assert a["terminal_growth"] == 0.006
     assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
@@ -1219,11 +1192,87 @@ def test_erp_resolves_per_market():
     assert fm.equity_risk_premium_for("CNY")[::2] == (0.0514, "China")
 
 
+# ── the other half of CAPM: the risk-free rate ───────────────────────
+#
+# The premium above has been currency-aware since the Damodaran snapshot landed.
+# The rate was not, which meant 0002.HK was priced off Hong Kong's 5.01% premium
+# and a United States risk-free rate — a pairing that exists in no market. These
+# pin the disclosure that fixes it. They pin a *label*, not a number: every
+# currency still resolves to the US 10-year, deliberately.
+
+def test_a_non_usd_currency_says_the_rate_is_a_stand_in(monkeypatch):
+    """Same number, different provenance — which is the entire deliverable."""
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0431)
+
+    assert data_provider.risk_free_rate(0.043, "USD") == (0.0431, "us_treasury_10y")
+    # None is the "caller did not say" case: a company with no financialCurrency
+    # is treated as USD rather than as a stand-in, which is what the code did
+    # before this parameter existed.
+    assert data_provider.risk_free_rate(0.043, None) == (0.0431, "us_treasury_10y")
+
+    for ccy in ("HKD", "CNY", "JPY"):
+        rate, source = data_provider.risk_free_rate(0.043, ccy)
+        assert (rate, source) == (0.0431, "usd_proxy"), ccy
+
+    # Case-folded, so a lowercase code is not misread as a foreign currency and
+    # silently downgraded to a stand-in.
+    assert data_provider.risk_free_rate(0.043, "usd")[1] == "us_treasury_10y"
+
+    # Reads off a vendor payload, so it must not turn a junk value into a crash
+    # inside the WACC. `equity_risk_premium_for` already degrades rather than
+    # raising on the same input; this keeps the two halves equally survivable.
+    assert data_provider.risk_free_rate(0.043, 3.14)[1] == "usd_proxy"
+
+
+def test_the_rate_follows_the_reporting_currency_not_the_traded_one():
+    """The same choice `equity_risk_premium_for` makes, and for the same reason:
+    a discount rate matches the currency of the cash flows, not of the shares.
+
+    No fixture can catch this on its own. 0002.HK trades and reports HKD; 0700.HK
+    trades HKD and reports CNY, and both are non-USD, so reading the wrong field
+    gives the right answer for both. It takes a filer that straddles the USD
+    boundary, and there is none — so one is built here.
+    """
+    f = load_fundamentals("AAPL")  # trades USD, reports USD
+    f["info"]["financialCurrency"] = "EUR"  # ... now reports EUR
+
+    a = fm.dcf_valuation(f)["assumptions"]
+    assert a["risk_free_source"] == "usd_proxy"
+
+
+def test_an_unreachable_feed_is_named_apart_from_a_substituted_currency(monkeypatch):
+    """Two different failures that used to be one silent number.
+
+    `platform_default` says the Fed feed was unreachable. `usd_proxy` says a
+    rate for this currency was never attempted. A reader looking at a wrong
+    valuation needs to know which of those happened.
+    """
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: None)
+    assert data_provider.risk_free_rate(0.043, "USD") == (0.043, "platform_default")
+    # Still `usd_proxy`, not `platform_default`: the material fact for a Hong
+    # Kong filer is that no HKD rate was used, and that holds either way.
+    assert data_provider.risk_free_rate(0.043, "HKD") == (0.043, "usd_proxy")
+
+
+def test_the_hkd_filer_discloses_the_mismatch_between_its_two_capm_halves():
+    """0002.HK is the fixture this was added for: a Hong Kong premium against a
+    US rate. The valuation is unchanged and the disclosure is new."""
+    a = fm.dcf_valuation(load_fundamentals("0002_HK"))["assumptions"]
+    assert a["risk_free_source"] == "usd_proxy"
+    assert a["equity_risk_premium_market"] == "Hong Kong"
+
+    # The USD control, so this test fails if `usd_proxy` were returned for
+    # everything — which would look identical on the HK assertion alone.
+    us = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
+    assert (us["risk_free_source"],
+            us["equity_risk_premium_market"]) == ("us_treasury_10y", "United States")
+    assert us["risk_free_rate"] == a["risk_free_rate"]  # same number, still
+
+
 def test_the_audit_row_carries_the_precision_of_the_beta_it_used(monkeypatch):
     """XOM is the case this exists for: the panel printed 0.2888 with the same
     authority as AAPL's 1.1546, while the index explains under 3% of XOM's
     movement and its interval spans 0.08 to 0.49."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     a = fm._wacc(load_fundamentals("XOM"), 0.21, None,
                  (load_bars("XOM"), load_bars("_GSPC")))
     assert a["beta_source"] == "computed"
@@ -1239,7 +1288,6 @@ def test_the_audit_row_carries_the_precision_of_the_beta_it_used(monkeypatch):
 
 def test_a_well_fitted_beta_is_visibly_different_from_a_badly_fitted_one(monkeypatch):
     """The comparison the reader could not previously make on screen."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     good = fm._wacc(load_fundamentals("0700_HK"), 0.165, None,
                     (load_bars("0700_HK"), load_bars("_HSI")))
     poor = fm._wacc(load_fundamentals("XOM"), 0.21, None,
@@ -1252,7 +1300,6 @@ def test_only_a_regressed_beta_claims_a_precision(monkeypatch):
     """The other rungs of the ladder are a vendor scalar, a peer median and a
     constant. None has residuals, so none may carry an interval — publishing one
     would invent a precision claim instead of describing one."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     a = fm._wacc(load_fundamentals("AAPL"), 0.21, None, None)
     assert a["beta_source"] == "reported"
     for key in ("beta_regressed", "beta_standard_error",
@@ -1296,7 +1343,6 @@ def test_the_traded_multiple_the_diagnostics_report_is_the_corrected_one(monkeyp
     """The panel divides the implied exit multiple by this one. The exit figure
     is built from statements and is reporting-currency throughout, so reading it
     against an HKD-over-CNY multiple overstated the implied compression."""
-    monkeypatch.setattr(fm, "risk_free_rate", lambda fb: fm.RISK_FREE_RATE)
     f = load_fundamentals("0700_HK")
     diag = fm.dcf_valuation(f)["diagnostics"]
     assert diag["current_ev_ebitda"] == 14.2773

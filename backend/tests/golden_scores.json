@@ -1,4 +1,65 @@
 {
+ "0002_HK": {
+  "classification": "utilities",
+  "composite_score": 65,
+  "confidence": "HIGH",
+  "coverage_pct": 100,
+  "flags": [],
+  "pillars": {
+   "growth": {
+    "insufficient": false,
+    "metrics": {
+     "earnings_growth": 56,
+     "pe_gap": 72,
+     "revenue_cagr_3y": 17,
+     "revenue_growth": 35
+    },
+    "score": 45
+   },
+   "health": {
+    "insufficient": false,
+    "metrics": {
+     "current_ratio": 23,
+     "debt_equity": 86,
+     "interest_coverage": 89,
+     "net_debt_ebitda": 88
+    },
+    "score": 71
+   },
+   "momentum": {
+    "insufficient": false,
+    "metrics": {
+     "price_vs_200dma": 70,
+     "range_52w_pos": 95,
+     "rel_52w_change": 88
+    },
+    "score": 84
+   },
+   "quality": {
+    "insufficient": false,
+    "metrics": {
+     "fcf_conversion": 51,
+     "gross_margin": 51,
+     "operating_margin": 72,
+     "roe": 49,
+     "roic": 46
+    },
+    "score": 54
+   },
+   "valuation": {
+    "insufficient": false,
+    "metrics": {
+     "dcf_upside_pct": 43,
+     "dividend_yield": 86,
+     "earnings_yield_fwd": 71,
+     "ev_ebitda": 63,
+     "fcf_yield": 59
+    },
+    "score": 64
+   }
+  },
+  "tier": "A"
+ },
  "0700_HK": {
   "classification": "communication_svcs",
   "composite_score": 71,

@@ -608,6 +608,14 @@ and 0700.HK **down** 1.8%, so it is two-directional and cannot be read as tuning
 **The risk-free leg is not**, and after measuring it, that is deliberate rather than
 pending. `_wacc()` still applies the US 10Y to every issuer.
 
+**What changed 2026-08-19: the substitution is now declared, not performed silently.**
+`risk_free_rate(fallback, currency)` returns `(rate, source)`, and a non-USD reporting
+currency comes back as **`usd_proxy`** in `dcf["assumptions"]`, beside the
+`equity_risk_premium_market` that names Hong Kong or China. **No number moved** — the seven
+pre-existing fixtures' full DCF payloads are byte-identical — so this closes nothing on its
+own. What it removes is the invisibility: a reader can now see that the two halves of CAPM
+name different countries, and there is one place for an HKD source to attach.
+
 **The peg argument is weaker than this item used to claim (found 2026-08-13).** The code
 justifies the USD risk-free rate by the HKD peg, and for an HKD-reporting issuer that
 holds. But 0700.HK's *statements are in CNY*, and CNY is not pegged — so the largest HK
@@ -696,9 +704,11 @@ and they matter because it is the line that makes this item look ready to start.
    simply an unrepresentative sample of it. *Counts rather than percentages, because they have
    to reconcile: 49 tickers were queried and **48 resolved**; `0011.HK` returned
    `404 Quote not found` and is excluded. Quoting "61/29/8%" summed to 98% and left the 49th
-   unexplained.* † Both figures are live `info` reads, and **there is no HKD-reporting fixture
-   in this repo to check them against** — which is why capturing one is the first item of the
-   risk-free-rate work.
+   unexplained.* † Both figures were live `info` reads with no HKD-reporting fixture to check
+   them against. **Captured 2026-08-19**: `0002.HK` (CLP Holdings) is now in the set,
+   HKD-reporting and DCF-eligible. The obvious candidates were not usable — `classify` sends
+   `0016.HK` to `real_estate_reit` and `2388.HK` to `financials_bank`, and `dcf_applies` is
+   `False` for both, so neither can exercise a discount rate at all.
 
 **So data *is* a blocker, on both halves.** For CNY, HKMA is the wrong source. For HKD, the
 right source has not responded on either attempt — and the HKD case barely arises in this

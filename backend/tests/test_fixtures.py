@@ -129,3 +129,34 @@ def test_peer_snapshot_name_falls_back_to_short_name(monkeypatch):
     info = {**_StubTicker.INFO, "shortName": "Stub Co"}
     del info["longName"]
     assert _snapshot_from(monkeypatch, info)["name"] == "Stub Co"
+
+
+# ── what each fixture is *for* ───────────────────────────────────────
+
+
+def test_the_fixture_set_still_covers_a_non_usd_reporting_dcf():
+    """`0002_HK` is the only fixture that can exercise a non-USD discount rate.
+
+    Six of the eight report USD. `0700_HK` reports CNY but is the one segment
+    this platform deliberately does not attempt (see WACC comment in
+    `financial_models`), which leaves CLP carrying the HKD case alone.
+
+    The guard is here because the obvious replacements do not work and the
+    failure would be silent. `classify` sends `sector == "real estate"` to
+    `real_estate_reit` and `"bank" in industry` to `financials_bank`, and
+    `dcf_applies` is False for both — so swapping CLP for SHK Properties or BOC
+    Hong Kong, both HKD reporters, would leave every test passing while nothing
+    discounted a Hong Kong dollar again.
+    """
+    from backend import sector_weights, statements
+
+    payload = json.loads(FIXTURES["0002_HK"].read_text(encoding="utf-8"))
+    info = payload["info"]
+    assert info["financialCurrency"] == "HKD"
+
+    fcf = statements.statement_fcf(payload["cash_flow"])
+    classification = sector_weights.classify(info, fcf[1] if fcf else None)
+    assert sector_weights.dcf_applies(classification), classification
+    # A DCF also needs positive free cash flow to run at all — 0066.HK (MTR) is
+    # HKD-reporting and DCF-eligible by classification, and still fails here.
+    assert fcf is not None and fcf[1] > 0

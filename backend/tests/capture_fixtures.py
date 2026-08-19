@@ -26,7 +26,19 @@ TICKERS = {
     "XOM": "energy",
     "RIVN": "pre_profit_growth",
     "0700.HK": "HK listing (non-USD, .HK suffix)",
+    "0002.HK": "utilities + the only HKD-*reporting* filer (see below)",
 }
+
+# Why 0002.HK rather than the 0016.HK / 2388.HK this was first scoped against.
+# Both of those report HKD, and both are refused a DCF before the discount rate
+# is ever reached: `classify` sends `sector == "real estate"` to
+# `real_estate_reit` and `"bank" in industry` to `financials_bank`, and
+# `dcf_applies` is False for both. A fixture that cannot run the model cannot
+# exercise the rate that model discounts at. Measured 2026-08-19, of the
+# DCF-eligible HKD reporters, 0066.HK (MTR) is also out — "railroad" matches
+# LOGISTICS_INDUSTRY_HINTS and its free cash flow is -7.72bn, so its DCF errors.
+# CLP is a regulated utility with +7.62bn FCF, and `utilities` is a
+# classification branch no other fixture covers.
 
 # Weekly closes behind the computed beta and the relative-strength metric.
 # Weekly rather than daily: five years is ~261 rows instead of ~1,260, which
@@ -52,13 +64,31 @@ def main(argv: list[str]) -> int:
     # the valuation tests are calibrated against.
     #   --bars-only          just the weekly closes
     #   --fundamentals-only  just the statements
+    #   --only TICKER        one ticker, leaving the others on disk untouched
+    #
+    # `--only` exists because *adding* a fixture had no safe path: the loops
+    # below rewrite every entry in TICKERS, so capturing an eighth name would
+    # have refetched the seven the valuation tests are calibrated against and
+    # moved every golden score with them. Indices are still skipped by it — a
+    # new HK name reads against the ^HSI bars already on disk.
     bars_only = "--bars-only" in argv
     fundamentals_only = "--fundamentals-only" in argv
+    only = None
+    if "--only" in argv:
+        rest = argv[argv.index("--only") + 1:]
+        # Refuse rather than fall through: a bare `--only`, or one whose ticker
+        # is misspelled, would otherwise capture the full set — the exact
+        # accident this flag exists to prevent.
+        only = rest[0].upper() if rest else None
+        if only not in TICKERS:
+            print(f"--only {only or '(missing)'}: expected one of {', '.join(TICKERS)}")
+            return 1
+    selected = {only: TICKERS[only]} if only else TICKERS
 
     FIXTURE_DIR.mkdir(exist_ok=True)
     BARS_DIR.mkdir(exist_ok=True)
     failed = []
-    for ticker, why in ({} if bars_only else TICKERS).items():
+    for ticker, why in ({} if bars_only else selected).items():
         try:
             data = provider.get_fundamentals(ticker)
         except Exception as e:
@@ -68,7 +98,8 @@ def main(argv: list[str]) -> int:
         path.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
         print(f"{ticker:9} -> {path.name:14} {path.stat().st_size // 1024:4} KB  ({why})")
 
-    for ticker in ([] if fundamentals_only else list(TICKERS) + list(INDICES)):
+    for ticker in ([] if fundamentals_only
+                   else list(selected) + ([] if only else list(INDICES))):
         try:
             bars = provider.get_history(ticker, BARS_PERIOD, BARS_INTERVAL)
         except Exception as e:

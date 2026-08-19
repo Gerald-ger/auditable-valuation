@@ -224,6 +224,17 @@ function DcfAudit({ dcf }) {
           )}
           {' · '}WACC <b>{pct(a.wacc_used)}</b>
           {' · '}risk-free <b>{pct(a.risk_free_rate)}</b>
+          {/* Tagged for the same reason the premium below is, and it is the
+              half that used to hide: an HKD or CNY filer is discounted at the
+              US ten-year, so this tag and the market in brackets below can name
+              two different countries. That disagreement is the disclosure —
+              without it the two numbers look like one consistent pair. */}
+          {a.risk_free_source && (
+            <span className={`src-tag ${a.risk_free_source === 'us_treasury_10y'
+              ? 'reported' : 'default'}`}>
+              {a.risk_free_source.replace(/_/g, ' ')}
+            </span>
+          )}
           {/* The ERP was a bare 5% for every market on earth until it was
               sourced. Shown with its market because that is the surprising
               part: 0700.HK trades in Hong Kong but reports in CNY, so it is

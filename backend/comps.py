@@ -142,7 +142,7 @@ def _fmp_peers(ticker: str) -> list[str]:
 
     Successes are cached for the process lifetime; failures are **not**, so a
     transient outage does not permanently blank a ticker's peers (same rule as
-    data_provider.risk_free_rate).
+    data_provider._us_treasury_10y).
     """
     if ticker in _FMP_PEER_CACHE:
         return _FMP_PEER_CACHE[ticker]
