@@ -166,9 +166,11 @@ and $g = rf$, the $rf$ terms very nearly cancel in $WACC - g$, leaving the risk 
 is $\frac{1}{WACC-g}$, so the terminal block barely notices the difference between 1.70% and 1.10%.
 
 **This inverts the priority of the two questions.** The difficult, contestable choice — whether to
-subtract the default spread, and which spread — moves fair value by **1.8%** (1,024.98 → 1,043.30).
+subtract the default spread, and which spread — moves fair value by **1.66%** (601.62 → 611.62).
 The straightforward, well-supported choice — use a CNY rate at all rather than a USD one — is worth
-**+50%**. Effort belongs on the second.
+**+30.3%**. Effort belongs on the second. *(Both figures were 1.8% and +50% until 2026-08-19, from
+the superseded no-`market_bars` table; the ratio between them, which is the argument, is unchanged
+— 18x.)*
 
 It also means the change is less dangerous than the headline suggests: the model does not amplify
 an error in the sourced rate, because the cap absorbs most of it.

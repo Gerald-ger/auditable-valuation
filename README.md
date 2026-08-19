@@ -326,12 +326,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 493 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 503 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 100 tests
 ```
 
-Of the 511 collected, 18 are `network`-marked and deselected by default.
+Of the 521 collected, 18 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; the three component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock. Rendering is
@@ -519,7 +519,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 493-test suite runs entirely offline against them. Provenance and capture dates in
+  the 503-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

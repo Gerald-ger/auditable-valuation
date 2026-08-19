@@ -9,7 +9,7 @@ before/after where a change moved numbers the UI displays.
 
 ## 2026-08-19 (c) — Tencent stops being discounted at an American rate
 
-Backend **482 → 493**, live tests 17 → 18. **This one moves a number, deliberately**, and it is
+Backend **482 → 503**, live tests 17 → 18. **This one moves a number, deliberately**, and it is
 the first change in this sequence that does.
 
 `0700.HK` reports in CNY. CNY is not pegged to anything. Its cash flows were being discounted at
@@ -76,14 +76,34 @@ existing agreement with the quote rather than manufacturing one.
 
 ### Verification
 
-**13 of 13 mutations caught** — 12 by the offline suite, and the thirteenth (a window past the
-one-year limit) only by the live contract test, which is the one failure mode that cannot be
-seen offline. Four of those 13 survived a first pass because they live inside the parser the
-autouse fixture stubs out; they are now covered by six tests that replace `urlopen` rather than
-the function, so the real parse runs.
+**"13 of 13 mutations caught" was true of my 13 and worthless as a claim.** An independent review
+wrote **40** and **20 survived** — the number of mutations you write is a measure of your
+imagination, not of your coverage, and mine had run out exactly where the code was least
+familiar. Two of the survivors were defects that produce a confidently wrong number:
+
+- **A lowercase `financialCurrency` half-resolved.** `risk_free_rate` case-folded while
+  `sovereign_default_spread` and `equity_risk_premium_for` match exactly, so `"cny"` took the CGB
+  branch, missed the spread lookup, and fell to the mature-market premium — China's **raw** yield
+  against a no-country ERP, still labelled `cgb_10y_less_spread`, and styled as *sourced* by the
+  new UI tag. That is precisely the two-countries defect this change exists to remove,
+  reintroduced by a convenience, and it was **worse than before**: lowercase used to say
+  `usd_proxy`. All three consumers now match exactly.
+
+- **The netted rate could go negative.** `_cgb_10y`'s `0 < rate < 0.25` band guards the
+  *published* yield; the spread comes off afterwards, unchecked. A CGB print below 0.60% nets to
+  zero or less, and `min(TERMINAL_GROWTH, rf)` then asserts perpetual **shrinkage** for a going
+  concern — negative terminal-growth column headers and all, with no error and no flag. It needs
+  a 109bp rally from today's 1.6864%, or one Damodaran refresh that raises the spread. The band
+  is now re-applied after the subtraction.
+
+Also fixed from that review: a **frozen upstream table** was indistinguishable from a current one
+(rows well-formed, yield plausible, years old) — bounded now at `CGB_MAX_STALE_DAYS = 14`; the
+`len(cells) == 3` guard, which is the only thing stopping an all-tenor row being read as the
+**3-month** yield, was load-bearing and untested; and "a failure is never cached" was asserted in
+two docstrings and pinned by nothing. **All ten of the review's material survivors are now caught.**
 
 A hard probe confirms the offline suite **never reaches ChinaBond**: making `urlopen` raise on
-entry leaves all 493 tests passing. The probe is on the *socket*, not on `_cgb_10y` — an earlier
+entry leaves all 503 tests passing. The probe is on the *socket*, not on `_cgb_10y` — an earlier
 version raised inside the function, which stopped meaning anything once six tests began calling
 it deliberately with the transport stubbed. Only a real socket call is a leak.
 

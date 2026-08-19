@@ -597,6 +597,42 @@ or let HK degrade to price-and-quote. The six-method `YFinanceProvider` interfac
 keeps the eventual swap bounded — worth keeping clean. Full reasoning in
 `docs/data-sources-review.md` §3.
 
+### 🟡 A wrong CGB tenor would be invisible to every test *(found 2026-08-19)*
+
+`_cgb_10y` selects the ten-year with `gjqx=10` in the URL. Change that one character and
+ChinaBond returns a different tenor, well-formed and plausible — and **nothing fails**. The
+offline tests supply their own HTML, so the URL is not under test at all, and the live test can
+only check a band.
+
+A band cannot close it. The whole curve is narrow: **3M 1.1858 · 6M 1.1936 · 1Y 1.2008 · 3Y
+1.2493 · 5Y 1.3842 · 7Y 1.5121 · 10Y 1.6864 · 30Y 2.1509** on 2026-08-18. The floor was raised
+from 0.5% to **1.4%** on 2026-08-19, which excludes everything up to the 5Y — but 7Y and 30Y
+still pass, and a floor above the 7Y would sit above the 10Y's own record low of 1.59% (Feb
+2025) and fail on a normal market.
+
+**The fix is a shape assertion**: fetch `gjqx=0` in the live test, which returns every tenor in
+one row, and assert the ten-year column equals what `_cgb_10y` returned. That is one request and
+it pins the tenor exactly. Not written yet because ChinaBond went unreachable while this was
+being closed out — see the reachability note below — and a test that has never been run against
+the real payload is not evidence of anything.
+
+### 🟡 ChinaBond's availability is worse than one probe suggested *(found 2026-08-19)*
+
+Three transient failures observed on the day it was wired in: one live-test failure inside a full
+`-m network` run, one `ssl.SSLEOFError` during review, and then a **sustained outage** — every
+`gjqx` value returning `http_code=000` after ~12 s, from a machine where the same URLs had
+answered in 1.7-3.8 s twenty minutes earlier.
+
+It degrades correctly: failures are not cached, so a miss costs one request and the next retries.
+**But the two rates are 30% of Tencent's fair value apart**, so a user reloading during an outage
+sees 469 where they saw 612, distinguished only by the `usd_proxy` label on the assumptions row.
+
+**The open question is whether that is the right trade.** A CGB yield one day stale is far closer
+to correct than a US yield today — the 12-month range is 21.6bp, against a 362bp gap to the US
+10Y — so serving the last good CNY rate for a bounded number of days would keep the *currency*
+right and cost only freshness. That is a modelling decision rather than a bug fix, and it is not
+taken here.
+
 ### 🟡 `_us_treasury_10y`'s internals have never been tested *(found 2026-08-19)*
 
 Three mutations inside it survive the whole suite: **removing the day-cache read**, **never
@@ -673,7 +709,7 @@ count it twice. Method A is already the shape the code uses.
 — the base-year and ERP work moved it. And the effect is not "roughly double":
 `terminal_growth = min(TERMINAL_GROWTH, rf)`, so lowering the rate lowers the growth cap with
 it, and the recorded figure came from moving the WACC alone. Netting off the sovereign default
-spread is worth only ~1.8% of the change — the contestable half is the cheap half.
+spread is worth only ~1.66% of the change (601.62 → 611.62) — the contestable half is the cheap half.
 
 **Re-measured 2026-08-19, and the replacement numbers were wrong too.** This entry then said
 baseline **680.99** and effect **+50.5%**. Both reproduce exactly — but only *without*

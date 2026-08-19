@@ -1247,9 +1247,11 @@ def test_a_non_usd_currency_says_the_rate_is_a_stand_in(monkeypatch):
         rate, source = data_provider.risk_free_rate(0.043, ccy)
         assert (rate, source) == (0.0431, "usd_proxy"), ccy
 
-    # Case-folded, so a lowercase code is not misread as a foreign currency and
-    # silently downgraded to a stand-in.
-    assert data_provider.risk_free_rate(0.043, "usd")[1] == "us_treasury_10y"
+    # Matched exactly, like the two other consumers of this same code. An
+    # unrecognised spelling degrades to the proxy in all three rather than
+    # half-resolving in one — see
+    # test_a_misspelled_currency_degrades_instead_of_half_resolving.
+    assert data_provider.risk_free_rate(0.043, "usd")[1] == "usd_proxy"
 
     # Reads off a vendor payload, so it must not turn a junk value into a crash
     # inside the WACC. `equity_risk_premium_for` already degrades rather than
@@ -1336,6 +1338,45 @@ def test_the_default_spread_never_comes_off_the_us_rate(monkeypatch):
     assert data_provider.risk_free_rate(0.043, "USD", 0.0023) == (0.0472, "us_treasury_10y")
 
 
+def test_a_misspelled_currency_degrades_instead_of_half_resolving(monkeypatch):
+    """The three consumers of `financialCurrency` must agree about what they do
+    not recognise.
+
+    `risk_free_rate` case-folded while `sovereign_default_spread` and
+    `equity_risk_premium_for` matched exactly, so `"cny"` took the CGB branch,
+    missed the spread lookup and got `0.0`, and fell to the mature-market
+    premium — China's **raw** yield against a no-country ERP, and still labelled
+    `cgb_10y_less_spread`. That is the two-countries defect this whole change
+    exists to remove, reintroduced by a convenience. `usd_proxy` is the honest
+    answer and is what the code did before the branch existed.
+    """
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: 0.016864)
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
+
+    assert fm.sovereign_default_spread("cny") == 0.0
+    assert fm.equity_risk_premium_for("cny")[2] is None
+    assert data_provider.risk_free_rate(0.043, "cny", 0.0) == (0.0472, "usd_proxy")
+
+
+@pytest.mark.parametrize("cgb", [0.0059, 0.006, 0.003, 0.0])
+def test_a_yield_below_the_spread_never_becomes_a_negative_rate(monkeypatch, cgb):
+    """`_cgb_10y`'s sanity band guards the *published* yield; the spread comes
+    off afterwards, so a low enough print nets to zero or below.
+
+    Left unchecked this is not a crash but something worse: the rate caps
+    terminal growth through `min(TERMINAL_GROWTH, rf)`, so the model would
+    assert perpetual *shrinkage* for a going concern — negative terminal-growth
+    column headers and all — with no error and no flag. It needs a 109bp rally
+    from the 1.6864% of 2026-08-19, or one Damodaran refresh that raises the
+    0.60% spread.
+    """
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: cgb)
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
+
+    rate, source = data_provider.risk_free_rate(0.043, "CNY", 0.006)
+    assert (rate, source) == (0.0472, "usd_proxy"), cgb
+
+
 def test_an_unreachable_chinabond_degrades_to_the_old_behaviour(monkeypatch):
     """The failure contract that matters: a bad day at ChinaBond must return the
     platform to what it did before this existed — the US rate, labelled as the
@@ -1384,6 +1425,17 @@ def _stub_cgb(monkeypatch, html):
     return _real_cgb_10y()
 
 
+def _days_ago(n):
+    """A date the freshness check will accept (or, for a large `n`, reject).
+
+    Relative rather than literal: `_cgb_10y` compares the newest published row
+    against `datetime.now()`, so a hard-coded 2026-08-18 in these fixtures would
+    quietly start failing a fortnight after it was written.
+    """
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%d")
+
+
 GOV = "ChinaBond Government Bond Yield Curve"
 CP = "ChinaBond CP&Note Yield Curve (AAA)"
 
@@ -1396,10 +1448,10 @@ def test_the_cgb_parse_takes_the_newest_government_row_as_a_ratio(monkeypatch):
     the max by date rather than the first row.
     """
     rate = _stub_cgb(monkeypatch, _cgb_page([
-        (CP, "2026-08-18", "2.0493"),      # a different curve, higher — must lose
-        (GOV, "2026-08-17", "1.6924"),
-        (GOV, "2026-08-18", "1.6864"),     # newest, but not first
-        (GOV, "2026-08-14", "1.6964"),
+        (CP, _days_ago(0), "2.0493"),      # a different curve, higher — must lose
+        (GOV, _days_ago(1), "1.6924"),
+        (GOV, _days_ago(0), "1.6864"),     # newest, but not first
+        (GOV, _days_ago(4), "1.6964"),
     ]))
     # published as percent, consumed as a ratio
     assert rate == pytest.approx(0.016864)
@@ -1411,22 +1463,83 @@ def test_two_rows_on_one_date_do_not_become_the_higher_yield(monkeypatch):
     clears the sanity band, arriving as a plausible 0.0999 rate. Keyed on the
     date alone, the first row for that date wins and the tie-break never runs."""
     rate = _stub_cgb(monkeypatch, _cgb_page([
-        (GOV, "2026-08-18", "1.6864"),
-        (GOV, "2026-08-18", "9.9999"),
+        (GOV, _days_ago(0), "1.6864"),
+        (GOV, _days_ago(0), "9.9999"),
     ]))
     assert rate == pytest.approx(0.016864)
 
 
 @pytest.mark.parametrize("rows, why", [
     ([], "empty table — what a >1yr range or a holiday week returns, with HTTP 200"),
-    ([(CP, "2026-08-18", "2.0493")], "no government row, only other curves"),
-    ([(GOV, "2026-08-18", "68.64")], "absurd level — a units change would look like this"),
-    ([(GOV, "2026-08-18", "--")], "non-numeric placeholder"),
+    ([(CP, _days_ago(0), "2.0493")], "no government row, only other curves"),
+    ([(GOV, _days_ago(0), "68.64")], "absurd level — a units change would look like this"),
+    ([(GOV, _days_ago(0), "--")], "non-numeric placeholder"),
+    ([(GOV, _days_ago(15), "3.1500")], "a frozen feed: one day past the staleness bound"),
+    ([(GOV, _days_ago(2500), "3.1500")], "a frozen feed: years old"),
 ])
 def test_the_cgb_parse_returns_none_rather_than_a_wrong_number(monkeypatch, rows, why):
     """Every one of these degrades CNY to the US proxy, which is the pre-2026-08-19
     behaviour — never an exception and never a plausible-looking wrong rate."""
     assert _stub_cgb(monkeypatch, _cgb_page(rows)) is None, why
+
+
+def test_an_all_tenor_row_is_not_read_as_the_ten_year(monkeypatch):
+    """The `len(cells) == 3` guard is the only thing standing between the parse
+    and the short end of the curve.
+
+    `gjqx=10` filters to one tenor, so rows arrive as (curve, date, 10Y). Drop
+    that filter — or have ChinaBond ignore it — and a row carries every tenor
+    from 3M to 30Y, at which point `cells[2]` is the **3-month** yield: 1.1858%
+    where the 10Y is 1.6864%. Plausible, wrong, and silent.
+    """
+    body = ("<table><tr>"
+            + "".join(f"<td>{c}</td>" for c in
+                      [GOV, _days_ago(0), "1.1858", "1.1936", "1.2008",
+                       "1.2493", "1.3842", "1.5121", "1.6864", "2.1509"])
+            + "</tr></table>")
+    assert _stub_cgb(monkeypatch, f"<html><body>{body}</body></html>") is None
+
+
+def test_a_failed_cgb_fetch_is_never_cached(monkeypatch):
+    """The property the whole failure contract rests on, and it was asserted in
+    two docstrings and pinned by nothing.
+
+    If a miss were cached for the day, one bad moment would hold every CNY
+    valuation on the US proxy until midnight — and the two rates are 30% of
+    Tencent's fair value apart. Because it is not, a miss costs one request.
+    """
+    calls = []
+
+    class _Boom:
+        def __enter__(self): raise OSError("connection reset")
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+    monkeypatch.setattr(data_provider, "urlopen",
+                        lambda *a, **k: (calls.append(1), _Boom())[1])
+
+    assert [_real_cgb_10y() for _ in range(3)] == [None, None, None]
+    assert len(calls) == 3, "a failure was cached — the retry never happened"
+    assert data_provider._CGB_CACHE is None
+
+
+def test_a_successful_cgb_fetch_is_cached_for_the_day(monkeypatch):
+    """The other half: one fetch per calendar day, not one per request. A DCF
+    runs on every scorecard, and `score_batch` fans a watchlist across threads."""
+    calls = []
+    html = _cgb_page([(GOV, _days_ago(0), "1.6864")])
+
+    class _Resp:
+        def read(self): return html.encode("utf-8")
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+    monkeypatch.setattr(data_provider, "urlopen",
+                        lambda *a, **k: (calls.append(1), _Resp())[1])
+
+    assert [_real_cgb_10y() for _ in range(3)] == [pytest.approx(0.016864)] * 3
+    assert len(calls) == 1, "the day cache did not hold"
 
 
 def test_the_cny_fixture_now_carries_a_chinese_rate_end_to_end(monkeypatch):

@@ -258,7 +258,16 @@ def test_chinabond_still_publishes_a_parseable_ten_year():
     years to 2026-08, and it was 1.6864% the day this was written. The band is
     wide enough not to fail on a normal market and narrow enough to catch a
     units change, which is the failure that would actually hurt.
+
+    **What this band does not catch, stated because the gap is not obvious.**
+    A wrong `gjqx` in the URL returns a different tenor, and the whole Chinese
+    curve is a narrow thing — 3M 1.1858 to 30Y 2.1509 on 2026-08-18. The floor
+    at 1.4% excludes 3M, 6M, 1Y, 3Y and 5Y, but **7Y (1.5121) and 30Y (2.1509)
+    would both pass**, and a floor high enough to exclude the 7Y would sit above
+    the 10Y's own record low of 1.59%. Separating those needs a second tenor
+    fetched in the same call and compared, which is recorded in TODOLIST; a band
+    cannot do it.
     """
     rate = _real_cgb_10y()
     assert rate is not None, "ChinaBond unreachable or its table changed shape"
-    assert 0.005 < rate < 0.06, rate
+    assert 0.014 < rate < 0.05, rate

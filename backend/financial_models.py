@@ -533,10 +533,13 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     #     numbers, and the effect is +30.3%, not +53.2%.
     #   - the applicable cut is the -320bp row, because the CNY risk-free is the
     #     10Y net of the CNY default spread (1.70 - 0.60 = 1.10 against 4.30).
-    #     Netting the spread is worth only the 1.8% between the two rows, so the
-    #     contestable half of the change is also the cheap half. Quote the rows
-    #     together: +50.5% belongs to -260bp and pairing it with -320bp, as a
-    #     2026-08-18 draft of this comment did, mismatches them.
+    #     Netting the spread is worth only the 1.66% between the two rows
+    #     (601.62 -> 611.62), so the contestable half of the change is also the
+    #     cheap half. Quote the rows together: +28.1% belongs to -260bp and
+    #     +30.3% to -320bp; pairing one with the other, as a 2026-08-18 draft of
+    #     this comment did, mismatches them. These two figures were themselves
+    #     "1.8%" and "+50.5%" until 2026-08-19 — the same superseded no-bars
+    #     numbers as the block above, left behind when the table was corrected.
     #   - spot vs forward is NOT unsettled. docs/currency-consistent-
     #     discounting.md settled it: discounting in the cash-flow currency and
     #     translating the result at spot is algebraically identical to

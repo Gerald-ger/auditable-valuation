@@ -125,6 +125,11 @@ CGB_CURVE = "ChinaBond Government Bond Yield Curve"
 # empty table indistinguishable from an outage. Measured 2026-08-19: 20 calendar
 # days is 15 trading rows, 19.8 KB, 3.2 s.
 CGB_WINDOW_DAYS = 20
+# How old the newest published row may be before the feed counts as frozen
+# rather than merely quiet. Comfortably past a nine-day holiday closure plus a
+# weekend, and far short of the request window above — so a table that stops
+# updating is caught rather than served as if it were today's.
+CGB_MAX_STALE_DAYS = 14
 # Measured 1.3-3.8 s across ~20 calls on 2026-08-19, with one outright miss in
 # that run. A hard ceiling because the HKMA endpoint hung for 25 s on two
 # separate attempts — a slow day has to degrade the number, never the request.
@@ -173,7 +178,16 @@ def _cgb_10y() -> float | None:
         # when two rows share a date, which would quietly serve the higher one,
         # and a spurious 9.99% clears the sanity band below. ISO dates make
         # lexicographic order chronological, so no parsing is needed.
-        rate = max(rows, key=lambda r: r[0])[1] / 100 if rows else None
+        newest, rate = (max(rows, key=lambda r: r[0]) if rows else (None, None))
+        # A frozen upstream table is the one failure this parse cannot see: the
+        # rows are well-formed and the yield is plausible, it is simply years
+        # old. Nothing else bounds it — the request window happens to be 20 days,
+        # which is an accident of `CGB_WINDOW_DAYS` rather than a check.
+        if newest is not None and newest < (
+                datetime.now(timezone.utc) - timedelta(days=CGB_MAX_STALE_DAYS)
+        ).strftime("%Y-%m-%d"):
+            return None
+        rate = rate / 100 if rate is not None else None
         # Same sanity band as the treasury feed, for the same reason — the page
         # quotes percent, so a switch to ratios would silently divide by 100.
         if rate is not None and 0 < rate < 0.25:
@@ -226,13 +240,10 @@ def risk_free_rate(fallback: float,
     premium and a **United States** risk-free rate, which is not a rate in any
     market.
 
-    The two halves do not *normalise* alike, and the claim above is about the
-    field, not the spelling: this case-folds, `equity_risk_premium_for` looks up
-    the code exactly. So a lowercase `"hkd"` would report `usd_proxy` here and
-    fall to `mature_market` there, naming no country. Unreachable rather than
-    handled — every code in `info["financialCurrency"]` is uppercase — and left
-    alone because folding both is a change to the premium half, which this is
-    not. `None` means the caller did not say; it is treated as USD, which is
+    All three consumers of the currency code — this, `equity_risk_premium_for`
+    and `sovereign_default_spread` — match **exactly**, so an unrecognised
+    spelling degrades the same way in all three rather than half-resolving in
+    one. `None` means the caller did not say; it is treated as USD, which is
     what this function did before the parameter existed.
 
     Four sources, mirroring `equity_risk_premium_for`:
@@ -260,10 +271,26 @@ def risk_free_rate(fallback: float,
     # `str(...)` because this reads straight off a vendor payload: a non-string
     # here used to be harmless and would now raise inside `_wacc`, which is a
     # fragility this change would have introduced rather than found.
-    ccy = str(currency or "USD").upper()
+    #
+    # Exact match, no case folding, because the other two consumers of this same
+    # currency code — `equity_risk_premium_for` and `sovereign_default_spread` —
+    # are exact-match dict lookups. Folding here alone was worse than not folding
+    # at all: `"cny"` took the CGB branch while the spread lookup missed and
+    # returned 0.0 and the premium fell to the mature market, so the rate came
+    # back as China's *raw* yield paired with a no-country premium, still
+    # labelled `cgb_10y_less_spread`. An unrecognised spelling now degrades to
+    # the proxy, which is what it did before the CNY branch existed.
+    ccy = str(currency or "USD")
     if ccy == "CNY":
         cgb = _cgb_10y()
-        if cgb is not None:
+        # Re-checked *after* the subtraction. `_cgb_10y`'s band guards the
+        # published yield; netting the sovereign spread happens out here, and a
+        # low enough print nets to zero or below — 0.60% is the spread, so any
+        # CGB under that does it. A negative risk-free rate then caps terminal
+        # growth negative through `min(TERMINAL_GROWTH, rf)`, and the model
+        # would assert perpetual *shrinkage* for a going concern with no error
+        # and no flag. Out of band degrades to the proxy like any other miss.
+        if cgb is not None and 0 < cgb - sovereign_spread < 0.25:
             return cgb - sovereign_spread, "cgb_10y_less_spread"
     rate = _us_treasury_10y()
     if ccy != "USD":
