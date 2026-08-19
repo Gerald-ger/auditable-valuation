@@ -157,6 +157,10 @@ def test_the_fixture_set_still_covers_a_non_usd_reporting_dcf():
     fcf = statements.statement_fcf(payload["cash_flow"])
     classification = sector_weights.classify(info, fcf[1] if fcf else None)
     assert sector_weights.dcf_applies(classification), classification
+    # Pinned by name, not just by `dcf_applies`. CLP is also the only fixture
+    # covering `utilities`, and a reclassification that kept the DCF eligible
+    # would silently drop that branch while this test stayed green.
+    assert classification == "utilities"
     # A DCF also needs positive free cash flow to run at all — 0066.HK (MTR) is
     # HKD-reporting and DCF-eligible by classification, and still fails here.
     assert fcf is not None and fcf[1] > 0

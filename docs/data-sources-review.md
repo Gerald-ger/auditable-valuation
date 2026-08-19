@@ -225,9 +225,11 @@ Free *does* cover, cleanly and with redistribution rights:
 
   *Counts, not percentages, because they have to reconcile: 49 tickers were queried and **48
   resolved** — `0011.HK` returned `404 Quote not found`. A draft quoted "61% / 29% / 8%", which
-  sums to 98% and leaves the 49th unexplained.* † Both figures are live `info` reads, and
-  **there is no HKD-reporting fixture in this repo to check them against** — which is why
-  capturing one is the first item of the risk-free-rate work.
+  sums to 98% and leaves the 49th unexplained.* † Both figures were live `info` reads with no
+  HKD-reporting fixture to check them against. **Captured 2026-08-19**: `0002.HK` (CLP Holdings)
+  is now in the fixture set, HKD-reporting and DCF-eligible. The obvious candidates were not
+  usable — `classify` sends `0016.HK` to `real_estate_reit` and `2388.HK` to `financials_bank`,
+  and `dcf_applies` is `False` for both.
 - **FRED** — US macro series with history, free with a key.
 
 ### Peer classification is free, and it is not a new licence

@@ -21,8 +21,9 @@ covered by the repository's AGPL-3.0 licence.
 
 Two of those 51 are `null` in every file **captured before 2026-08-19** rather than
 captured — `0002_HK` came after the fix and carries real values for both, which makes it
-the only fixture here with no `null` among those 51. (Its *statements* carry 202, as every
-fixture's do — an absent line item is absent.) `regularMarketTime` and
+the only fixture here with no `null` among those 51. (Its *statements* carry 202 nulls, which is
+ordinary rather than universal — across the eight the count runs 58 to 205, since an absent line
+item is absent.) `regularMarketTime` and
 `exchangeDataDelayedBy` were added to `INFO_KEYS` on 2026-08-14, four days after the
 capture, and the fixtures went on being a 49-key subset of a 51-key contract with nothing
 able to notice — every test reading either field saw `None` and could not distinguish
@@ -38,9 +39,12 @@ for the beta and relative-strength calculations.
 
 ## Why they are committed
 
-Each ticker is here because it exercises a distinct branch of `sector_weights.classify` —
-technology, bank, REIT, energy, pre-profit, utilities, and the Hong Kong / non-USD reporting
-path. Regenerating with different names would silently stop testing those branches.
+Each ticker is here to exercise a branch of `sector_weights.classify` — the eight resolve to
+`technology` (AAPL **and** MSFT), `financials_bank`, `real_estate_reit`, `energy`,
+`pre_profit_growth`, `utilities` and `communication_svcs`. Seven branches, not eight: MSFT
+doubles up deliberately, because its `info["freeCashflow"]` reports a single quarter and that
+FCF-source regression needed a fixture of its own. Regenerating with different names would
+silently stop testing these branches.
 
 `0002_HK` (CLP Holdings) carries a second job the others do not: it is the only filer here
 that both **reports in HKD** and is eligible for a DCF, so it is what exercises a discount

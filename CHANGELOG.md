@@ -9,9 +9,23 @@ before/after where a change moved numbers the UI displays.
 
 ## 2026-08-19 (b) — both halves of CAPM finally read the same currency
 
-Backend **467 → 482**. **No number moved, and this time that is proved rather than argued:**
-the full `dcf_valuation` payload for all seven pre-existing fixtures — every assumption, every
-sensitivity cell — is **byte-identical** to the same dump taken at `HEAD` before the change.
+Backend **467 → 482**. **No number moved, and this is measured rather than argued** — with its
+scope stated, because the first two drafts of this sentence overstated it. Dumping
+`dcf_valuation` for the seven pre-existing fixtures at this commit and at its parent
+(`0349b1b`), across three rate scenarios — a live 4.30%, a live 5.12%, and an unreachable feed —
+**every number, every assumption and every sensitivity cell is unchanged, and the payload gains
+exactly one key: `risk_free_source`.**
+
+That is *not* "byte-identical", which is what this entry and the commit message both first
+claimed. The dumps differ by precisely that key and match only once it is removed — which the
+comparison script did silently, so the overstatement survived its own evidence.
+
+Two further limits. **Five of the seven produce a payload at all**: `JPM` and `RIVN` return a
+one-key `error`, having no positive free cash flow, so they are unchanged trivially. And the
+unreachable run *coincides numerically* with the 4.30% one, because `RISK_FREE_RATE` — the
+fallback — is 0.043; three code paths, two distinct numbers. What keeps the comparison from
+being vacuous is the 5.12% run, which moves AAPL **140.00 → 125.01**: the harness can
+demonstrably see a difference when there is one.
 
 The defect was an asymmetry nobody had to introduce, because only one half was ever migrated.
 `equity_risk_premium_for` has read `financialCurrency` since the Damodaran snapshot landed, so
@@ -53,11 +67,15 @@ resolve to plausible-looking numbers.
   `_us_treasury_10y()`.
 
 - **The offline pin now patches the fetch, not the function.** `conftest.pinned_risk_free_rate`
-  replaces `data_provider._us_treasury_10y`, so the currency branch executes for real in all 482
-  tests. Patching `risk_free_rate` itself is exactly the trap
+  replaces `data_provider._us_treasury_10y`, so the currency branch executes for real in **150 of
+  the 482** tests — counted, not estimated, by instrumenting the branch and recording
+  `PYTEST_CURRENT_TEST`. Patching `risk_free_rate` itself is exactly the trap
   [currency-consistent-discounting.md](docs/currency-consistent-discounting.md) predicted before
   the branch existed — it would satisfy every caller while guaranteeing no test ever ran the new
-  code, and the suite would stay green whether it worked or not.
+  code, and the suite would stay green whether it worked or not. **The comparison is 150 against
+  0**, not against 482: the autouse fixture *applies* to every test, but only those reaching
+  `_wacc` execute the branch. This entry and the commit message both said "all 482", which was
+  the fixture's reach mistaken for the branch's.
 
 - **39 per-test monkeypatches deleted**, all identical and all redundant with that autouse
   fixture. Proven by deletion, then confirmed load-bearing from the other side: mutating the
@@ -67,8 +85,15 @@ resolve to plausible-looking numbers.
 
 ### Fixed after an independent review of this change
 
-Ten mutations, ten caught. What the review found was almost entirely in the **prose**, which is
-where this change was weakest:
+Ten mutations, ten caught — **on the currency logic this change wrote**, which is the honest
+scope of that claim. Three further mutations *inside* `_us_treasury_10y` all survive: removing
+the day-cache read, never populating the cache, and dropping the `0 < rate < 0.25` sanity band.
+All three survive at the parent commit too, verified by running them there, so this change
+inherited the gap rather than opening it — the fetch body has never been exercised offline,
+because the pin has always replaced it. Recorded in `TODOLIST.md`.
+
+What the review found was almost entirely in the **prose**, which is where this change was
+weakest:
 
 - **`PROVENANCE.md` claimed "484 KB across 18 files".** The real figure is **421 KiB** — 484 was
   `du -sk`, which reports disk blocks, not bytes. The pre-existing "424 KB across 16" was already
@@ -98,8 +123,12 @@ where this change was weakest:
   of one value. It becomes right when a second source exists, which is 5c.
 
 - **CNY is still discounted at a US rate.** 5b makes that visible in `assumptions` instead of
-  buried in a code comment; it does not fix it. Segment B — 61% of HK large caps, including
-  `0700.HK` — needs a China 10-year and remains the largest known valuation defect here.
+  buried in a code comment; it does not fix it. Segment B — **30 of the 48 HK large caps that
+  resolved**, including `0700.HK` — needs a China 10-year and remains the largest known
+  valuation defect here. *(A draft of this entry wrote "61%", which is the exact framing
+  [data-sources-review.md](docs/data-sources-review.md) already records as wrong: 49 were
+  queried, 48 resolved, and the percentages sum to 98% leaving the 49th unexplained. Counts,
+  not percentages.)*
 
 - **HKMA is still not wired.** 5c stays blocked on reachability: `502` on 2026-08-14, and
   `http_code=000` after 25s on 2026-08-18 while the same host answered `404` in 1.2s.

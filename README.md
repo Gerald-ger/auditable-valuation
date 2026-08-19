@@ -653,8 +653,9 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   to 0.42–0.69, so any cut in the weak range would sit between two adjacent observations
   rather than be fitted to anything. *(This read "0.028 → 0.148 with nothing in between"
   until 2026-08-19, when `0002_HK` landed at 0.055 — inside the gap the sentence rested on.
-  The conclusion survives the correction; that particular evidence for it did not.)* And note the asymmetry it introduces — beta now carries an interval while the
-  growth rate and equity risk premium do not, which does not mean those are precise.
+  The conclusion survives the correction; that particular evidence for it did not.)* And note
+  the asymmetry it introduces — beta now carries an interval while the growth rate and equity
+  risk premium do not, which does not mean those are precise.
 - **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
   Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each
   with its published threshold. They stay out of the score because the composite already

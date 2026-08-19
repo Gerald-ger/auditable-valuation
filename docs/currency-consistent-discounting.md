@@ -214,8 +214,9 @@ Recorded now so the estimate does not have to be rebuilt later.
   currency-aware would have meant pinning a different rate per currency — a fiction, since
   every currency genuinely resolves to the same US 10-year. The fixture instead moved down a
   level to patch `data_provider._us_treasury_10y`, the network fetch, leaving the currency
-  branch itself unstubbed and executed by all 482 tests. The warning was right about the
-  hazard and wrong about the remedy.
+  branch itself unstubbed and executed by **150 of the 482** tests — the ones that reach
+  `_wacc`, measured by instrumenting the branch, against **0** had the outer function been
+  stubbed. The warning was right about the hazard and wrong about the remedy.
 - `golden_scores.json` moves for `0700_HK`: `dcf_upside_pct` feeds the valuation pillar.
 - [test_valuation.py:355](../backend/tests/test_valuation.py#L355) pins AAPL's fair value at
   ≈146.49. AAPL reports USD and must not move — that test becomes the regression guard proving the

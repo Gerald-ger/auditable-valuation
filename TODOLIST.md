@@ -597,6 +597,22 @@ or let HK degrade to price-and-quote. The six-method `YFinanceProvider` interfac
 keeps the eventual swap bounded — worth keeping clean. Full reasoning in
 `docs/data-sources-review.md` §3.
 
+### 🟡 `_us_treasury_10y`'s internals have never been tested *(found 2026-08-19)*
+
+Three mutations inside it survive the whole suite: **removing the day-cache read**, **never
+populating the cache**, and **dropping the `0 < rate < 0.25` sanity band** — the band that
+exists so a provider switching to percent units cannot wreck every WACC at once.
+
+**Not a regression.** The same three survive at `0349b1b`, verified by running them there; the
+logic simply moved from `risk_free_rate` into `_us_treasury_10y` on 2026-08-19. The cause is
+structural and older than either: `conftest.pinned_risk_free_rate` has always replaced whatever
+function holds the fetch, so its body cannot run offline.
+
+Testing it needs the `openbb` import stubbed rather than the function replaced — the same shape
+`test_comps.py` already uses for the FMP and screener calls. Worth doing when something else
+touches this function; not worth a commit of its own, since the untested code is a cache and a
+guard whose failure modes are a slow request and a rejected absurd rate.
+
 ### 🔵 HK stocks still use the USD risk-free rate *(the ERP half was fixed 2026-08-14)*
 
 **The ERP leg is done.** `EQUITY_RISK_PREMIUM = 0.05` is replaced by Damodaran's published
