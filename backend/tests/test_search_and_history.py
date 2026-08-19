@@ -134,10 +134,51 @@ def test_requested_intraday_intervals(period, interval):
     assert main.PERIOD_INTERVALS[period] == interval
 
 
+# Yahoo's own list, read off the error it returns for a tenor it does not serve:
+# "Invalid input - interval=3h is not supported. Valid intervals: [...]"
+# (measured 2026-08-19). Kept as a set rather than probed live because the whole
+# point is that it runs offline, next to the table it guards.
+YAHOO_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "4h",
+                   "1d", "5d", "1wk", "1mo", "3mo"}
+
+
+def test_every_interval_is_one_yahoo_actually_serves():
+    """An interval Yahoo does not publish is invisible, not loud.
+
+    It returns HTTP 200 with zero bars, `history` below falls back to daily, and
+    the chart renders perfectly — at a bar size nobody chose. `3h` and `3d` both
+    look like reasonable steps in this table and neither exists; they were asked
+    for on 2026-08-19 and only the live probe said so.
+    """
+    unserved = {p: i for p, i in main.PERIOD_INTERVALS.items()
+                if i not in YAHOO_INTERVALS}
+    assert not unserved, f"Yahoo does not serve: {unserved}"
+
+
+@pytest.mark.parametrize("period", ["6mo", "1y", "2y"])
+def test_the_mid_ranges_are_daily_so_the_indicators_mean_days(period):
+    """MA20/MA50, RSI(14) and MACD(12,26,9) are daily-line conventions, and the
+    chart counts bars rather than time. These three ranges were hourly until
+    2026-08-19, which made RSI(14) a fourteen-*hour* RSI wearing a daily name.
+
+    Pinned as an equality on all three together: the value is that they agree,
+    so a reader comparing MA50 across 6mo, 1y and 2y is comparing one indicator.
+    """
+    assert main.PERIOD_INTERVALS[period] == "1d"
+
+
 @pytest.mark.parametrize("period", ["5y", "max"])
 def test_long_periods_stay_daily_or_coarser(period):
     """Yahoo serves hourly data for the last 730 days only — measured, 5y at
-    1h returns ZERO bars. No UI choice can make these finer."""
+    1h returns ZERO bars. No UI choice can make these finer.
+
+    The upper bound matters too, and it is why `max` is not monthly: Yahoo caps
+    a monthly response at **500 bars**, measured 2026-08-19, which starts XOM in
+    1985 rather than 1962 and RIVN with 58 bars in total. Excluding `1mo` here
+    is therefore load-bearing rather than incidental — a `max` button that shows
+    23 fewer years than the weekly one contradicts its own label, and it does it
+    silently, since 500 bars is a successful response.
+    """
     assert main.PERIOD_INTERVALS[period] in ("1d", "1wk")
 
 
@@ -148,11 +189,138 @@ def test_no_period_requests_sub_hourly_beyond_60_days():
         assert main.PERIOD_INTERVALS[period] not in sub_hourly
 
 
+# ── lead-in bars ─────────────────────────────────────────────────────
+#
+# Every test here stubs `provider.get_history`, so what is asserted is the
+# trimming and the failure policy rather than Yahoo's uptime.
+
+
+def _stub_history(monkeypatch, series: dict[str, list]):
+    """`provider.get_history` answering from a {period: bars} table."""
+    def fake(ticker, period="1y", interval="1d"):
+        return series[period]
+    monkeypatch.setattr(main.provider, "get_history", fake)
+
+
+def _daily(start: int, count: int) -> list[dict]:
+    """`count` bars whose times sort in the order they were generated."""
+    return [{"time": f"{2000 + (start + i) // 12:04d}-{(start + i) % 12 + 1:02d}-01",
+             "close": 1.0} for i in range(count)]
+
+
+def test_the_lead_in_is_the_bars_immediately_before_the_window(monkeypatch):
+    """Contiguous and non-overlapping: the last N of the source that predate the
+    window, not the first N of the source and not any bar the window repeats."""
+    window = _daily(200, 30)
+    _stub_history(monkeypatch, {"6mo": window, "1y": _daily(0, 230)})
+
+    out = main.history("X", period="6mo", interval="1d")
+
+    assert out["warmup_bars"] == main.WARMUP_BARS
+    lead, shown = out["bars"][:main.WARMUP_BARS], out["bars"][main.WARMUP_BARS:]
+    assert shown == window, "the requested window must survive intact"
+    assert lead == _daily(150, 50), "must be the 50 bars ending where the window starts"
+    assert [b["time"] for b in out["bars"]] == sorted(b["time"] for b in out["bars"])
+
+
+def test_a_lead_in_failure_costs_the_left_edge_and_not_the_chart(monkeypatch):
+    """The reason `_lead_in` does not use `_guard`.
+
+    `_guard` turns any provider exception into a 502, which is right for the
+    bars a chart cannot be drawn without and wrong for these. A lead-in outage
+    must return the chart the app had before this feature existed.
+    """
+    window = _daily(200, 30)
+
+    def fake(ticker, period="1y", interval="1d"):
+        if period == "1y":
+            raise RuntimeError("Yahoo said no")
+        return window
+
+    monkeypatch.setattr(main.provider, "get_history", fake)
+
+    out = main.history("X", period="6mo", interval="1d")
+    assert out["warmup_bars"] == 0
+    assert out["bars"] == window
+
+
+def test_a_company_younger_than_the_window_gets_what_lead_in_exists(monkeypatch):
+    """Partial rather than none, and none rather than an error.
+
+    RIVN's 5y and its max are the same 250 weekly bars, so it has no run-up at
+    all; a name with three bars of it should still get the three.
+    """
+    window = _daily(200, 30)
+    _stub_history(monkeypatch, {"6mo": window, "1y": _daily(197, 33)})
+
+    out = main.history("X", period="6mo", interval="1d")
+    assert out["warmup_bars"] == 3
+    assert out["bars"] == _daily(197, 3) + window
+
+
+@pytest.mark.parametrize("period", ["1d", "5d", "max"])
+def test_the_ranges_that_deliberately_get_no_lead_in(period):
+    """Absence here is a decision, not a gap — see the comment on WARMUP_SOURCE.
+
+    `1d` and `5d` would need a 4-5x fetch against Yahoo's most rate-limited
+    endpoints to buy the last 13% of a chart that already carries MA50 across
+    87% of itself. `max` has no bar before its first one.
+    """
+    assert period not in main.WARMUP_SOURCE
+
+
+def test_every_lead_in_source_is_a_longer_period():
+    """A source no longer than what it feeds supplies no earlier bar at all, so
+    the lead-in would be silently empty and MA50 would go back to starting a
+    third of the way in — with nothing failing."""
+    order = list(main.PERIOD_INTERVALS)
+    for period, source in main.WARMUP_SOURCE.items():
+        assert order.index(source) > order.index(period), f"{source} !> {period}"
+
+
+# Roughly how far back each period reaches, for the limit check below only.
+PERIOD_DAYS = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180,
+               "1y": 365, "2y": 730, "5y": 1825, "max": 10**6}
+
+
+def test_no_lead_in_asks_yahoo_for_a_span_it_will_not_serve():
+    """The lead-in is fetched at the **display** interval, not at the source
+    period's own one — `1mo` is served at 1h and its lead-in is `3mo` at 1h,
+    where `PERIOD_INTERVALS["3mo"]` is 4h and irrelevant. (An earlier draft of
+    this test asserted the two intervals matched. They do not need to, the code
+    never claimed they did, and the assertion failed on the first run.)
+
+    What does bind is Yahoo's own window per bar size, which the source period
+    can walk past even when the display period does not: `2y` at 1h would be
+    legal to display and its `5y` lead-in would return **zero** bars, giving a
+    silently empty run-up rather than an error.
+    """
+    for period, source in main.WARMUP_SOURCE.items():
+        interval, days = main.PERIOD_INTERVALS[period], PERIOD_DAYS[source]
+        if interval in {"1m", "2m", "5m", "15m", "30m", "90m"}:
+            assert days <= 60, f"{period}: {source} at {interval} exceeds 60 days"
+        elif interval in {"1h", "60m", "4h"}:
+            assert days <= 730, f"{period}: {source} at {interval} exceeds 730 days"
+
+
+def test_the_lead_in_covers_every_window_the_chart_draws():
+    """50 is MA50 and `smaSeries` emits from index `period - 1`, so exactly 50
+    leading bars put the longest line on the first displayed bar. The other
+    three ride along: SD band 20, RSI(14) 15, MACD signal 34 (26 - 1, then 9)."""
+    assert main.WARMUP_BARS >= 50
+
+
 # ── bars per day (drives indicator window scaling) ───────────────────
 
 def test_bars_per_day_counts_a_full_session():
-    """The chart scales MA/RSI/MACD windows with this, so an off-by-one here
-    silently changes what every indicator measures."""
+    """Median bars per trading day, ignoring partial sessions at either end.
+
+    This docstring said until 2026-08-19 that *"the chart scales MA/RSI/MACD
+    windows with this, so an off-by-one here silently changes what every
+    indicator measures"*. It does not — nothing consumes `bars_per_day`; see the
+    corrected note on `main._bars_per_day`. The figure is still served and still
+    worth pinning, but an off-by-one changes a payload field, not a chart.
+    """
     bars = [{"time": f"2026-08-{day:02d}"} for day in range(3, 9) for _ in range(7)]
     assert main._bars_per_day(bars) == 7.0
 

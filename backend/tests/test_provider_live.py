@@ -14,6 +14,7 @@ import yfinance as yf
 from backend import comps
 from backend import data_provider
 from backend import financial_models as fm
+from backend import main
 from backend import statements
 from backend.data_provider import fx_rate, provider
 
@@ -86,6 +87,30 @@ def test_history_returns_ordered_bars():
     bars = provider.get_history("AAPL", "1mo", "1d")
     assert len(bars) > 5
     assert [b["time"] for b in bars] == sorted(b["time"] for b in bars)
+
+
+@pytest.mark.parametrize("period", sorted(main.WARMUP_SOURCE))
+def test_every_configured_lead_in_actually_arrives(period):
+    """The half of the lead-in contract no offline test can reach.
+
+    `WARMUP_SOURCE` names a longer period and `_lead_in` fetches it at the
+    **display** interval — a pairing Yahoo never promised to serve, and one that
+    fails *quietly*: an unserved span returns HTTP 200 with zero bars, `_lead_in`
+    finds nothing earlier, and the chart silently reverts to MA50 starting a
+    third of the way in. Nothing raises and no offline test can see it.
+
+    AAPL because the run-up has to exist to be fetched — the point is Yahoo's
+    coverage, not a young listing's, which
+    `test_a_company_younger_than_the_window_gets_what_lead_in_exists` covers
+    offline.
+    """
+    out = main.history("AAPL", period=period)
+    assert out["warmup_bars"] == main.WARMUP_BARS, (
+        f"{period} got {out['warmup_bars']} lead-in bars from "
+        f"{main.WARMUP_SOURCE[period]} at {out['interval']}")
+    times = [b["time"] for b in out["bars"]]
+    assert times == sorted(times), "lead-in and window must splice into one series"
+    assert len(times) == len(set(times)), "a bar must not appear in both"
 
 
 # ── which side of the FX rate each info field sits on ────────────────

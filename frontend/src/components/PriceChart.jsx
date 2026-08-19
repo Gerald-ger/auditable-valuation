@@ -47,6 +47,28 @@ const SCALE_MODES = [
 ];
 
 /**
+ * Open the chart on the window that was *requested*, not on everything it holds.
+ *
+ * `/history` prepends up to 50 bars of lead-in so MA50, RSI and MACD exist at
+ * the left edge instead of starting a third of the way in. Those bars are real
+ * and stay scrollable — the series is given all of them, and panning left walks
+ * into the run-up. What they must not do is widen the range: a plain
+ * `fitContent()` would show 175 bars under a button labelled "6M", which is the
+ * one thing the caller did not ask for.
+ *
+ * Falls back to `fitContent()` when there is no lead-in, which is not a special
+ * case bolted on — `1d`, `5d` and `max` are served without one by design, and a
+ * company listed inside the window gets none either.
+ */
+function fitDisplay(chart, warmup, total) {
+  if (!chart) return;
+  const ts = chart.timeScale();
+  // half-bar padding on each side, which is what fitContent does at the edges
+  if (warmup > 0 && total > warmup) ts.setVisibleLogicalRange({ from: warmup - 0.5, to: total - 0.5 });
+  else ts.fitContent();
+}
+
+/**
  * Marker categories, most-significant first. When several events land on one
  * bar the dot takes the colour of the highest-priority one, so an earnings
  * release is never hidden behind an insider filing.
@@ -79,6 +101,7 @@ const dominantType = (items) =>
 
 export default function PriceChart({
   bars: rawBars = [], events, filingsSupported = true, interval = '1d', ticker = '',
+  warmupBars = 0,
 }) {
   // Shift once, here, so every downstream consumer — the series, the volume
   // pane, event grouping, the crosshair legend — works in one time space.
@@ -290,7 +313,7 @@ export default function PriceChart({
       }
     }
 
-    chart.timeScale().fitContent();
+    fitDisplay(chart, warmupBars, bars.length);
 
     const volByTime = new Map(bars.map((b) => [String(b.time), b.volume]));
     const onMove = (param) => {
@@ -323,7 +346,7 @@ export default function PriceChart({
     const resize = () => chart.applyOptions({ width: containerRef.current.clientWidth });
     resize();
     window.addEventListener('resize', resize);
-    const onDblClick = () => chart.timeScale().fitContent();
+    const onDblClick = () => fitDisplay(chart, warmupBars, bars.length);
     const el = containerRef.current;
     el.addEventListener('dblclick', onDblClick);
 
@@ -337,7 +360,7 @@ export default function PriceChart({
       markersRef.current = null;
       primitiveRef.current = null;
     };
-  }, [bars, chartType, show, scaleMode]);
+  }, [bars, chartType, show, scaleMode, warmupBars]);
 
   // ── markers, updated without rebuilding the chart ─────────────────
   // Kept in its own effect so toggling a filter does not recreate the chart and
@@ -574,7 +597,13 @@ export default function PriceChart({
         <span className="seg-group">
           <button className="seg" title="Zoom in" onClick={() => zoom(0.7)}>＋</button>
           <button className="seg" title="Zoom out" onClick={() => zoom(1.4)}>－</button>
-          <button className="seg" title="Fit all data (or double-click the chart)" onClick={() => chartRef.current?.timeScale().fitContent()}>
+          <button
+            className="seg"
+            title={warmupBars > 0
+              ? 'Back to the selected range (or double-click the chart). Pan left for the indicator run-up.'
+              : 'Fit all data (or double-click the chart)'}
+            onClick={() => fitDisplay(chartRef.current, warmupBars, bars.length)}
+          >
             Reset
           </button>
         </span>

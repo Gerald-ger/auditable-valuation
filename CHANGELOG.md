@@ -7,6 +7,172 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-19 (e) — the indicators reach the left edge of the chart
+
+Backend **507 → 516**, live tests 18 → 24. Follows directly from (d): daily bars made the
+indicators mean days, and cost coverage. This buys the coverage back.
+
+MA50 needs fifty bars and the chart had no history behind its left edge, so on the 6-month chart
+the line **only existed for the last 61%** of what you were looking at. `/history` now fetches up
+to **50 bars before** the requested window, hands the chart one series, and reports
+`warmup_bars` so it opens on the range that was asked for. The lead-in stays scrollable — pan
+left and you see the run-up.
+
+**Every indicator now covers 100% of every range that has a lead-in** (AAPL, measured through the
+endpoint):
+
+| range | shown | MA50 | SD(20) | RSI(14) | MACD signal |
+|---|---|---|---|---|---|
+| 1mo | 154 | 68% → **100%** | 88% → 100% | 91% → 100% | 79% → 100% |
+| 3mo | 126 | 61% → **100%** | 85% → 100% | 89% → 100% | 74% → 100% |
+| 6mo | 125 | 61% → **100%** | 85% → 100% | 89% → 100% | 74% → 100% |
+| 1y | 251 | 80% → **100%** | 92% → 100% | 94% → 100% | 87% → 100% |
+| 2y | 501 | 90% → **100%** | 96% → 100% | 97% → 100% | 93% → 100% |
+| 5y | 262 | 81% → **100%** | 93% → 100% | 95% → 100% | 87% → 100% |
+
+### What it costs
+
+**The wire cost is flat, because the trim happens in the backend.** The source period is 1.5x–9x
+larger than the window, but only the last 50 bars of it are sent: **+5.0 to +5.8 KB on every
+range**, measured on both markets, and **+0.0 KB** on the three that have no lead-in.
+
+**Cold fetch +0.07 s to +0.45 s** across three runs of both markets, worst case ~+1.2 s on 5y
+where the source is `max` at 1wk (2,385 bars fetched to send 50). Repeat views are served by the
+15-minute provider cache at **0.1–7 ms**. Run-to-run noise is ±0.3 s — the three lead-in-free
+ranges act as the control, and their deltas scatter between −1.34 s and +0.11 s while nothing at
+all changed about them.
+
+### Which values move, and which cannot
+
+Measured by reimplementing `indicators.js` exactly and running both series:
+
+- **MA50 and the SD band: byte-identical**, max relative change `8.7e-16` — floating-point noise.
+  An SMA is a pure window function, so no previously-drawn point can move.
+- **RSI(14) and MACD: they move, and the new values are the correct ones.** Both are recursively
+  smoothed, so a longer seed changes them. RSI's difference is **10.0% at the first drawable bar,
+  0.53% by bar 50, 0.01% by bar 100** — a half-life of about its own period. The old figure was an
+  artefact of where the fetch happened to start; the new one is what any charting package holding
+  the same history would draw.
+- **Stated because it is readable, not cosmetic:** across twelve ticker/range pairs the change
+  flips **0–3 RSI 30/70 side reads and 0–4 MACD histogram bars**, always inside bars 33–78. A
+  histogram bar that was red can now be green. It is a correction, not a drift.
+
+### Deliberately not everywhere
+
+`1d`, `5d` and `max` get no lead-in. `max` has no bar before its first. The other two would need a
+**4–5x fetch against `1m` and `5m` — the endpoints Yahoo rate-limits hardest** — to buy the last
+13% of charts that already carry MA50 across 87% of themselves. Recorded as a parametrized test
+so the absence reads as a decision rather than a gap.
+
+### The failure policy, which is why `_lead_in` does not use `_guard`
+
+`_guard` turns any provider exception into a **502**. That is right for bars a chart cannot be
+drawn without and wrong for these: a lead-in outage must cost the left edge of an indicator, never
+the chart. Same rule as `risk_free_rate`, `fx_rate` and `live_price`. A company listed inside the
+window — RIVN's 5y and its max are the same 250 weekly bars — gets a partial lead-in or none, and
+the chart behaves exactly as it did before.
+
+### One test failed on its first run, and the code was right
+
+`test_every_lead_in_source_is_a_longer_period_at_the_same_interval` asserted that a source
+period's own default interval matched the display one. It does not need to and the code never
+claimed it did — `_lead_in` passes the **display** interval explicitly, so `1mo` (served at 1h)
+draws its lead-in from `3mo` **at 1h**, not at the 4h that `PERIOD_INTERVALS["3mo"]` names. The
+assertion was replaced with the constraint that actually binds: the source period, fetched at the
+display interval, must stay inside Yahoo's 60-day and 730-day windows — `2y` at 1h would be legal
+to display while its `5y` lead-in returned **zero** bars.
+
+---
+
+## 2026-08-19 (d) — the chart's indicators start meaning what they are named
+
+Backend **503 → 507**, frontend **100 → 101**. No valuation number moves; this is the Tracker
+chart only.
+
+`PERIOD_INTERVALS` chose the **finest** interval Yahoo serves for each period, which is how the
+one-year chart arrived as **1,740 hourly bars** and the two-year as **3,487**. Finest is the wrong
+objective. MA20/MA50, RSI(14) and MACD(12,26,9) are daily-line conventions, and
+[indicators.js](frontend/src/indicators.js) counts *bars* — so the 1y chart was drawing a
+fourteen-**hour** RSI under the label RSI(14), and an MA50 spanning 7.7 sessions rather than fifty
+days.
+
+| period | was | now | bars (AAPL) | MA50 now spans |
+|---|---|---|---|---|
+| 1d | `1m` | `1m` | 390 | 50 min |
+| 5d | `5m` | `5m` | 390 | 4.2 h |
+| 1mo | `30m` | **`1h`** | 286 → **154** | 7.7 sessions |
+| 3mo | `1h` | **`4h`** | 441 → **126** | **25 sessions** |
+| 6mo | `1h` | **`1d`** | 868 → **125** | **50 days** |
+| 1y | `1h` | **`1d`** | 1,740 → **251** | **50 days** |
+| 2y | `1h` | **`1d`** | 3,487 → **501** | **50 days** |
+| 5y | `1d` | **`1wk`** | 1,254 → **262** | 50 weeks |
+| max | `1wk` | `1wk` | 2,385 | 50 weeks |
+
+Verified live end to end on AAPL and 0700.HK: every period returns the interval it asks for and
+**the daily fallback fires on none of them**.
+
+### Three intervals that were asked for and do not exist
+
+The request was 3h for 3mo, 3d for 2y and 1mo for max. Yahoo's own error names the legal set —
+`[1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 4h, 1d, 5d, 1wk, 1mo, 3mo]` — and **`3h` and `3d` are not
+in it**. `5d` exists but is a *calendar*-day bucket: 2y at `5d` returned 100 bars ending
+2026-08-14 against `1wk`'s 105 ending 08-17, so it is a worse weekly bar.
+
+**`max` stays weekly, and this is the finding worth keeping.** Yahoo caps a **monthly** response
+at **500 bars**, measured across eight names:
+
+| | max @ `1wk` | max @ `1mo` |
+|---|---|---|
+| **XOM** | 3,373 bars from **1962-01** | 500 bars from **1985-01** — **23 years dropped** |
+| JPM | 2,423 from 1980-03 | 500 from 1985-01 |
+| AAPL | 2,385 from 1980-12 | 500 from 1985-01 |
+| RIVN | 250 | **58** — MA50 alone consumes fifty of them |
+
+A `max` button that shows less history than the 5y button's interval would contradicts its own
+label, and it does so **silently**: 500 bars is a successful response, so the zero-bar fallback in
+`history` never fires.
+
+### The cost, stated because it is visible
+
+MA50 needs fifty bars and there is no warm-up history behind the left edge, so coarser bars mean
+the line starts later. 6mo goes from **6% to 40%** of the chart without an MA50, and 3mo from 11%
+to 40%. That is the correct answer — a 50-day average genuinely does not exist for the first 50
+days of a 125-day window — but it is the one part of this that looks worse.
+
+### `4h` needed its own label, because the minutes model would have lied
+
+`windowSpan` converts bars to time through minutes-per-bar and a 6.5 h session. Measured
+2026-08-19, Yahoo serves 4h as **exactly two bars a session** — 09:30 and 13:30, 126 bars over 63
+trading days, identical on AAPL and 0700.HK. Through the minutes model, MA50 would read
+**"30.8 sessions"** against a true **25**: the second bar of a session is nominally four hours and
+only ever holds the 2.5 the session has left. The model is ~8% high on `1h` too and is shown
+behind a `≈` for exactly that reason — 23% is past what a `≈` can carry, so `4h` counts sessions
+directly.
+
+### A false comment, corrected because this change is what made it dangerous
+
+`main._bars_per_day`'s docstring claimed *"the frontend scales indicator windows with this so MA50
+keeps meaning 50 days whatever the bar size."* **It does not.** Searching the tree finds
+`bars_per_day` in `main.py`, in this file, and in one comment naming the payload shape — **nothing
+consumes it**. `PriceChart.jsx` has always said the opposite.
+
+It is corrected rather than deleted because of what it would have cost here: it is precisely the
+mitigation someone would assume already exists before changing an interval. It does not, so an
+interval change really does change what every indicator measures, and the only defence is the
+label. `test_search_and_history.py` repeated the same claim and is corrected too.
+
+### The guard that would have caught `3h` before it was written
+
+An interval Yahoo does not serve is **invisible, not loud**: HTTP 200, zero bars, `history` falls
+back to daily, and the chart renders perfectly at a bar size nobody chose.
+`test_every_interval_is_one_yahoo_actually_serves` pins the table against Yahoo's published list,
+offline, beside the table it guards.
+
+**All four new guards mutation-tested, each caught by exactly one test:** `3mo → 3h`, `2y → 1h`,
+`max → 1mo`, and dropping the `4h` session lookup.
+
+---
+
 ## 2026-08-19 (c) — Tencent stops being discounted at an American rate
 
 Backend **482 → 503**, live tests 17 → 18. **This one moves a number, deliberately**, and it is

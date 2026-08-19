@@ -10,9 +10,13 @@ const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
 export default function TrackerTab({ ticker, aiOnline }) {
   const [quote, setQuote] = useState(null);
   const [bars, setBars] = useState([]);
-  // interval is chosen by the backend per period (1m for 1d, 1h for 1y, ...).
+  // interval is chosen by the backend per period (1m for 1d, 1d for 1y, ...).
   // MA/RSI/MACD windows count bars, so it is what says how long they span.
   const [interval, setInterval_] = useState('1d');
+  // How many leading bars are lead-in rather than part of the requested range.
+  // The chart is given all of them — indicators need the run-up — and opens on
+  // the range that was asked for.
+  const [warmupBars, setWarmupBars] = useState(0);
   // every datable item (news + SEC filings) for the chart markers; the list
   // below stays headlines-only, which is what "News behind the chart" means
   const [events, setEvents] = useState([]);
@@ -39,6 +43,9 @@ export default function TrackerTab({ ticker, aiOnline }) {
         // and an undefined `bars` throws inside the chart's render
         setBars(h.bars ?? []);
         setInterval_(h.interval ?? '1d');
+        // absent on a backend older than the page, which is the same guard the
+        // line above needs and means the same thing: no lead-in, fit everything
+        setWarmupBars(h.warmup_bars ?? 0);
         setEvents(e.events);
         setFilingsSupported(e.filings_supported);
       })
@@ -119,10 +126,14 @@ export default function TrackerTab({ ticker, aiOnline }) {
               filingsSupported={filingsSupported}
               interval={interval}
               ticker={ticker}
+              warmupBars={warmupBars}
             />
           )}
           <div className="chart-note">
-            {bars.length.toLocaleString()} bars at {interval} · times in {DISPLAY_TZ_LABEL}
+            {(bars.length - warmupBars).toLocaleString()} bars at {interval}
+            {warmupBars > 0
+              ? ` (+${warmupBars} before it, so MA50 reaches the left edge — pan left to see them)`
+              : ''} · times in {DISPLAY_TZ_LABEL}
             {interval.endsWith('m') || interval.endsWith('h')
               ? ' (a US session runs 21:30-04:00 and so spans two dates)'
               : ''}{' '}

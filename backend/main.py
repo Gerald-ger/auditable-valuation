@@ -221,32 +221,123 @@ def quote(ticker: str):
     return q
 
 
-# Finest interval Yahoo actually serves for each period. Measured against live
-# responses 2026-08-07 — these are hard API limits, not preferences:
-#   sub-hourly data  -> last 60 days only  (3mo at 30m returns ZERO bars)
-#   hourly data      -> last 730 days only (5y at 1h returns ZERO bars)
-# so 5y and max cannot go below daily however the UI asks.
+# Bar size per period. Until 2026-08-19 this table chose the **finest** interval
+# Yahoo serves, which is how 1y and 2y arrived as 1,740 and 3,487 hourly bars.
+# Finest is the wrong objective. MA20/MA50, RSI(14) and MACD(12,26,9) are
+# daily-line conventions and the chart counts *bars*, so a one-year chart at 1h
+# was drawing a fourteen-**hour** RSI under the label RSI(14), and an MA50 that
+# spanned 7.7 sessions rather than fifty days. 6mo, 1y and 2y are daily now, so
+# those three ranges mean what their names have always claimed.
+#
+# Two hard Yahoo limits bound the top of the table — measured 2026-08-07, API
+# limits rather than preferences:
+#   sub-hourly data -> last 60 days only  (3mo at 30m returns ZERO bars)
+#   hourly data     -> last 730 days only (5y at 1h returns ZERO bars)
+#
+# A third bounds the bottom, measured 2026-08-19 and the reason `max` did **not**
+# move to monthly: Yahoo caps a monthly response at **500 bars**, so max at 1mo
+# starts XOM in 1985 instead of 1962 — twenty-three years dropped from the one
+# button whose whole job is showing all of them, and dropped *silently*, because
+# the fallback below only fires on zero bars. RIVN would fall to 58 monthly bars,
+# where MA50 alone consumes fifty of them.
+#
+# Bar counts are AAPL on 2026-08-19; 0700.HK lands within a few percent of each.
 PERIOD_INTERVALS = {
     "1d": "1m",     # 390 bars — the finest Yahoo serves, and its most rate-limited
     "5d": "5m",     # 390
-    "1mo": "30m",   # 299
-    "3mo": "1h",    # 441
-    "6mo": "1h",    # 868
-    "1y": "1h",     # 1,749
-    "2y": "1h",     # 3,487
-    "5y": "1d",     # 1,255
-    "max": "1wk",
+    "1mo": "1h",    # 154
+    "3mo": "4h",    # 126 — exactly two bars a session (09:30 and 13:30, measured
+                    # on AAPL and 0700.HK alike), so MA50 spans ~25 days. Daily
+                    # would be 63 bars here and MA50 needs 50 of them, leaving
+                    # the line absent from 79% of the chart.
+    "6mo": "1d",    # 125
+    "1y": "1d",     # 251
+    "2y": "1d",     # 501
+    "5y": "1wk",    # 262
+    "max": "1wk",   # 2,385 for AAPL, back to 1980 — see the 500-bar note above
 }
 DEFAULT_INTERVAL = "1d"
+
+# Bars of lead-in fetched *before* the requested window, so the indicators exist
+# at its left edge instead of starting a third of the way in.
+#
+# 50 is MA50, the longest window the chart draws, and `smaSeries` emits from
+# index `period - 1` — so exactly 50 leading bars put MA50 on the **first**
+# displayed bar. The other three windows are shorter and ride along: the SD band
+# needs 20, RSI(14) needs 15, and MACD(12,26,9)'s signal line first exists at
+# bar 34 (`slow - 1` for the MACD line, then 9 more for its EMA).
+WARMUP_BARS = 50
+
+# Where the lead-in comes from: the next period up that Yahoo serves at the same
+# interval. It is trimmed to WARMUP_BARS before going out, so the wire cost is
+# **flat** however much larger the source is — measured 2026-08-19 across both
+# markets, +5.2 to +5.8 KB on every range, because 50 bars of JSON is 50 bars of
+# JSON. The extra fetch is the real cost and it is bounded by the 15-minute
+# provider cache.
+#
+# `1d` and `5d` are absent deliberately, and it is a measurement rather than an
+# oversight. Their sources would be 5d at 1m (1,950 bars fetched to display 390)
+# and 1mo at 5m (1,716 for 390) — a 4-5x fetch against the two endpoints Yahoo
+# rate-limits hardest, `1m` most of all — to buy the last 13% of a chart that
+# already carries MA50 across 87% of itself. `max` is absent because no bar
+# exists before the first one.
+WARMUP_SOURCE = {
+    "1mo": "3mo",
+    "3mo": "6mo",
+    "6mo": "1y",
+    "1y": "2y",
+    "2y": "5y",
+    "5y": "max",
+}
+
+
+def _lead_in(ticker: str, period: str, interval: str, first_time) -> list[dict]:
+    """Up to WARMUP_BARS bars immediately before `first_time`, or `[]`.
+
+    Deliberately **not** wrapped in `_guard`. That helper turns any provider
+    exception into a 502, which is right for the bars a chart cannot be drawn
+    without and wrong for these: a lead-in failure must cost the left edge of an
+    indicator, never the chart. Same rule as `risk_free_rate`, `fx_rate` and
+    `live_price` — degrade the number, never the request.
+
+    Returns fewer than WARMUP_BARS, including none at all, whenever the source
+    has no earlier history. A company listed inside the requested window is the
+    ordinary case: RIVN's 5y and its max are the same 250 weekly bars, so it
+    gets no lead-in and the chart behaves exactly as it did before.
+    """
+    source = WARMUP_SOURCE.get(period)
+    if source is None:
+        return []
+    try:
+        longer = provider.get_history(ticker, source, interval)
+    except Exception:
+        return []
+    # `time` is an ISO string for daily-and-coarser bars and an epoch int for
+    # intraday ones. Both series come from the same `interval`, so the two sides
+    # of this comparison are always the same type.
+    earlier = [b for b in longer if b["time"] < first_time]
+    return earlier[-WARMUP_BARS:]
 
 
 def _bars_per_day(bars: list[dict]) -> float:
     """Median bars per trading day, measured from the data itself.
 
-    The frontend scales indicator windows with this so "MA50" keeps meaning 50
-    *days* whatever the bar size. Derived rather than hard-coded per interval
-    because sessions differ by market — Hong Kong trades 5.5 hours against the
-    US 6.5 — and half-days would skew a constant.
+    Derived rather than hard-coded per interval because sessions differ by
+    market — Hong Kong trades 5.5 hours against the US 6.5 — and half-days would
+    skew a constant.
+
+    **Served in the payload, and consumed by nothing.** This docstring claimed
+    until 2026-08-19 that *"the frontend scales indicator windows with this so
+    MA50 keeps meaning 50 days whatever the bar size"*. It does not: searching
+    the tree finds `bars_per_day` here, in `CHANGELOG.md`, and in one comment
+    naming the payload shape — nowhere else. The chart keeps its windows in bars
+    and *names* the span instead (`indicators.windowSpan`), which
+    `PriceChart.jsx` has always said in as many words.
+
+    Corrected rather than deleted because of what the false version cost: it is
+    exactly the mitigation someone would assume already exists before changing an
+    interval above. It does not exist, so **an interval change really does change
+    what every indicator measures**, and the only defence is the label.
     """
     if not bars:
         return 1.0
@@ -265,8 +356,15 @@ def _bars_per_day(bars: list[dict]) -> float:
 
 @app.get("/api/stock/{ticker}/history")
 def history(ticker: str, period: str = "1y", interval: str = ""):
-    """Bars plus the interval used and its bars-per-day, which the chart needs
-    to keep day-based indicator windows meaning days."""
+    """Bars, the interval used, and how many leading bars are lead-in only.
+
+    `bars` is the lead-in followed by the requested window, in one ascending
+    series, because every indicator is a function of the bars before it and
+    handing the chart two arrays would only make it join them again.
+    `warmup_bars` is where the requested window starts, and it is the whole
+    contract: a client that ignores it draws a chart a little longer than it
+    asked for, rather than a wrong one.
+    """
     interval = interval or PERIOD_INTERVALS.get(period, DEFAULT_INTERVAL)
     bars = _guard(provider.get_history, ticker, period, interval)
     if not bars and interval != DEFAULT_INTERVAL:
@@ -276,7 +374,9 @@ def history(ticker: str, period: str = "1y", interval: str = ""):
         bars = _guard(provider.get_history, ticker, period, interval)
     if not bars:
         raise HTTPException(status_code=404, detail=f"No price history for '{ticker}'")
-    return {"interval": interval, "bars_per_day": _bars_per_day(bars), "bars": bars}
+    warmup = _lead_in(ticker, period, interval, bars[0]["time"])
+    return {"interval": interval, "warmup_bars": len(warmup),
+            "bars_per_day": _bars_per_day(bars), "bars": warmup + bars}
 
 
 @app.get("/api/stock/{ticker}/news")

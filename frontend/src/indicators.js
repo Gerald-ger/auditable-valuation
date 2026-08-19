@@ -23,6 +23,19 @@ const INTERVAL_MINUTES = {
   '1m': 1, '2m': 2, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '90m': 90, '1h': 60,
 };
 const INTERVAL_UNIT = { '1d': 'day', '1wk': 'week', '1mo': 'month' };
+// Intervals that do not divide a session, counted in sessions directly.
+//
+// Yahoo serves 4h as exactly **two** bars per session — 09:30 and 13:30,
+// measured 2026-08-19 on AAPL and 0700.HK alike, 126 bars over 63 trading days
+// on both. The minutes model below cannot express that: it would read 50 bars
+// as 50 x 240 min = 200 h and divide by a 6.5 h session to print "30.8
+// sessions", when the truth is 25. The second bar of a session is nominally
+// four hours long and only ever contains the 2.5 the session has left.
+//
+// The minutes model is approximate for every interval it covers — 50 x 1h reads
+// 7.7 sessions against a measured 7 bars/day, so ~8% high — and it is shown
+// behind a "≈" for that reason. 23% is past what a "≈" can carry.
+const BARS_PER_SESSION = { '4h': 2 };
 
 /**
  * How much time a window of `barCount` bars covers, as a label.
@@ -35,6 +48,8 @@ const INTERVAL_UNIT = { '1d': 'day', '1wk': 'week', '1mo': 'month' };
  * by construction — it is only ever shown behind a "≈".
  */
 export function windowSpan(barCount, interval) {
+  const perSession = BARS_PER_SESSION[interval];
+  if (perSession) return `${+(barCount / perSession).toFixed(1)} sessions`;
   const perBar = INTERVAL_MINUTES[interval];
   if (perBar) {
     const minutes = barCount * perBar;

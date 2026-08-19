@@ -33,9 +33,19 @@ describe('windowSpan', () => {
 
   it('switches to sessions once a window outgrows a trading day', () => {
     // 50 x 1h = 50 hours; at a 6.5h session that is ~7.7 sessions, which is the
-    // number that actually tells you what MA50 means on the 1y chart
+    // number that actually tells you what MA50 means on the 1mo chart
     expect(windowSpan(50, '1h')).toBe('7.7 sessions');
     expect(windowSpan(50, '30m')).toBe('3.8 sessions'); // 25 h is already >1 day
+  });
+
+  it('counts 4h in sessions, because it does not divide one', () => {
+    // Yahoo serves 4h as exactly two bars a session, so MA50 is 25 sessions.
+    // Through the minutes model this would read "30.8 sessions" — 50 x 240 min
+    // over a 6.5h session — because the second bar of the day is nominally four
+    // hours and only ever holds the 2.5 the session has left. 23% high is past
+    // what the "≈" in front of it can carry, which is why 4h has its own map.
+    expect(windowSpan(50, '4h')).toBe('25 sessions');
+    expect(windowSpan(20, '4h')).toBe('10 sessions');
   });
 
   it('names the unit for coarse bars rather than converting to minutes', () => {
@@ -45,8 +55,11 @@ describe('windowSpan', () => {
   });
 
   it('falls back to bars for an interval it does not know', () => {
-    // a new interval in the backend's PERIOD_INTERVALS must not render "undefined"
-    expect(windowSpan(50, '4h')).toBe('50 bars');
+    // a new interval in the backend's PERIOD_INTERVALS must not render
+    // "undefined". `4h` was this test's example until 2026-08-19, when it
+    // became a real interval and got the case above; `3h` replaces it because
+    // Yahoo genuinely does not serve one.
+    expect(windowSpan(50, '3h')).toBe('50 bars');
     expect(windowSpan(50, undefined)).toBe('50 bars');
   });
 });
