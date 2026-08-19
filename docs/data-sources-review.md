@@ -375,21 +375,26 @@ that discounting CNY flows at a CNY rate and converting at **spot** was *"not ob
 because interest-rate parity implies a forward premium; and therefore that the work *"waits
 until spot-versus-forward is settled in writing with a worked example."*
 
-1. **The sizing is wrong twice over.** The baseline moved to **680.99**, and it is not a
-   doubling. Measured with the growth cap moving too (§4 of
+1. **The sizing is wrong twice over.** The baseline moved, and it is not a doubling. Measured
+   with the growth cap moving too, and **re-measured 2026-08-19 with `market_bars`** — which is
+   what every `main.py` endpoint passes (§4 of
    [currency-consistent-discounting.md](currency-consistent-discounting.md)):
 
-   | risk-free | fair value | vs 680.99 | move |
-   |---|---|---|---|
-   | 4.30% — US 10Y, today | 680.99 | — | — |
-   | 1.70% — China 10Y raw | 1,024.98 | **+50.5%** | −260bp |
-   | 1.10% — 10Y − CNY default spread | 1,043.30 | **+53.2%** | −320bp |
+   | risk-free | fair value | vs baseline | vs the 481.40 price | move |
+   |---|---|---|---|---|
+   | 4.30% — US 10Y, today | **469.48** | — | **−2.5%** | — |
+   | 1.70% — China 10Y raw | 601.62 | **+28.1%** | +25.0% | −260bp |
+   | 1.10% — 10Y − CNY default spread | **611.62** | **+30.3%** | +27.0% | −320bp |
 
-   **Both rows, because they are not interchangeable.** `+50.5%` is the −260bp row; the
-   applicable move is −320bp, whose row is `+53.2%`. Netting the default spread is worth only
-   the **1.8%** between them, so the contestable half of the change is also the cheap half. A
-   2026-08-18 draft of this section quoted `+50.5%` beside `−320bp` — the right two numbers,
-   mismatched.
+   **Both rows, because they are not interchangeable.** `+28.1%` is the −260bp row; the
+   applicable move is −320bp, whose row is `+30.3%`. Netting the default spread is worth only
+   the ~2% between them, so the contestable half of the change is also the cheap half.
+
+   *This table read 680.99 / 1,024.98 / 1,043.30 and `+50.5%` / `+53.2%` until 2026-08-19.
+   Those reproduce exactly, but only **without** `market_bars` — on the vendor's reported beta
+   of 0.745 rather than the 1.3192 this fixture has regressed to since 2026-08-14. They were
+   never what the app produced. The earlier note that a 2026-08-18 draft mismatched `+50.5%`
+   with `−320bp` still stands; both numbers were simply from the wrong beta.*
 2. **The spot-versus-forward worry was inverted.** Discounting in the cash-flow currency and
    translating the *result* at spot is algebraically identical to translating each cash flow at
    its forward rate and discounting at the target-currency rate — the interest differential

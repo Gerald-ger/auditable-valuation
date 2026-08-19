@@ -661,13 +661,28 @@ its forward rate and discounting at the target-currency rate, so the interest di
 enters exactly once. Applying a forward rate on top of a local-currency discount rate would
 count it twice. Method A is already the shape the code uses.
 
-**Two numbers in this entry are wrong, corrected by measurement.** The baseline is 680.99,
-not 624.90 — the base-year and ERP work moved it. And the effect is **+50.5%** (680.99 →
-1,024.98), not "roughly double": `terminal_growth = min(TERMINAL_GROWTH, rf)`, so lowering
-the rate lowers the growth cap with it, and the recorded figure came from moving the WACC
-alone. The terminal spread `WACC − g` is almost invariant once the cap binds (5.25% → 3.49%
-→ 3.50% at rf 4.30% / 1.70% / 1.10%), which also makes netting off the sovereign default
-spread worth only 1.8% — the contestable half of the change is the cheap half.
+**Two numbers in this entry are wrong, corrected by measurement.** The baseline is not 624.90
+— the base-year and ERP work moved it. And the effect is not "roughly double":
+`terminal_growth = min(TERMINAL_GROWTH, rf)`, so lowering the rate lowers the growth cap with
+it, and the recorded figure came from moving the WACC alone. Netting off the sovereign default
+spread is worth only ~1.8% of the change — the contestable half is the cheap half.
+
+**Re-measured 2026-08-19, and the replacement numbers were wrong too.** This entry then said
+baseline **680.99** and effect **+50.5%**. Both reproduce exactly — but only *without*
+`market_bars`, i.e. on the vendor's reported beta of 0.745 rather than the **1.3192** this
+fixture has regressed to since 2026-08-14. Every `main.py` endpoint passes market bars, so
+those were never the app's figures. With them:
+
+| risk-free | WACC | terminal g | fair value | vs the 481.40 price |
+|---|---|---|---|---|
+| 4.30% (today) | 10.43% | 2.50% | **469.48** | **−2.5%** |
+| 1.70% (China 10Y raw) | 7.87% | 1.70% | 601.62 | +25.0% |
+| 1.10% (10Y − spread) | 7.28% | 1.10% | **611.62** | +27.0% |
+
+**The effect is +30.3%, not +53.2%** — and the baseline now sits *within 2.5% of the market
+price*, where the old figure claimed +41.5% undervalued. A correction that takes the model from
+agreeing with the quote to disagreeing by 27% passes direction-blindness more clearly than
+before, not less.
 
 **A third number is wrong too, found 2026-08-18.** The **−260bp** above is the raw 10Y gap
 (1.70% vs 4.30%). The *applicable* move is **−320bp**, because the CNY risk-free is the 10Y net

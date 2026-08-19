@@ -94,22 +94,46 @@ Run on the committed `0700_HK` fixture with `fx_rate` pinned at the suite's `CNY
 the figures are reproducible from a checkout. Only the risk-free rate varies; everything else is
 the model as it stands.
 
+**Re-measured 2026-08-19, and the earlier table was not measuring the app.** Both blocks below
+are reproducible from a checkout; they differ only in whether `market_bars` is passed. Every
+endpoint in `main.py` passes them, so **the first block is what the platform actually produces**
+and the second is what this document used to report.
+
+### With `market_bars` — β 1.3192, regressed. **This is the app.**
+
+| Risk-free | WACC | Terminal growth | Fair value / share | vs the 481.40 price |
+|---|---|---|---|---|
+| **4.30%** (US 10Y, today) | 10.43% | 2.50% | **469.48** | **−2.5%** |
+| **1.70%** (China 10Y, raw) | 7.87% | 1.70% | **601.62** | +25.0% |
+| **1.10%** (China 10Y − spread) | 7.28% | 1.10% | **611.62** | +27.0% |
+
+**The effect is +30.3%** (469.48 → 611.62), not the +53.2% recorded until today.
+
+### Without `market_bars` — β 0.745, the vendor's reported figure
+
 | Risk-free | WACC | Cost of equity | Terminal growth | Source | **WACC − g** | Fair value / share | Upside |
 |---|---|---|---|---|---|---|---|
 | **4.30%** (US 10Y, today) | 7.75% | 8.13% | 2.50% | `platform_default` | **5.25%** | **680.99** | +41.5% |
 | **1.70%** (China 10Y, raw) | 5.19% | 5.53% | 1.70% | `capped_at_risk_free_rate` | **3.49%** | **1,024.98** | +112.9% |
 | **1.10%** (China 10Y − spread) | 4.60% | 4.93% | 1.10% | `capped_at_risk_free_rate` | **3.50%** | **1,043.30** | +116.7% |
 
-Shared inputs: β 0.745 (reported), ERP 5.14% (Damodaran, China), equity weight 90.67%, fixture
-price 481.4 HKD.
+Shared inputs: ERP 5.14% (Damodaran, China), equity weight 90.67%, fixture price 481.4 HKD.
 
-Two corrections to the record fall out of this:
+**How this went wrong, since the mechanism matters more than the numbers.** The table was correct
+when written and labelled its own β as "reported". Beta became a *regression* on 2026-08-14, which
+more than doubled it for this fixture; the table was never re-run, and `financial_models.py`
+copied its three figures into a comment describing current behaviour. A labelled assumption in one
+document became an unlabelled claim in another.
 
-- **The baseline has moved.** TODOLIST records 624.90; the model now produces 680.99 for the same
-  fixture, because of the base-year and ERP work that landed afterwards.
-- **The effect is about half what was recorded.** TODOLIST's "624.90 → 1,225.93" is +96% and reads
-  as "roughly doubles". Measured with every leg moving, it is **+50.5%** (680.99 → 1,024.98). The
-  recorded figure was obtained by moving the WACC alone, which is not what the code does.
+The correction also flips the headline: at 469.48 against a 481.40 price the model now says
+Tencent is **fairly valued**, where the old table said +41.5% undervalued. That strengthens the
+direction-blindness argument in §7 rather than weakening it — see there.
+
+One older correction still stands:
+
+- **The baseline had already moved once.** TODOLIST recorded 624.90 against a then-current 680.99,
+  because of the base-year and ERP work. TODOLIST's "624.90 → 1,225.93" (+96%, "roughly doubles")
+  came from moving the WACC alone, which is not what the code does.
 
 ## 5. Why the second leg cancels most of the first
 
@@ -174,10 +198,10 @@ Applied to "use a CNY risk-free rate for a CNY-reporting issuer"
 
 | | Verdict |
 |---|---|
-| **1. Direction blindness** — would you do it if it moved fair value *away* from price? | **Pass, decisively.** It does exactly that. Fixture price 481.4; the DCF already says 680.99 (+41.5%), and the change pushes it to 1,024.98 (+112.9%) — further from the price, not closer. This cannot be reverse-engineering the quote. |
+| **1. Direction blindness** — would you do it if it moved fair value *away* from price? | **Pass, and more decisively after the 2026-08-19 re-measurement.** Fixture price 481.40. The model currently says **469.48 — within 2.5% of the price**, i.e. it agrees with the market. The change pushes it to **611.62 (+27.0%)**, breaking that agreement. A change that takes the model *from* agreeing with the quote *to* disagreeing by a quarter cannot be reverse-engineering the quote. (This row previously argued the same point from 680.99 → 1,024.98, figures measured without `market_bars`; see §4.) |
 | **2. Independent justification** | **Pass.** Discount rate and cash flow in the same currency is a consistency requirement, not a preference, and is standard in every international-valuation text. |
 | **3. No output-chosen parameters** | **Pass.** The rate is a published sovereign yield; the spread subtraction comes from the same table already vendored. Neither is picked by looking at the answer. |
-| **4. Cross-sectional** | **Pass.** It touches non-USD-reporting issuers only. Of the seven fixtures, exactly one is affected; the other six are unchanged. It cannot be a price tracker because it does not move most names at all. |
+| **4. Cross-sectional** | **Pass.** It touches non-USD-reporting issuers only. Of the eight fixtures, exactly one — `0700_HK` — is affected; `0002_HK` reports HKD and the other six USD. It cannot be a price tracker because it does not move most names at all. |
 
 The change passes all four. **The blocker is §6, not the test.**
 

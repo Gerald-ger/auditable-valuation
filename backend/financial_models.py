@@ -500,12 +500,19 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     # currencies. Not fixed here, but the reason changed on 2026-08-17 and this
     # comment was two revisions behind it (corrected 2026-08-18):
     #   - it is not "roughly double". Measured on the 0700_HK fixture with the
-    #     growth cap moving too (docs/currency-consistent-discounting.md §4):
-    #       rf 4.30% (today)          -> 680.99
-    #       rf 1.70% (China 10Y raw)  -> 1,024.98   = +50.5%   [-260bp]
-    #       rf 1.10% (10Y - spread)   -> 1,043.30   = +53.2%   [-320bp]
+    #     growth cap moving too (docs/currency-consistent-discounting.md §4),
+    #     re-measured 2026-08-19 *with market_bars*, which is what every
+    #     main.py endpoint passes:
+    #       rf 4.30% (today)          ->   469.48   (price 481.40, so -2.5%)
+    #       rf 1.70% (China 10Y raw)  ->   601.62   = +28.1%   [-260bp]
+    #       rf 1.10% (10Y - spread)   ->   611.62   = +30.3%   [-320bp]
     #     The old "double" came from moving the WACC alone; the terminal growth
     #     ceiling falls with the rate, which is most of the difference.
+    #     This comment carried 680.99 / 1,024.98 / 1,043.30 and "+53.2%" until
+    #     2026-08-19. Those reproduce exactly *without* market_bars — i.e. on
+    #     the vendor's reported beta of 0.745 rather than the 1.3192 this
+    #     fixture regresses to since 2026-08-14. They were never the app's
+    #     numbers, and the effect is +30.3%, not +53.2%.
     #   - the applicable cut is the -320bp row, because the CNY risk-free is the
     #     10Y net of the CNY default spread (1.70 - 0.60 = 1.10 against 4.30).
     #     Netting the spread is worth only the 1.8% between the two rows, so the
