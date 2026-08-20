@@ -1,7 +1,7 @@
 {
  "0002_HK": {
   "classification": "utilities",
-  "composite_score": 65,
+  "composite_score": 67,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -49,13 +49,13 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 43,
+     "dcf_upside_pct": 78,
      "dividend_yield": 86,
      "earnings_yield_fwd": 71,
      "ev_ebitda": 63,
      "fcf_yield": 59
     },
-    "score": 64
+    "score": 71
    }
   },
   "tier": "A"

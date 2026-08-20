@@ -36,7 +36,7 @@ Five external systems. Not five data sources — **one data source and four narr
 | OpenBB → `federal_reserve` | US 10Y treasury yield → CAPM | none | `RISK_FREE_RATE = 0.043`, uncached so it self-heals |
 | OpenBB → `sec` | SEC filing markers, the 10,398-symbol search index | none | `[]` / stale disk cache |
 | OpenBB → `fmp` | peer discovery where no curated list exists | key | `[]`, curated map is consulted first |
-| **ChinaBond** (CCDC), direct HTTP *(added 2026-08-19)* | China 10Y government yield → CAPM for CNY-reporting issuers | none | degrades to the US 10Y labelled `usd_proxy`, uncached |
+| **ChinaBond** (CCDC), direct HTTP *(added 2026-08-19)* | China 10Y government yield → CAPM for CNY-reporting issuers | none | the last good reading while its published date is inside `CGB_MAX_STALE_DAYS` (`cgb_10y_stored_less_spread`, added 2026-08-20 after nine observed failure episodes in two days); past that, the US 10Y labelled `usd_proxy`. A live failure is never cached |
 | Ollama (local) | commentary only — never a number | none | features disable with a note |
 
 **ChinaBond is fetched at runtime and never vendored, and that is a licensing choice.** CCDC

@@ -8,6 +8,15 @@ vendored CNY default spread, and reports it as `cgb_10y_less_spread`. The measur
 other fixture moves at all. What follows is the analysis that decided it, left as written except
 where a figure was re-measured — the §4 tables and the §7 test carry their own correction notes.
 
+**Amended 2026-08-20: the rate now survives ChinaBond being unreachable.** This document argued
+the currency has to match the cash flows, and then left that claim resting on one web server —
+which failed in nine separate episodes across two days, twice within fifteen minutes of answering normally. When it
+does not answer, the last good CGB reading is served as `cgb_10y_stored_less_spread` while the
+yield it came from is still inside the freshness bound a live reading must also satisfy; only
+past that does the issuer fall back to `usd_proxy` and the mismatch this document is about
+return. The trade is explicit: a CNY yield some days old is a far smaller error than a US yield
+today, ~22bp of annual range against a ~360bp gap.
+
 **The second question this document ended on — the terminal-growth ceiling — was answered by
 choosing to let it bind.** A 1.09% CNY risk-free asserts 1.09% perpetual growth for Tencent, and
 that is a consequence of a market observable rather than a forecast anyone here made. The

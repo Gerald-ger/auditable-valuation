@@ -112,6 +112,32 @@ def beta_fit(stock_bars: list[dict], index_bars: list[dict]) -> tuple[dict | Non
     intercept = mean_s - slope * mean_i
     sse = sum((rs[k] - (intercept + slope * ri[k])) ** 2 for k in range(n))
     total = sum((rs[k] - mean_s) ** 2 for k in range(n))
+    # A motionless *stock* is refused for the same reason as a motionless index
+    # above: constant closes make the residual exactly zero, which is an
+    # identity rather than a fit. That is what a halted or delisted series
+    # forward-filled to one price looks like, and it is the one degenerate shape
+    # that occurs in real data.
+    #
+    # It stopped being cosmetic when `resolve_beta` began reading the interval.
+    # A residual near zero reports a standard error near zero, the interval
+    # collapses to a point, and the fit therefore *rejects* the credibility
+    # floor more strongly than any real measurement can — so the guard written
+    # to catch fabricated betas is bypassed by exactly the fabricated data it
+    # was written for.
+    #
+    # **What this does not catch, measured 2026-08-20 rather than assumed.**
+    # Only an exactly-zero residual is refused, and floating point rarely
+    # obliges: a stock built to move exactly 0.05x an index reports
+    # `sse != 0`, standard error 2.9e-16, R^2 exactly 1.0, and passes; a stock
+    # with constant non-zero returns reports standard error 5.2e-16, R^2
+    # -0.0006, and passes too. Closing those needs a threshold on the standard
+    # error or on R^2, and no measurement here supports one — the eight
+    # committed fixtures run R^2 0.028 to 0.691, which says where real data
+    # sits and nothing about where the cutoff belongs. Both shapes require
+    # synthetic input; the halted series above does not, which is why it is the
+    # one drawn. Recorded in TODOLIST rather than closed with a guessed number.
+    if sse == 0:
+        return None, n
     standard_error = math.sqrt(sse / (n - 2) / variance)
     half = BETA_CI_Z * standard_error
     return {

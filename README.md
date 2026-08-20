@@ -440,10 +440,22 @@ and peer betas as well as the live risk-free rate.
 **One rate does not come through OpenBB.** Since 2026-08-19 a CNY-reporting issuer — `0700.HK`
 is the one in the fixture set — is discounted at China's own 10-year rather than America's,
 read from ChinaBond's published CGB curve by a direct HTTP call in
-[backend/data_provider.py](backend/data_provider.py). No key, one fetch per calendar day, and an
-unreachable ChinaBond degrades to the US 10Y labelled `usd_proxy` — which is what the platform
-did before it existed. The curve is fetched at runtime and never stored here: CCDC restricts
-redistribution rather than access.
+[backend/data_provider.py](backend/data_provider.py). No key, one fetch per calendar day. The
+ten-year is picked out by the **column header ChinaBond itself labels `10Y`** rather than by a
+tenor in the URL, so a wrong tenor is not something the request can express.
+
+**When ChinaBond does not answer** — which on this machine has meant nine failure episodes
+across two days, twice going working-to-dead inside fifteen minutes — the last good reading is served
+instead, labelled `cgb_10y_stored_less_spread`, for as long as the yield it came from was
+published within a fortnight. That is the same freshness bound a live reading has to satisfy,
+so no second judgement enters. Past it, or with nothing stored, it degrades to the US 10Y
+labelled `usd_proxy` — what the platform did before any of this existed. Keeping the *currency*
+right is worth more than keeping the date right: China's 10-year moves ~22bp across a year,
+where the gap to the US one is ~360bp and worth 30% of Tencent's fair value.
+
+The curve itself is fetched at runtime and never committed here — CCDC restricts redistribution
+rather than access — and the one cached reading lives in `backend/data/`, which is already
+outside the repository.
 
 **Free-tier reality check** (measured 2026-08-02 with valid Tiingo + FMP free keys, verified
 by raw HTTP against both vendors):

@@ -26,6 +26,11 @@ const RF_STAND_INS = new Set(['usd_proxy', 'platform_default']);
 const RF_SOURCE_LABEL = {
   us_treasury_10y: 'US 10Y',
   cgb_10y_less_spread: 'China 10Y − default spread',
+  // Deliberately NOT in RF_STAND_INS above. It is still China's own curve and
+  // therefore still the right currency for CNY cash flows — the thing that set
+  // makes muted is "no rate for this currency was used", which is not this. What
+  // is missing is freshness, so the label says so and the styling does not.
+  cgb_10y_stored_less_spread: 'China 10Y − default spread (last good)',
   usd_proxy: 'USD proxy',
   platform_default: 'platform default',
 };

@@ -7,11 +7,14 @@ line.
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from pathlib import Path
 from threading import Lock
 from urllib.request import urlopen
 
@@ -111,15 +114,45 @@ def _clean(value):
 
 
 _RF_CACHE: tuple[str, float] | None = None  # (date, rate) — treasury rates move once a day
-_CGB_CACHE: tuple[str, float] | None = None  # (date, rate) — same, for the CGB curve
+_CGB_CACHE: tuple[str, float, bool] | None = None  # (date, rate, was it live?)
+
+# The last good CGB reading, kept between runs. Beside `ticker_index.json` and
+# for the same reason — it is a cache of someone else's data, not the user's —
+# so it inherits `backend/data/`'s existing exclusion from the repository.
+CGB_STORE_PATH = Path(__file__).resolve().parent / "data" / "cgb_10y.json"
 
 # ChinaBond (CCDC) publishes the official China Government Bond curve; the PBOC
-# points at it rather than republishing. `gjqx=10` selects the 10-year tenor and
-# `qxId=ycqx` the government curve, but the response still carries the
-# commercial-bank and CP&Note curves beside it, so the row has to be matched by
-# name and not by position.
+# points at it rather than republishing. `qxId=ycqx` selects the government
+# curve, but the response still carries the commercial-bank and CP&Note curves
+# beside it, so the row has to be matched by name and not by position.
+#
+# **`gjqx=0` asks for every tenor and the column is then chosen by its own
+# header label.** Until 2026-08-20 this sent `gjqx=10` and read the single value
+# that came back, which made the tenor a *URL parameter* — change one character
+# and ChinaBond returns the 7-year, well-formed and plausible, with nothing able
+# to fail. The offline tests supply their own HTML so the URL was not under test
+# at all, and a live band cannot separate the tenors: the whole curve sat inside
+# 1.1858 (3M) to 2.1509 (30Y) on 2026-08-18, and a floor high enough to exclude
+# the 7-year would sit above the 10-year's own record low of 1.59%.
+#
+# Reading the label instead makes the wrong tenor unrepresentable rather than
+# merely detectable, and it moves the choice into the parser where an offline
+# test can pin it. Measured 2026-08-20 over ten paired requests: 20,572 bytes
+# against 18,892, **+8.9%**, once per calendar day, and no latency difference
+# distinguishable from noise (1.79-2.95 s either way).
+#
+# The cost is a new failure mode, and it is the right trade rather than a free
+# one: if the header stops saying "10Y" this degrades to `usd_proxy`, where the
+# old code would have gone on quietly serving whatever `gjqx=10` returned. A
+# labelled degrade beats an unlabelled wrong number.
 CGB_URL = "https://yield.chinabond.com.cn/cbweb-pbc-web/pbc/historyQuery"
 CGB_CURVE = "ChinaBond Government Bond Yield Curve"
+# The header row opens with these two cells. `Date` is load-bearing: the filter
+# form above the table *also* opens with a "Yield Curve Name" cell, so matching
+# on that alone picks up the page chrome and reads its dropdown as a tenor list.
+CGB_HEADING = "Yield Curve Name"
+CGB_HEADING_DATE = "Date"
+CGB_TENOR = "10Y"
 # Wide enough to clear a Chinese New Year or Golden Week closure — those run to
 # nine consecutive days, and a window that lands entirely inside one returns an
 # empty table indistinguishable from an outage. Measured 2026-08-19: 20 calendar
@@ -135,67 +168,208 @@ CGB_MAX_STALE_DAYS = 14
 # separate attempts — a slow day has to degrade the number, never the request.
 #
 # 10 s is ~2.6x the worst observation rather than a generous margin, and that is
-# affordable only because a failure is **not cached**: a miss degrades one
-# request to the USD proxy and the next request retries. Were failures sticky
-# this would need to be far longer, since the gap between the two rates is worth
-# 30% of Tencent's fair value.
+# affordable only because a failure is **not cached**: a miss costs one request
+# and the next one retries. Were failures sticky this would need to be far
+# longer, since the gap between a Chinese rate and an American one is worth 30%
+# of Tencent's fair value.
+#
+# That sentence is load-bearing and was briefly untrue. Caching the *stored*
+# reading alongside the live one — which looks like symmetry — meant one
+# transient timeout pinned an old number for the rest of the UTC day and never
+# retried, which is precisely the sticky failure this margin is not sized for.
+# Only a live reading is cached; see `_cgb_10y`.
+#
+# What a miss degrades *to* moved on 2026-08-20: the stored CNY reading if there
+# is a usable one, and only then the USD proxy.
 CGB_TIMEOUT_S = 10
 
 
-def _cgb_10y() -> float | None:
-    """The live China 10-year government yield, or **None**. Percent, not a ratio.
+def _cgb_stored() -> tuple[str, float] | None:
+    """The last good `(published date, rate)` from an earlier run, or None.
 
-    Same contract as `_us_treasury_10y`: at most one fetch per calendar day, and
-    a failure is never cached, so an outage degrades one day's number instead of
-    pinning a stale one for the life of the process.
+    **The date is parsed, not coerced.** This read `str(raw["published"])`
+    until it was pointed out that the staleness check downstream is a
+    *lexicographic* comparison, which `str()` turns into a fail-**open**: every
+    non-string sorts above an ISO date, so `null` became `"None"`, `true` became
+    `"True"` and — the realistic one — a date hand-edited to the integer
+    `20260819` became `"20260819"`, all of them permanently fresh. `strptime`
+    also pins the *format*, so an upstream switch to `2026/08/20` is rejected
+    rather than sailing through on `"/" > "-"`.
+
+    `except Exception` rather than a tuple of the expected types: the contract
+    this owes its caller is that a damaged file costs the fallback and never the
+    valuation, and enumerating what a damaged file can raise is how that
+    contract acquires holes — a deeply nested array raises `RecursionError`,
+    which is a `RuntimeError` and was escaping.
+    """
+    try:
+        raw = json.loads(CGB_STORE_PATH.read_text(encoding="utf-8"))
+        published, rate = raw["published"], float(raw["rate"])
+        datetime.strptime(published, "%Y-%m-%d")
+        return published, rate
+    except Exception:
+        return None
+
+
+def _cgb_remember(published: str, rate: float) -> None:
+    """Keep a good reading for the next run. Never raises.
+
+    A read-only checkout, a full disk or a permissions problem must cost the
+    *next* outage its fallback, never this request its valuation — the same rule
+    every other optional path in this module follows.
+
+    **Written to a temporary file and moved into place**, because `write_text`
+    truncates first: two of uvicorn's threads missing the day cache together
+    both fetch and both write, and a process killed mid-write leaves an empty
+    file. Neither produces a wrong number — a damaged file reads as no file —
+    but both cost exactly the fallback this exists to provide, and the second
+    one does it precisely when the process is next starting during an outage,
+    which is this store's whole reason to exist. `os.replace` is atomic on
+    Windows as well as POSIX.
+    """
+    try:
+        CGB_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CGB_STORE_PATH.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(
+            json.dumps({"published": published, "rate": rate}), encoding="utf-8")
+        os.replace(tmp, CGB_STORE_PATH)
+    except OSError:
+        pass
+
+
+def _cgb_10y() -> tuple[float, bool] | None:
+    """`(rate, live)` for China's 10-year government yield, or **None**.
+
+    A ratio, not percent. `live` is False when the number came from the store
+    rather than from today's fetch, and it exists so the caller can say so —
+    serving yesterday's rate is defensible, serving it *silently* is not.
+
+    **Why a stored rate at all.** The in-process day cache already hides an
+    outage that starts after one success, so what it cannot cover is the two
+    cases that actually bite: a process that starts while ChinaBond is down, and
+    the first request of a new calendar day.
+
+    Both are ordinary here rather than hypothetical. Four failure episodes were
+    recorded on 2026-08-19 and at least five more on 2026-08-20, with the
+    endpoint answering normally in between — once going from a 3.9 s response to
+    consecutive 12-second timeouts inside fifteen minutes, and on another
+    occasion timing out on this exact query while a hand-issued one had just
+    succeeded. The alternative is not a slightly worse rate, it is a **US** rate
+    on CNY cash flows, worth 30% of Tencent's fair value. A CNY yield a few days
+    old keeps the currency right and costs only freshness: that yield's 12-month
+    range is ~22bp, against a ~360bp gap to the US 10-year.
+
+    **The staleness bound is the one that was already here, and it is the same
+    bound in both paths** — `CGB_MAX_STALE_DAYS` against the row's *published*
+    date, not against when it was fetched. That is deliberate rather than
+    convenient: "this yield was published within a fortnight" means exactly the
+    same thing whether the fetch happened this morning or last Tuesday, so the
+    fallback needs no second constant and no second judgement. Storing the fetch
+    date instead would have let the two ages compound to 24 days without anyone
+    choosing that.
+
+    A *failed* fetch falls back to the store. A fetch that succeeds and returns
+    something out of band does **not** — that means the feed is broken rather
+    than absent, and covering it with an older number would hide the breakage.
 
     **A range wider than a year returns HTTP 200 with an empty table** rather
     than an error, and so does a window containing no trading days. Both parse
-    to `None` here, which is the same outcome as an outage and the reason the
-    parse is checked rather than the status code.
+    to `None`, which is the same outcome as an outage and the reason the parse is
+    checked rather than the status code.
+
+    The tenor is selected by reading the table's own `10Y` header rather than by
+    asking for one column — see the note on `CGB_URL` for why, and for what that
+    costs.
     """
     global _CGB_CACHE
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if _CGB_CACHE and _CGB_CACHE[0] == today:
-        return _CGB_CACHE[1]
+        return _CGB_CACHE[1], _CGB_CACHE[2]
+    live = _cgb_fetch()
+    published, rate = live if live is not None else (_cgb_stored() or (None, None))
+    if published is None or rate is None:
+        return None
+    # A frozen upstream table is the one failure the parse cannot see: the rows
+    # are well-formed and the yield is plausible, it is simply years old. The
+    # same check retires a stored reading, for the same reason and by the same
+    # measure.
+    if published < (datetime.now(timezone.utc)
+                    - timedelta(days=CGB_MAX_STALE_DAYS)).strftime("%Y-%m-%d"):
+        return None
+    # Same sanity band as the treasury feed, for the same reason — the page
+    # quotes percent, so a switch to ratios would silently divide by 100.
+    if not 0 < rate < 0.25:
+        return None
+    # **Only a live reading is cached, and that is load-bearing.** Caching the
+    # stored one too was the obvious symmetry and it silently reversed the
+    # failure contract stated on `CGB_TIMEOUT_S` above: one transient timeout
+    # would pin a reading up to a fortnight old for the rest of the UTC day and
+    # never retry, so ChinaBond flickering for thirty seconds cost the next
+    # twenty-four hours. Measured — six requests after recovery all served the
+    # old number and the upstream was contacted **once**.
+    #
+    # Leaving it uncached restores exactly the pre-store behaviour: a miss costs
+    # one request and the next retries. That is not free — during a sustained
+    # outage every request pays the timeout — but it is what the platform did
+    # before this store existed, so the store adds a better *number* without
+    # taking away a retry.
+    #
+    # The write is guarded for the same reason and not for symmetry: on the
+    # fallback path `published` and `rate` came *out* of the store, so writing
+    # them back changes nothing but the disk.
+    if live is None:
+        return rate, False
+    _cgb_remember(published, rate)
+    _CGB_CACHE = (today, rate, True)
+    return rate, True
+
+
+def _cgb_fetch() -> tuple[str, float] | None:
+    """`(published date, rate as a ratio)` from ChinaBond, or None on any failure.
+
+    Split from `_cgb_10y` so the fallback above has one thing to test for. The
+    freshness and sanity checks live in the caller, because they apply equally to
+    a stored reading.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
         start = (datetime.now(timezone.utc)
                  - timedelta(days=CGB_WINDOW_DAYS)).strftime("%Y-%m-%d")
-        url = (f"{CGB_URL}?gjqx=10&qxId=ycqx&locale=en_US"
+        url = (f"{CGB_URL}?gjqx=0&qxId=ycqx&locale=en_US"
                f"&startDate={start}&endDate={today}")
         with urlopen(url, timeout=CGB_TIMEOUT_S) as resp:
             html = resp.read().decode("utf-8", errors="replace")
-        rows = []
+        rows, tenor_col, width = [], None, None
         for row in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
             cells = [c for c in (re.sub(r"<[^>]+>", "", x).strip()
                                  for x in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S))
                      if c]
-            if len(cells) == 3 and cells[0] == CGB_CURVE:
-                rows.append((cells[1], float(cells[2])))
+            if (len(cells) > 2 and cells[0] == CGB_HEADING
+                    and cells[1] == CGB_HEADING_DATE):
+                width = len(cells)
+                tenor_col = cells.index(CGB_TENOR) if CGB_TENOR in cells else None
+            # `len(cells) == width` rather than `> tenor_col`, because a row
+            # missing an *earlier* column would shift every later one left and
+            # still be long enough: drop 3M and the cell under the 10Y header is
+            # the 30-year. Matching the header's width is the only way to see
+            # that from the payload. The CP&Note curve legitimately runs one
+            # column short — it publishes no 30-year — which is why this cannot
+            # simply require every row to be the same length.
+            elif (tenor_col is not None and len(cells) == width
+                    and cells[0] == CGB_CURVE):
+                rows.append((cells[1], float(cells[tenor_col])))
         # By date rather than by position: the table happens to arrive
         # newest-first, and nothing documents that it always will. Keyed on the
         # date *alone* — a bare `max(rows)` falls through to comparing yields
         # when two rows share a date, which would quietly serve the higher one,
         # and a spurious 9.99% clears the sanity band below. ISO dates make
         # lexicographic order chronological, so no parsing is needed.
-        newest, rate = (max(rows, key=lambda r: r[0]) if rows else (None, None))
-        # A frozen upstream table is the one failure this parse cannot see: the
-        # rows are well-formed and the yield is plausible, it is simply years
-        # old. Nothing else bounds it — the request window happens to be 20 days,
-        # which is an accident of `CGB_WINDOW_DAYS` rather than a check.
-        if newest is not None and newest < (
-                datetime.now(timezone.utc) - timedelta(days=CGB_MAX_STALE_DAYS)
-        ).strftime("%Y-%m-%d"):
+        if not rows:
             return None
-        rate = rate / 100 if rate is not None else None
-        # Same sanity band as the treasury feed, for the same reason — the page
-        # quotes percent, so a switch to ratios would silently divide by 100.
-        if rate is not None and 0 < rate < 0.25:
-            _CGB_CACHE = (today, rate)
-            return rate
+        newest, rate = max(rows, key=lambda r: r[0])
+        return newest, rate / 100
     except Exception:
-        pass
-    return None
+        return None
 
 
 def _us_treasury_10y() -> float | None:
@@ -246,12 +420,14 @@ def risk_free_rate(fallback: float,
     one. `None` means the caller did not say; it is treated as USD, which is
     what this function did before the parameter existed.
 
-    Four sources, mirroring `equity_risk_premium_for`:
-      us_treasury_10y       USD cash flows, and the Fed feed answered
-      platform_default      USD cash flows, no feed — `fallback` stands in
-      cgb_10y_less_spread   CNY cash flows, priced off China's own curve
-      usd_proxy             a non-USD currency with no curve of its own; a US
-                            rate is standing in
+    Five sources, mirroring `equity_risk_premium_for`:
+      us_treasury_10y              USD cash flows, and the Fed feed answered
+      platform_default             USD cash flows, no feed — `fallback` stands in
+      cgb_10y_less_spread          CNY cash flows, priced off China's own curve
+      cgb_10y_stored_less_spread   the same curve, from the last good reading
+                                   rather than today's — ChinaBond did not answer
+      usd_proxy                    a non-USD currency with no curve of its own; a
+                                   US rate is standing in
 
     `sovereign_spread` is subtracted from a **local sovereign yield only**, and
     is the caller's to supply because it comes from the same vendored table the
@@ -290,8 +466,13 @@ def risk_free_rate(fallback: float,
         # growth negative through `min(TERMINAL_GROWTH, rf)`, and the model
         # would assert perpetual *shrinkage* for a going concern with no error
         # and no flag. Out of band degrades to the proxy like any other miss.
-        if cgb is not None and 0 < cgb - sovereign_spread < 0.25:
-            return cgb - sovereign_spread, "cgb_10y_less_spread"
+        if cgb is not None and 0 < cgb[0] - sovereign_spread < 0.25:
+            # Two sources rather than one, because a reader deciding what to
+            # trust needs to know which. Both are China's own curve and both are
+            # therefore the right *currency* — which is why neither is a
+            # stand-in — but only one of them is today's.
+            return (cgb[0] - sovereign_spread,
+                    "cgb_10y_less_spread" if cgb[1] else "cgb_10y_stored_less_spread")
     rate = _us_treasury_10y()
     if ccy != "USD":
         return (fallback if rate is None else rate), "usd_proxy"

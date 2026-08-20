@@ -7,6 +7,189 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-20 — three guards: the tenor, the outage, and the beta floor
+
+Backend **519 → 532**, live **24 → 25**, frontend 101. Three independent items, ordered by how
+much judgement each needed: the first moves no number, the second moves one only during an
+outage, and the third moves one deliberately.
+
+### 1. The ten-year is now chosen by its own label, not by a URL parameter
+
+`_cgb_10y` sent `gjqx=10` and read whatever single value came back, which made the tenor a
+**URL parameter**: change one character and ChinaBond returns the seven-year, well-formed and
+plausible, with nothing able to fail. The offline tests supply their own HTML so the URL was
+never under test, and no band can separate the tenors — the whole Chinese curve sat inside
+**1.1858 (3M) to 2.1509 (30Y)** on 2026-08-18, and a floor high enough to exclude the 7Y would
+sit above the 10Y's own record low of 1.59%.
+
+It now sends `gjqx=0`, which returns every tenor **with a header row naming the columns**, and
+picks the column headed `10Y`. The wrong tenor stops being detectable and becomes
+unrepresentable.
+
+- **Cost: +1,680 bytes, +8.9%, once per calendar day.** Ten paired requests, 2026-08-20.
+- **No latency difference.** An earlier reading suggested `gjqx=0` was slower; ten more samples
+  put both at 1.79–2.95 s and that gap was noise.
+- **A new failure mode, and it is a trade rather than free:** if the header stops saying `10Y`
+  this degrades to `usd_proxy`, where the old code would have gone on serving whatever came
+  back. A labelled degrade beats an unlabelled wrong number. Tested.
+- **Proven on a real captured payload** rather than a constructed one: the new parse returns
+  `0.016831`, the 10Y column, with its neighbours at 1.5215 (7Y) and 2.1355 (30Y).
+
+**Two of the four mutations found faults in the new tests, not the new code.** `_cgb_page`
+read `data_provider.CGB_TENOR`, so mutating that constant relabelled the fixture with it and
+five assertions went on passing; it now hardcodes `"10Y"`. And removing the `cells[1] ==
+"Date"` check left **171 passing** — the check does not bind on today's payload, because the
+filter form sits above the table and the real header overwrites it a row later. It is kept,
+and the test that makes it bind is now written against the payload it actually protects
+against: form-as-cells with the real header gone.
+
+### 2. A CNY rate that survives ChinaBond being down
+
+**Four failure episodes were recorded on 2026-08-19 and at least five more on 2026-08-20**,
+with the endpoint answering normally in between — once going from a 3.9 s response to
+consecutive 12-second timeouts inside fifteen minutes. During an outage a CNY filer fell to
+`usd_proxy` — a **US** rate on CNY cash flows, worth **30% of Tencent's fair value**, with the
+assumptions label as the only signal.
+
+The in-process day cache already hides an outage that begins after one success, so what was
+missing was the two cases that actually bite: a process that starts while ChinaBond is down,
+and the first request of a new calendar day. Both need the reading to outlive the run. It is
+kept in `backend/data/cgb_10y.json`, beside `ticker_index.json` and already excluded from the
+repository for the same reason.
+
+**The staleness bound is the one that was already there, and it is the same bound in both
+paths** — `CGB_MAX_STALE_DAYS` against the row's **published** date rather than against when
+it was fetched. "This yield was published within a fortnight" means the same thing whether the
+fetch happened this morning or last Tuesday, so the fallback needs **no second constant and no
+second judgement**. Storing the fetch date would have let the two ages compound to 24 days
+with nobody choosing that.
+
+Measured end to end on `0700_HK`:
+
+| | risk-free | source | fair value |
+|---|---|---|---|
+| ChinaBond up | 1.09% | `cgb_10y_less_spread` | **612.72** |
+| down, reading 0–13 days old | 1.09% | `cgb_10y_stored_less_spread` | **612.72** |
+| down, reading 15 days old | 4.30% | `usd_proxy` | 469.48 |
+| down, no stored reading | 4.30% | `usd_proxy` | 469.48 |
+
+`cgb_10y_stored_less_spread` is deliberately **not** in the UI's `RF_STAND_INS`: it is still
+China's own curve and therefore still the right currency, which is what that set marks the
+absence of. What is missing is freshness, so the label says "(last good)" and the styling does
+not call it a fallback.
+
+**A fetch that answers with something out of band does not fall back.** An outage says nothing
+about the data; a 68.64% print says the units moved, and covering that with an older number
+would hide the breakage the sanity band exists to surface.
+
+### 3. The beta floor applies only where the regression cannot reject it
+
+`BETA_MIN = 0.3` was written for a vendor beta that could not be checked. A regression can be,
+and it reports how well. Measured across all eight fixtures, **0.30 sits inside exactly one
+confidence interval**:
+
+| | measured | 95% interval | R² | 0.30 |
+|---|---|---|---|---|
+| XOM | 0.2888 | [0.0828, 0.4948] | 0.028 | **inside** — the data cannot separate them |
+| **0002_HK** | **0.1518** | **[0.0747, 0.2289]** | 0.055 | **outside** — rejected at 95% |
+| the other six | 0.43–1.84 | — | — | outside, and above |
+
+On `0002_HK` the clamp was not guarding against a bad regression, it was **overruling a good
+one**: cost of equity 5.06% → 5.80%, fair value **97.27 → 74.05**, and the verdict from +24.5%
+to −5.3%. So the interval decides. A thin or halted series still produces a wide interval that
+still contains 0.30 and is still clamped — XOM is unchanged.
+
+**Golden: 3 of 260 leaf values, all `0002_HK`** — `composite_score` 65 → 67,
+`dcf_upside_pct` 43 → 78, valuation pillar 64 → 71. Every other fixture byte-identical.
+
+Nothing is invented for the other side. With no floor a sufficiently negative beta can drive
+WACC under terminal growth, and `dcf_valuation` **already refuses that in as many words**, so
+no lower bound had to be chosen. `BETA_MAX` is untouched and a test records why: no fixture
+approaches 2.5 (RIVN is highest at 1.8371), so changing it would be a change with no evidence.
+
+**Two things stated against this change, because they are true.**
+
+- **It is one-directional.** Both clamped names move up, so unlike the ERP change this cannot
+  claim two-directionality. Its justification is entirely the independent statistical ground —
+  0.30 lies outside the measured interval — and never the resulting price.
+- **`0002_HK` still discounts at `usd_proxy`.** Its risk-free rate is a US 10-year against a
+  Hong Kong premium and a Hang-Seng-measured beta. The new 97.27 is a better number than 74.05
+  for a reason that has nothing to do with the currency mismatch still sitting under it, which
+  is open and blocked on HKMA.
+
+**Thirteen mutations across the three items, each caught** — and an independent review then ran
+twenty-one of its own, of which **six survived**. What follows is what that round found. The beta
+rule is pinned from both sides: reverting to "always clamp" fails the `0002_HK` test and the
+golden, and dropping the guard entirely fails XOM's.
+
+### What the independent review found
+
+**A blocker, and it was shipped.** `_cgb_10y` now returns `(rate, live)`, and the two live tests
+still unpacked it as a float. The cross-check test added in item 1 — the one the tenor argument
+rests on — **could never have passed**, and its failure message would have reported the two
+routes as disagreeing when they are identical. It was written and committed unrun, because
+ChinaBond was unreachable on every attempt that day. A test that has never executed is not
+evidence, which this file has said before about somebody else's work.
+
+**A silent contract reversal.** Caching the *stored* reading alongside the live one looked like
+symmetry and broke the sentence `CGB_TIMEOUT_S` is justified by — *"a miss costs one request and
+the next retries"*. Measured: one transient timeout pinned a reading up to a fortnight old for
+the rest of the UTC day, and six requests after recovery still served it with the upstream
+contacted **zero** times. Only a live reading is cached now; after the fix the first request
+following recovery fetches, and the upstream is contacted once.
+
+The old `test_a_failed_cgb_fetch_is_never_cached` could not see this: the autouse fixture points
+the store at an empty `tmp_path`, so it only ever exercised the no-store case while *having* a
+store is the production steady state. **A contract that holds in the test conditions and not the
+production ones is worse than no contract**, and both docstrings now say which case they cover.
+
+**A fail-open staleness check.** `str(raw["published"])` coerced anything into a string, and the
+staleness test is a *lexicographic* comparison — so `null` became `"None"`, `true` became
+`"True"`, and a date hand-edited to the integer `20260819` became `"20260819"`, every one of them
+sorting above an ISO date and therefore permanently fresh. Now parsed with `strptime`, which also
+rejects an upstream switch to `2026/08/20` rather than letting `"/" > "-"` disable the check
+outright.
+
+**A test that wrote to `C:\`.** `test_an_unwritable_store_...` pointed at `/nonexistent-root/...`,
+which on Windows resolves under the system drive where an ordinary user *can* create directories:
+the write succeeded, the assertion passed down the success path, and every full run left a
+directory behind. It also meant something different on Linux, where that path needs root. The
+failure is injected now.
+
+**Two more, both real:** a deeply nested store file raised `RecursionError` straight into a
+valuation, because the `except` clause enumerated types rather than trusting the contract; and
+`write_text` truncates before writing, so a concurrent write or a process killed mid-write left
+an empty file — costing exactly the fallback this store exists to provide, at exactly the moment
+it is needed. Now `strptime` + `except Exception`, and a temp file moved into place with
+`os.replace`.
+
+**One finding I could not close, and one I refuted.**
+
+- **Degenerate regressions bypass the beta floor.** A fit with no residual reports a standard
+  error of zero, so the interval collapses to a point and *rejects* `BETA_MIN` more confidently
+  than any real measurement — a fabricated beta of 0.05 sails past the guard written for exactly
+  that. A motionless (halted, forward-filled) series is refused now, and that is the shape which
+  occurs in real data. Two synthetic shapes still pass, **measured rather than assumed**: an
+  exactly-0.05x construction reports standard error 2.9e-16 and R² exactly 1.0, and a
+  constant-return series reports 5.2e-16 and R² −0.0006. Closing those needs a threshold on R² or
+  on the standard error, and the eight fixtures — R² 0.028 to 0.691 — say where real data sits
+  and nothing about where a cutoff belongs. Recorded in `TODOLIST.md` rather than closed with a
+  guessed number.
+- **Refuted: that `gjqx=10` plus the same label check would be "equally safe and cheaper".** It
+  is not, and the +8.9% is not buying nothing. The real single-tenor page keeps a header listing
+  **all eight** tenors while its data rows carry **three** cells, so the header width and the row
+  width disagree and the parse correctly refuses it — verified against the recorded payload. The
+  review reached the opposite conclusion from stubbed pages whose header matched their data.
+
+**Six of the review's twenty-one mutations survived; all six are now caught** — the staleness
+constant (my test derived its inputs from the value it was meant to pin, the same flaw one level
+up as the fixture that read `CGB_TENOR`), the sanity band on the stored path, the stored-reading
+cache, `BETA_MAX`, and `BETA_MIN`. The last had been caught only by the golden snapshot, and a
+golden failure says "something moved", not "the floor moved". The two fair values the whole beta
+argument is written around — 74.05 and 97.27 — were asserted nowhere and are pinned now.
+
+---
+
 ## 2026-08-19 (e) — the indicators reach the left edge of the chart
 
 Backend **507 → 516**, live tests 18 → 24. Follows directly from (d): daily bars made the

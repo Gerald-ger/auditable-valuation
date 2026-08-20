@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import copy
 import math
+from pathlib import Path
 
 import pytest
 
-from conftest import (FIXTURES, TEST_CNY_HKD, load_bars, load_fundamentals,
-                      load_market_bars)
+from conftest import (FIXTURES, HOME_INDEX, TEST_CNY_HKD, load_bars,
+                      load_fundamentals, load_market_bars)
 
 from backend import data_provider
 from backend import financial_models as fm
@@ -1315,7 +1316,7 @@ def test_cny_is_priced_off_chinas_own_curve_net_of_its_default_spread(monkeypatc
     """A local government yield is not risk-free: China's 10Y carries China's
     own default risk, and the country-inclusive ERP paired with it carries that
     same spread again. Subtracting once removes the double count."""
-    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: 0.016864)
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: (0.016864, True))
 
     rate, source = data_provider.risk_free_rate(0.043, "CNY", 0.006)
     assert (round(rate, 6), source) == (0.010864, "cgb_10y_less_spread")
@@ -1350,7 +1351,7 @@ def test_a_misspelled_currency_degrades_instead_of_half_resolving(monkeypatch):
     exists to remove, reintroduced by a convenience. `usd_proxy` is the honest
     answer and is what the code did before the branch existed.
     """
-    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: 0.016864)
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: (0.016864, True))
     monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
 
     assert fm.sovereign_default_spread("cny") == 0.0
@@ -1370,7 +1371,7 @@ def test_a_yield_below_the_spread_never_becomes_a_negative_rate(monkeypatch, cgb
     from the 1.6864% of 2026-08-19, or one Damodaran refresh that raises the
     0.60% spread.
     """
-    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: cgb)
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: (cgb, True))
     monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
 
     rate, source = data_provider.risk_free_rate(0.043, "CNY", 0.006)
@@ -1378,9 +1379,18 @@ def test_a_yield_below_the_spread_never_becomes_a_negative_rate(monkeypatch, cgb
 
 
 def test_an_unreachable_chinabond_degrades_to_the_old_behaviour(monkeypatch):
-    """The failure contract that matters: a bad day at ChinaBond must return the
-    platform to what it did before this existed — the US rate, labelled as the
-    stand-in it is — never an error and never a stale CNY number."""
+    """The failure contract that matters: with no rate available *at all*,
+    ChinaBond's bad day must return the platform to what it did before this
+    existed — the US rate, labelled as the stand-in it is — never an error.
+
+    `_cgb_10y` returning `None` is now the case where the fetch failed **and**
+    the store had nothing usable either; a stored reading inside
+    `CGB_MAX_STALE_DAYS` returns a rate and is covered by
+    `test_a_stored_reading_carries_the_outage`. This docstring said "never a
+    stale CNY number" until 2026-08-20, which stopped being the contract that
+    day — the point of the store is that a CNY yield a few days old beats a US
+    one today.
+    """
     monkeypatch.setattr(data_provider, "_cgb_10y", lambda: None)
     monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
 
@@ -1395,16 +1405,55 @@ def test_an_unknown_market_is_left_double_counted_rather_than_guessed(monkeypatc
     assert fm.sovereign_default_spread(None) == 0.0
 
 
-def _cgb_page(rows):
+TENORS = ("3M", "6M", "1Y", "3Y", "5Y", "7Y", "10Y", "30Y")
+
+# The other seven columns, taken from a real 2026-08-19 payload. Deliberately
+# *plausible*: every one of them clears the sanity band, so a parse that picked
+# the wrong column would return a believable number rather than failing. That is
+# the whole failure this shape exists to expose, and it is why these are spread
+# across the curve instead of being filler.
+DECOYS = {"3M": "1.1906", "6M": "1.1936", "1Y": "1.1987", "3Y": "1.2455",
+          "5Y": "1.3899", "7Y": "1.5215", "30Y": "2.1355"}
+
+# The filter form that sits above the table. Its first cell is *also* "Yield
+# Curve Name", so a header match on that alone picks it up and reads its
+# dropdown as the tenor list. Included in every page below rather than in one
+# dedicated test, so every CGB assertion carries the hazard.
+_CHROME = ("<tr><td>Yield Curve Name</td><td>All\r\n\tChinaBond Government Bond"
+           " Yield Curve</td><td>From:</td><td>To:</td><td>Maturity:</td>"
+           "<td>All\r\n\t3M\r\n\t6M\r\n\t10Y</td></tr>")
+
+
+def _cgb_page(rows, tenors=TENORS, drop=()):
     """A ChinaBond response, shaped like the real one.
 
     Real payloads carry three curves per date — government, commercial-bank AAA
     and CP&Note AAA — which is why the parse matches on the curve name rather
-    than on position. `rows` is (curve, date, yield-as-published-percent).
+    than on position, and every tenor from 3M to 30Y across labelled columns,
+    which is why it matches the *column* by its header rather than by index.
+    `rows` is (curve, date, the 10-year yield as published, in percent); the
+    other columns are filled from `DECOYS`.
+
+    `drop` removes named columns from the data rows only, leaving the header
+    intact — the shape a lost column actually takes, and the one that shifts
+    every later value one place left.
     """
-    body = "".join(f"<tr><td>{c}</td><td>{d}</td><td>{y}</td></tr>" for c, d, y in rows)
+    kept = [t for t in tenors if t not in drop]
+    header = "".join(f"<th>{t}</th>" for t in tenors)
+    body = ""
+    for curve, date, ten_year in rows:
+        # "10Y" literally, NOT `data_provider.CGB_TENOR`. Reading the constant
+        # made this helper move with it: mutating CGB_TENOR to "7Y" relabelled
+        # the fixture's column too, so every value assertion went on passing and
+        # only one test noticed. A fixture that tracks the code under test
+        # cannot fail because of it.
+        cells = "".join(
+            f"<td>{ten_year if t == '10Y' else DECOYS.get(t, '1.0000')}</td>"
+            for t in kept)
+        body += f"<tr><td>{curve}</td><td>{date}</td>{cells}</tr>"
     return ("<html><body><table>"
-            "<tr><th>Yield Curve Name</th><th>Date</th><th>10Y</th></tr>"
+            f"{_CHROME}"
+            f"<tr><th>Yield Curve Name</th><th>Date</th>{header}</tr>"
             f"{body}</table></body></html>")
 
 
@@ -1415,14 +1464,21 @@ _real_cgb_10y = data_provider._cgb_10y
 
 
 def _stub_cgb(monkeypatch, html):
-    """Replace the HTTP call, not the function, so the parse itself runs."""
+    """Replace the HTTP call, not the function, so the parse itself runs.
+
+    Returns the rate alone. `_cgb_10y` answers `(rate, live)` since the store
+    arrived, and every assertion below is about the *parse* — unwrapping here
+    keeps them so, and the `live` flag has its own tests rather than being
+    carried through twenty that do not care about it.
+    """
     class _Resp:
         def read(self): return html.encode("utf-8")
         def __enter__(self): return self
         def __exit__(self, *a): return False
     monkeypatch.setattr(data_provider, "urlopen", lambda *a, **k: _Resp())
     monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
-    return _real_cgb_10y()
+    out = _real_cgb_10y()
+    return None if out is None else out[0]
 
 
 def _days_ago(n):
@@ -1483,21 +1539,81 @@ def test_the_cgb_parse_returns_none_rather_than_a_wrong_number(monkeypatch, rows
     assert _stub_cgb(monkeypatch, _cgb_page(rows)) is None, why
 
 
-def test_an_all_tenor_row_is_not_read_as_the_ten_year(monkeypatch):
-    """The `len(cells) == 3` guard is the only thing standing between the parse
-    and the short end of the curve.
+def test_the_ten_year_is_taken_from_the_column_the_header_names(monkeypatch):
+    """The point of asking for every tenor: the choice is made by label.
 
-    `gjqx=10` filters to one tenor, so rows arrive as (curve, date, 10Y). Drop
-    that filter — or have ChinaBond ignore it — and a row carries every tenor
-    from 3M to 30Y, at which point `cells[2]` is the **3-month** yield: 1.1858%
-    where the 10Y is 1.6864%. Plausible, wrong, and silent.
+    Before 2026-08-20 the tenor was a URL parameter (`gjqx=10`) and the value
+    was whatever came back, so a wrong tenor was unrepresentable *in a test* —
+    the offline suite supplies its own HTML and never sees the URL. Now the
+    column is found by its `10Y` heading, which is something a payload can be
+    written to get wrong.
+
+    Asserted against a page whose seven other columns are all plausible and all
+    different, so picking any of them returns a believable number rather than
+    failing: 1.1906 at the near end, 2.1355 at the far one.
     """
-    body = ("<table><tr>"
-            + "".join(f"<td>{c}</td>" for c in
-                      [GOV, _days_ago(0), "1.1858", "1.1936", "1.2008",
-                       "1.2493", "1.3842", "1.5121", "1.6864", "2.1509"])
-            + "</tr></table>")
-    assert _stub_cgb(monkeypatch, f"<html><body>{body}</body></html>") is None
+    rate = _stub_cgb(monkeypatch, _cgb_page([(GOV, _days_ago(0), "1.6831")]))
+    assert rate == pytest.approx(0.016831)
+    # named explicitly, because "not 3M" is the reading that would survive a
+    # parse that simply took the last column instead of the first
+    assert rate != pytest.approx(0.011906), "took the 3-month"
+    assert rate != pytest.approx(0.015215), "took the 7-year"
+    assert rate != pytest.approx(0.021355), "took the 30-year"
+
+
+def test_a_row_narrower_than_its_header_is_refused(monkeypatch):
+    """A dropped column shifts every later value one place left, and the row is
+    still long enough to index.
+
+    Lose 3M and the cell sitting under the `10Y` heading is the **30-year** —
+    2.1355 where the ten-year is 1.6831. Matching the header's own width is the
+    only way to see that from the payload, which is why the guard is
+    `len(cells) == width` rather than `> tenor_col`.
+    """
+    assert _stub_cgb(monkeypatch, _cgb_page(
+        [(GOV, _days_ago(0), "1.6831")], drop=("3M",))) is None
+
+
+def test_a_header_without_a_ten_year_column_degrades(monkeypatch):
+    """The new failure mode this change introduces, stated rather than hidden.
+
+    If ChinaBond ever relabels the column, this returns None and CNY falls to
+    `usd_proxy` — where the old `gjqx=10` code would have gone on serving
+    whatever single value came back. A labelled degrade beats an unlabelled
+    wrong number, but it is a trade and it deserves a test.
+    """
+    assert _stub_cgb(monkeypatch, _cgb_page(
+        [(GOV, _days_ago(0), "1.6831")],
+        tenors=("3M", "6M", "1Y", "3Y", "5Y", "7Y", "10Yr", "30Y"))) is None
+
+
+def test_the_filter_form_is_not_mistaken_for_the_header(monkeypatch):
+    """`cells[1] == "Date"` — the check that says which "Yield Curve Name" row
+    is the header.
+
+    **It does not bind on today's payload, and that is why this test is built
+    the way it is.** The form sits *above* the table and its dropdown renders as
+    one blob rather than as cells, so dropping the check leaves the real header
+    to overwrite it a row later and nothing changes. Removing the check and
+    running the suite gave 171 passed — a guard no test could fail.
+
+    What it actually protects against is any *other* row opening with "Yield
+    Curve Name": the form re-rendered with one cell per option, or the header
+    markup changing so only the form matches. Both are the same class as every
+    other drift this module guards, so the check stays and this is the payload
+    that makes it bind — form-as-cells, real header gone.
+
+    Without the check that page yields 1.6831 off the form's own column layout.
+    With it, there is no header and therefore no rate, which is the honest
+    answer for a table this parse no longer recognises.
+    """
+    form_as_cells = ("<tr><td>Yield Curve Name</td><td>All</td>"
+                     + "".join(f"<td>{t}</td>" for t in TENORS) + "</tr>")
+    gov = ("<tr><td>" + GOV + f"</td><td>{_days_ago(0)}</td>"
+           + "".join(f"<td>{DECOYS.get(t, '1.6831')}</td>" for t in TENORS)
+           + "</tr>")
+    page = f"<html><body><table>{form_as_cells}{gov}</table></body></html>"
+    assert _stub_cgb(monkeypatch, page) is None
 
 
 def test_a_failed_cgb_fetch_is_never_cached(monkeypatch):
@@ -1505,8 +1621,16 @@ def test_a_failed_cgb_fetch_is_never_cached(monkeypatch):
     two docstrings and pinned by nothing.
 
     If a miss were cached for the day, one bad moment would hold every CNY
-    valuation on the US proxy until midnight — and the two rates are 30% of
-    Tencent's fair value apart. Because it is not, a miss costs one request.
+    valuation on whatever it fell back to until midnight — and the US proxy is
+    30% of Tencent's fair value away. Because it is not, a miss costs one
+    request.
+
+    **This covers the no-store case only, and that is worth saying out loud.**
+    The autouse fixture points the store at an empty `tmp_path`, so what runs
+    here is "fetch failed and there was nothing to fall back on". Having a store
+    is the steady state in production, and the same property there is pinned by
+    `test_a_transient_failure_does_not_pin_the_stored_reading_all_day` — which
+    exists because the property held here and was broken there.
     """
     calls = []
 
@@ -1538,15 +1662,221 @@ def test_a_successful_cgb_fetch_is_cached_for_the_day(monkeypatch):
     monkeypatch.setattr(data_provider, "urlopen",
                         lambda *a, **k: (calls.append(1), _Resp())[1])
 
-    assert [_real_cgb_10y() for _ in range(3)] == [pytest.approx(0.016864)] * 3
+    assert [_real_cgb_10y() for _ in range(3)] == [(pytest.approx(0.016864), True)] * 3
     assert len(calls) == 1, "the day cache did not hold"
+    # The cached tuple has to carry the `live` flag too. Caching the rate alone
+    # and rebuilding the flag would report every repeat call as live — including
+    # the repeats of a day whose only reading came from the store.
+    assert data_provider._CGB_CACHE[2] is True
+
+
+def _dead_chinabond(monkeypatch):
+    """ChinaBond unreachable, the way it actually fails: a timeout, not a 404."""
+    def boom(*a, **k):
+        raise OSError("timed out")
+    monkeypatch.setattr(data_provider, "urlopen", boom)
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+
+
+def test_a_good_reading_is_kept_for_the_next_run(monkeypatch):
+    """The in-process day cache dies with the process, which is why this exists.
+
+    What it cannot cover is the two cases that actually bite — a process that
+    starts while ChinaBond is down, and the first request of a new calendar day.
+    Both need the reading to outlive the run that took it.
+    """
+    assert _stub_cgb(monkeypatch, _cgb_page(
+        [(GOV, _days_ago(1), "1.6864")])) == pytest.approx(0.016864)
+
+    stored = data_provider._cgb_stored()
+    assert stored is not None
+    published, rate = stored
+    assert rate == pytest.approx(0.016864)
+    # the *published* date, not the fetch date — the whole staleness design
+    # rests on those being the same measure in both paths
+    assert published == _days_ago(1)
+
+
+def test_a_stored_reading_carries_the_outage(monkeypatch):
+    """The point of the whole thing, and the number that makes it worth having.
+
+    Falling back to the US 10Y does not give a slightly worse answer, it gives a
+    **US** rate on CNY cash flows — worth 30% of Tencent's fair value. A CNY
+    yield a few days old keeps the currency right and costs only freshness.
+    """
+    _stub_cgb(monkeypatch, _cgb_page([(GOV, _days_ago(2), "1.6864")]))  # seed
+    _dead_chinabond(monkeypatch)
+
+    # Twice: the second call comes off the day cache, and it must still report
+    # the reading as stored. Caching the rate alone and rebuilding the flag
+    # would relabel every repeat call of an outage day as live.
+    assert [_real_cgb_10y() for _ in range(2)] == [(pytest.approx(0.016864), False)] * 2
+
+    # end to end through `risk_free_rate`, which needs the *real* `_cgb_10y`
+    # put back — `conftest.pinned_risk_free_rate` replaces it for every test, so
+    # without this the assertion would pass against the stub's own flag and
+    # prove nothing about the store at all.
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+    monkeypatch.setattr(data_provider, "_cgb_10y", _real_cgb_10y)
+    monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: 0.0472)
+    rate, source = data_provider.risk_free_rate(0.043, "CNY", 0.006)
+    assert (round(rate, 6), source) == (0.010864, "cgb_10y_stored_less_spread")
+
+
+def test_a_stored_reading_expires_on_the_same_bound_as_a_fetched_one(monkeypatch):
+    """One constant, one meaning, both paths.
+
+    `CGB_MAX_STALE_DAYS` is measured against the row's **published** date, so
+    "this yield was published within a fortnight" says the same thing whether
+    the fetch happened this morning or last Tuesday. Storing the *fetch* date
+    instead would have let the two ages compound to 24 days with nobody choosing
+    that.
+    """
+    # The value, not just the relationship. Deriving both inputs from the
+    # constant made this test move with it: tightening 14 to 3 left it green,
+    # because a "1 day inside" reading is inside whatever the bound is. That is
+    # the same flaw as a fixture reading the code under test, one level up — the
+    # relationship is worth asserting and cannot stand in for the number.
+    assert data_provider.CGB_MAX_STALE_DAYS == 14
+    inside = data_provider.CGB_MAX_STALE_DAYS - 1
+    outside = data_provider.CGB_MAX_STALE_DAYS + 1
+
+    _stub_cgb(monkeypatch, _cgb_page([(GOV, _days_ago(inside), "1.6864")]))
+    _dead_chinabond(monkeypatch)
+    assert _real_cgb_10y() == (pytest.approx(0.016864), False)
+
+    data_provider._cgb_remember(_days_ago(outside), 0.016864)
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+    assert _real_cgb_10y() is None, "a reading past the bound must not be served"
+
+
+def test_a_broken_feed_is_not_papered_over_with_a_stored_reading(monkeypatch):
+    """A fetch that *answers* with something out of band is a broken feed, not
+    an absent one, and the store deliberately does not cover it.
+
+    An outage says nothing about the data; a 68.64% print says the units moved.
+    Falling back there would hide exactly the breakage the sanity band exists to
+    surface.
+    """
+    _stub_cgb(monkeypatch, _cgb_page([(GOV, _days_ago(1), "1.6864")]))  # seed
+    assert data_provider._cgb_stored() is not None
+
+    assert _stub_cgb(monkeypatch, _cgb_page([(GOV, _days_ago(0), "68.64")])) is None
+
+
+def test_a_transient_failure_does_not_pin_the_stored_reading_all_day(monkeypatch):
+    """One flicker must not cost twenty-four hours, and it silently did.
+
+    Caching the stored reading alongside the live one looked like symmetry and
+    reversed the contract stated on `CGB_TIMEOUT_S`: *"a miss degrades one
+    request to the USD proxy and the next request retries"* — the sentence the
+    10-second timeout is justified by. With the stored reading cached, ChinaBond
+    flickering for thirty seconds pinned a reading up to a fortnight old for the
+    rest of the UTC day and never went back.
+
+    The old `test_a_failed_cgb_fetch_is_never_cached` could not see it: the
+    autouse fixture points the store at an empty `tmp_path`, so it only ever
+    exercised the no-store case, while *having* a store is the steady state in
+    production. A contract that holds in the test conditions and not the
+    production ones is worse than no contract.
+    """
+    hits = []
+
+    def _resp(html):
+        class _R:
+            def read(self): return html.encode("utf-8")
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    _stub_cgb(monkeypatch, _cgb_page([(GOV, _days_ago(13), "1.6864")]))  # seed
+
+    def down(*a, **k):
+        hits.append("down")
+        raise OSError("timed out")
+    monkeypatch.setattr(data_provider, "urlopen", down)
+    monkeypatch.setattr(data_provider, "_CGB_CACHE", None)
+    assert _real_cgb_10y() == (pytest.approx(0.016864), False)
+    assert data_provider._CGB_CACHE is None, "a stored reading must not be cached"
+
+    recovered = _cgb_page([(GOV, _days_ago(0), "1.9000")])
+    monkeypatch.setattr(data_provider, "urlopen",
+                        lambda *a, **k: (hits.append("up"), _resp(recovered))[1])
+    assert _real_cgb_10y() == (pytest.approx(0.019), True), "the retry never happened"
+    assert hits.count("up") == 1
+
+
+def test_the_sanity_band_retires_a_stored_reading_too(monkeypatch):
+    """The band is the other check that has to mean the same thing in both
+    paths, and only the staleness bound had a test saying so.
+
+    A store written before a units change — or hand-edited — carries a number
+    the live path would refuse, and refusing it there and not here would put the
+    absurd rate back exactly where the band was meant to keep it out.
+    """
+    data_provider._cgb_remember(_days_ago(1), 0.6864)  # 68.64%, a units change
+    _dead_chinabond(monkeypatch)
+    assert _real_cgb_10y() is None
+
+
+def test_an_unwritable_store_costs_the_fallback_and_not_the_valuation(monkeypatch):
+    """A read-only checkout must lose the *next* outage its cushion, never this
+    request its number — the rule every optional path in this module follows.
+
+    The failure is injected rather than pointed at a path assumed unwritable.
+    This used `Path("/nonexistent-root/...")`, which on Windows resolves under
+    `C:\\` where an ordinary user *can* create directories: the write succeeded,
+    the assertion passed down the success path, the test could not fail for the
+    reason it existed, and every full run left a directory on the system drive.
+    It also meant something different on Linux, where the same path needs root.
+    """
+    def boom(*a, **k):
+        raise OSError("read-only file system")
+    monkeypatch.setattr(Path, "write_text", boom)
+
+    assert _stub_cgb(monkeypatch, _cgb_page(
+        [(GOV, _days_ago(0), "1.6864")])) == pytest.approx(0.016864)
+
+
+def test_a_corrupt_store_reads_as_no_store(monkeypatch, tmp_path):
+    """Half-written JSON, a hand-edit, a truncated disk. None of it may raise
+    into a valuation, and none of it may read as *fresh*.
+
+    The non-string cases are the sharp ones and they were missed first time.
+    The staleness check downstream is a lexicographic comparison, so coercing
+    with `str()` made it fail **open** — every one of these sorts above an ISO
+    date and would have been served as permanently current. `20260819` is the
+    realistic one: a date hand-written or migrated as an integer.
+
+    The format cases guard the same comparison from the other side: `"/" > "-"`,
+    so an upstream switch to `2026/08/20` would have disabled the staleness
+    check entirely rather than tripping it.
+    """
+    bad = tmp_path / "corrupt.json"
+    monkeypatch.setattr(data_provider, "CGB_STORE_PATH", bad)
+    cases = [
+        '{"published": "2026-08-19"',                  # truncated mid-write
+        '{}', 'null', '[]',
+        '{"published": "2026-08-19", "rate": "abc"}',  # unparseable rate
+        '{"published": null, "rate": 0.0168}',         # -> "None", sorts high
+        '{"published": true, "rate": 0.0168}',         # -> "True"
+        '{"published": ["x"], "rate": 0.0168}',
+        '{"published": {"a": 1}, "rate": 0.0168}',
+        '{"published": 20260819, "rate": 0.0168}',     # the realistic one
+        '{"published": "2026/08/19", "rate": 0.0168}',  # format change
+        '{"published": "19-08-2026", "rate": 0.0168}',
+        "[" * 400 + "]" * 400,                          # RecursionError in json
+    ]
+    for content in cases:
+        bad.write_text(content, encoding="utf-8")
+        assert data_provider._cgb_stored() is None, content
 
 
 def test_the_cny_fixture_now_carries_a_chinese_rate_end_to_end(monkeypatch):
     """0700_HK through the real model, which is the only place the pairing is
     visible: a Chinese premium and a Chinese rate, where it was a Chinese
     premium and an American rate until 2026-08-19."""
-    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: 0.016864)
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: (0.016864, True))
     f = load_fundamentals("0700_HK")
 
     a = fm.dcf_valuation(f, market_bars=load_market_bars("0700_HK"))["assumptions"]
@@ -1574,6 +1904,91 @@ def test_the_audit_row_carries_the_precision_of_the_beta_it_used(monkeypatch):
     assert a["beta_regressed"] == pytest.approx(0.2888, abs=1e-3)
     assert a["beta"] == fm.BETA_MIN
     assert a["beta_regressed"] < a["beta"]
+
+
+# ── the floor applies only where the regression cannot reject it ─────
+#
+# Both cases are real fixtures rather than constructed series, and they are the
+# only two the floor has ever bound on. Measured across all eight, `BETA_MIN`
+# sits inside exactly one confidence interval.
+
+def test_an_imprecise_regression_below_the_floor_is_still_clamped():
+    """XOM: measured 0.2888, interval [0.0828, 0.4948], R^2 0.0283.
+
+    0.30 is **inside** that interval, so the data cannot separate the two and
+    the floor keeps doing what it was written for. This is the half of the rule
+    that must not change — a wide interval is exactly the thin-or-halted-series
+    case `BETA_MIN` exists to catch.
+    """
+    a = fm._wacc(load_fundamentals("XOM"), 0.21, None,
+                 (load_bars("XOM"), load_bars("_GSPC")))
+    lo, hi = a["beta_confidence_interval"]
+    assert lo <= fm.BETA_MIN <= hi, "this fixture stopped being the ambiguous case"
+    assert a["beta_regressed"] == pytest.approx(0.2888, abs=1e-3)
+    assert a["beta"] == fm.BETA_MIN
+
+
+def test_a_precise_regression_below_the_floor_is_used_as_measured():
+    """0002_HK: measured 0.1518, interval [0.0747, 0.2289].
+
+    The whole interval lies **below** 0.30, so the measurement rejects the floor
+    at 95% and clamping there overruled a good regression rather than guarding
+    against a bad one. Worth 5.06% against 5.80% on the cost of equity, and
+    74.05 against 97.27 on the fair value.
+    """
+    a = fm._wacc(load_fundamentals("0002_HK"), 0.165, None,
+                 (load_bars("0002_HK"), load_bars("_HSI")))
+    lo, hi = a["beta_confidence_interval"]
+    assert hi < fm.BETA_MIN, "this fixture stopped being the decisive case"
+    assert a["beta_regressed"] == pytest.approx(0.1518, abs=1e-3)
+    assert a["beta"] == a["beta_regressed"], "the floor overruled a measurement"
+    assert a["beta"] < fm.BETA_MIN
+
+
+def test_the_ceiling_is_deliberately_left_alone():
+    """`BETA_MAX` gets no interval treatment, and the absence is the decision.
+
+    The same argument would apply to it, but no fixture comes near 2.5 — RIVN is
+    the highest at 1.8371 — so changing it would be a change with no evidence
+    behind it. Pinned so that "we did not touch it" stays a statement about
+    evidence rather than about attention.
+
+    **Both halves are asserted, and the first draft had only one.** It read
+    `highest < BETA_MAX`, which pins the ceiling against being *lowered* into
+    the data and says nothing about it being *raised* — moving 2.5 to 9.0 left
+    it green, so the one direction the docstring is actually about was
+    unguarded. The value is pinned outright, because "unchanged" is the claim.
+    """
+    assert fm.BETA_MAX == 2.5, "the ceiling moved; this test is the record that it should not"
+    highest = max(
+        fm._wacc(load_fundamentals(s), 0.21, None,
+                 (load_bars(s), load_bars(HOME_INDEX.get(s, "_GSPC"))))["beta_regressed"]
+        for s in FIXTURES)
+    assert highest < fm.BETA_MAX, "a fixture now approaches the ceiling — revisit it"
+
+
+def test_the_floor_and_the_values_it_decides_are_pinned():
+    """The two fair values the whole beta argument is written around.
+
+    Neither new beta test asserted them — both assert the *beta* — so `74.05`
+    and `97.27` lived only in comments and the CHANGELOG and could drift without
+    anything failing. The floor's own value is pinned here too: moving
+    `BETA_MIN` to 0.4 was caught by the golden snapshot alone, and a golden
+    failure says "something moved", not "the floor moved".
+    """
+    assert fm.BETA_MIN == 0.3
+
+    def fair(stem, tax, override=None):
+        return fm.dcf_valuation(load_fundamentals(stem), tax_rate=tax,
+                                market_bars=load_market_bars(stem),
+                                wacc_override=override)["fair_value_per_share"]
+
+    # 0002_HK, freed by the interval — the case the change exists for
+    assert fair("0002_HK", 0.165) == pytest.approx(97.27, abs=0.01)
+    # what the floor was producing instead, reached by pinning the clamped WACC
+    assert fair("0002_HK", 0.165, override=0.0542) == pytest.approx(74.05, abs=0.01)
+    # XOM, still clamped, still where it was
+    assert fair("XOM", 0.21) == pytest.approx(157.30, abs=0.01)
 
 
 def test_a_well_fitted_beta_is_visibly_different_from_a_badly_fitted_one(monkeypatch):

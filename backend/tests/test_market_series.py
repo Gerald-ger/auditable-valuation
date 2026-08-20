@@ -88,6 +88,32 @@ def test_a_motionless_index_yields_no_beta():
     assert ms.beta(moving, flat)[0] is None
 
 
+def test_a_motionless_stock_yields_no_beta():
+    """The mirror of the motionless-index case, and it became load-bearing when
+    `resolve_beta` started reading the confidence interval.
+
+    A halted or delisted series forward-filled to one price has an exactly zero
+    residual, so the standard error is zero, the interval collapses to a point,
+    and the fit *rejects* the credibility floor more confidently than any real
+    measurement can. Without this the beta would be 0.0 — used as measured,
+    because the interval "excludes" 0.30 — which is the fabricated number
+    `BETA_MIN` exists to refuse.
+    """
+    index_closes = [100.0]
+    for r in [0.01, -0.02, 0.03] * 40:
+        index_closes.append(index_closes[-1] * (1 + r))
+
+    fit, n = ms.beta_fit(_bars([100.0] * len(index_closes)), _bars(index_closes))
+    assert fit is None
+    assert ms.beta(_bars([100.0] * len(index_closes)), _bars(index_closes))[0] is None
+
+    # and end to end: the floor is not bypassed, because there is no regression
+    used, source = fm.resolve_beta({"beta": 1.1}, None, 0.21,
+                                   _bars([100.0] * len(index_closes)),
+                                   _bars(index_closes))
+    assert (used, source) == (1.1, "reported")
+
+
 def test_change_over_needs_a_full_window():
     assert ms.change_over(_bars([100.0] * 52), periods=52) is None
     assert ms.change_over(_bars([100.0] * 52 + [110.0]), periods=52) == pytest.approx(0.10)

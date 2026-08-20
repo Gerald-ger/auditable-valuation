@@ -169,15 +169,36 @@ A rejection threshold was considered and **not** taken — it sends XOM to a fla
 1.0, and R² jumps 0.028 → 0.148 across the fixtures with nothing between, so any
 cutoff from 0.05 to 0.14 rejects exactly one name. See CHANGELOG 2026-08-17 (e).
 
-**What remains open is the modelling question, unchanged and now isolated.** CAPM
-prices only systematic risk, so a genuinely uncorrelated business gets a low
-required return however volatile it is on its own terms. Whether that is right for
-a commodity cyclical is a known criticism of CAPM, and no better beta fixes it.
+**One of the three options below was taken on 2026-08-20 — "a floor keyed on
+something other than the band" — and this entry's own framing was too kind to the
+floor.** It said the clamp firing on XOM's good measurement was "a small
+distortion… the signal worth watching". Watching it across all eight fixtures
+found the case that is not small: **`0002_HK` regresses at 0.1518 with a 95%
+interval of [0.0747, 0.2289]**, which excludes 0.30 outright. The clamp there was
+overruling a measurement the data supports, and it was worth **74.05 against
+97.27** on the fair value — a factor of fourteen more than the 1.7% it costs XOM.
 
-**Trigger: a decision to depart from CAPM.** The remaining options are a total-risk
-adjustment (Damodaran's own suggestion for exactly this case), a floor keyed on
-something other than the band, or accepting CAPM's answer — which is now at least
-stated on screen with its precision attached.
+The floor now applies only where the interval **cannot reject it**, which leaves
+XOM clamped (0.30 sits inside [0.0828, 0.4948]) and frees 0002_HK. That is the
+distinction this entry had the evidence for and did not draw: a wide interval is
+the thin-series case the band exists for; a tight one below the floor is a
+measurement. Golden effect: 3 of 260 leaf values, all `0002_HK`.
+
+**Note it is one-directional** — both clamped names move up — so it cannot claim
+the two-directionality that made the ERP change self-evidently a correction. It
+rests entirely on the interval, not on the resulting price.
+
+**What remains open is the modelling question, unchanged and now genuinely
+isolated.** CAPM prices only systematic risk, so a genuinely uncorrelated business
+gets a low required return however volatile it is on its own terms. Whether that is
+right for a commodity cyclical is a known criticism of CAPM, and no better beta
+fixes it — freeing the floor makes the model *more* faithfully CAPM, which is the
+question rather than the answer.
+
+**Trigger: a decision to depart from CAPM.** Two options are left of the original
+three: a total-risk adjustment (Damodaran's own suggestion for exactly this case),
+or accepting CAPM's answer — which is now stated on screen with its precision
+attached, and no longer silently overridden by a constant.
 
 ### 🟡 Only beta shows its uncertainty
 
@@ -597,41 +618,90 @@ or let HK degrade to price-and-quote. The six-method `YFinanceProvider` interfac
 keeps the eventual swap bounded — worth keeping clean. Full reasoning in
 `docs/data-sources-review.md` §3.
 
-### 🟡 A wrong CGB tenor would be invisible to every test *(found 2026-08-19)*
+### ⚪ ~~A wrong CGB tenor would be invisible to every test~~ — closed 2026-08-20
 
-`_cgb_10y` selects the ten-year with `gjqx=10` in the URL. Change that one character and
-ChinaBond returns a different tenor, well-formed and plausible — and **nothing fails**. The
-offline tests supply their own HTML, so the URL is not under test at all, and the live test can
-only check a band.
+*Raised 2026-08-19 and closed the next day by removing the possibility rather than by
+detecting it. Kept because the reason the obvious fix was rejected is worth having.*
 
-A band cannot close it. The whole curve is narrow: **3M 1.1858 · 6M 1.1936 · 1Y 1.2008 · 3Y
-1.2493 · 5Y 1.3842 · 7Y 1.5121 · 10Y 1.6864 · 30Y 2.1509** on 2026-08-18. The floor was raised
-from 0.5% to **1.4%** on 2026-08-19, which excludes everything up to the 5Y — but 7Y and 30Y
-still pass, and a floor above the 7Y would sit above the 10Y's own record low of 1.59% (Feb
-2025) and fail on a normal market.
+It read: `_cgb_10y` selects the ten-year with `gjqx=10` **in the URL**, so changing one
+character returns a different tenor, well-formed and plausible, and **nothing fails** — the
+offline tests supply their own HTML so the URL is not under test at all, and a live test can
+only check a band. A band cannot close it: the whole curve sat inside **3M 1.1858 · 7Y 1.5121 ·
+10Y 1.6864 · 30Y 2.1509** on 2026-08-18, and a floor above the 7Y would sit above the 10Y's own
+record low of 1.59% (Feb 2025).
 
-**The fix is a shape assertion**: fetch `gjqx=0` in the live test, which returns every tenor in
-one row, and assert the ten-year column equals what `_cgb_10y` returned. That is one request and
-it pins the tenor exactly. Not written yet because ChinaBond went unreachable while this was
-being closed out — see the reachability note below — and a test that has never been run against
-the real payload is not evidence of anything.
+**The recorded fix was a live shape assertion. That was the weaker answer.** It would have
+*detected* a wrong tenor on the days someone ran `-m network`. `gjqx=0` returns every tenor
+**with a header row naming the columns**, so the ten-year can be selected by its own label and
+the wrong tenor becomes unrepresentable instead — and the choice moves into the parser, where
+an offline test can pin it. Measured: **+1,680 bytes, +8.9%**, once per calendar day, with no
+latency difference over ten paired requests.
 
-### 🟡 ChinaBond's availability is worse than one probe suggested *(found 2026-08-19)*
+**The trade this makes, since it is not free.** A relabelled header now degrades to `usd_proxy`
+where the old code would have gone on serving whatever came back. A labelled degrade beats an
+unlabelled wrong number, and it has its own test.
 
-Three transient failures observed on the day it was wired in: one live-test failure inside a full
-`-m network` run, one `ssl.SSLEOFError` during review, and then a **sustained outage** — every
-`gjqx` value returning `http_code=000` after ~12 s, from a machine where the same URLs had
-answered in 1.7-3.8 s twenty minutes earlier.
+### ⚪ ~~ChinaBond's availability~~ — the trade was taken 2026-08-20
 
-It degrades correctly: failures are not cached, so a miss costs one request and the next retries.
-**But the two rates are 30% of Tencent's fair value apart**, so a user reloading during an outage
-sees 469 where they saw 612, distinguished only by the `usd_proxy` label on the assumptions row.
+*The record stays because the failure rate is the evidence for what was built.*
 
-**The open question is whether that is the right trade.** A CGB yield one day stale is far closer
-to correct than a US yield today — the 12-month range is 21.6bp, against a 362bp gap to the US
-10Y — so serving the last good CNY rate for a bounded number of days would keep the *currency*
-right and cost only freshness. That is a modelling decision rather than a bug fix, and it is not
-taken here.
+**Nine failures observed across two days**: one live-test failure inside a full `-m network`
+run, one `ssl.SSLEOFError`, a sustained outage where every `gjqx` value timed out after ~12 s —
+and on 2026-08-20 the same working-to-dead transition **five more times in a single session**,
+twice within fifteen minutes of the endpoint answering in 3.9 s.
+
+The open question was whether serving the last good CNY rate beats falling to a US one. **It
+was taken: yes, bounded.** The gap is not a slightly worse number, it is a **US rate on CNY
+cash flows** worth 30% of Tencent's fair value, against a CGB 12-month range of ~22bp.
+
+Two things about the shape it took, because both were decisions:
+
+- **The in-process cache was never the answer.** It already hides an outage that begins after
+  one success, so it covers nothing that was broken. The two cases that bite — a process
+  starting while ChinaBond is down, and the first request of a new calendar day — both need the
+  reading to outlive the run, which is why it is on disk.
+- **No new constant.** `CGB_MAX_STALE_DAYS` is applied to the row's **published** date in both
+  paths, so "published within a fortnight" means the same thing however long ago it was
+  fetched. Storing the fetch date would have let the two ages compound to 24 days with nobody
+  choosing that.
+
+**What is still open is the reachability itself**, and nothing here fixes it — the store buys a
+bounded number of days, not availability. See CHANGELOG 2026-08-20.
+
+### 🟡 A degenerate regression can still bypass the beta floor *(found 2026-08-20)*
+
+Raised by an independent review of the change that made `BETA_MIN` interval-aware, and **it is a
+gap that change created**: while the floor applied unconditionally, a nonsense regression was
+clamped like any other. Now the floor is skipped when the 95% interval excludes it — and a fit
+with no residual reports a standard error of zero, so its interval collapses to a point and
+rejects the floor *more* confidently than any real measurement can. The guard written to catch
+fabricated betas is bypassed by exactly the fabricated data it was written for.
+
+**Half of it is closed.** A motionless series — a halted or delisted stock forward-filled to one
+price — has an exactly zero residual and is refused by `market_series.beta_fit`, beside the
+existing motionless-*index* guard. That is the one degenerate shape that occurs in real data, and
+`test_a_motionless_stock_yields_no_beta` pins it end to end.
+
+**What is left needs a number nobody has evidence for.** Measured 2026-08-20:
+
+| construction | standard error | R² | refused? |
+|---|---|---|---|
+| motionless stock | 0 exactly | — | ✅ |
+| returns exactly 0.05x the index | 2.9e-16 | **1.0 exactly** | ❌ used as 0.05 |
+| constant non-zero returns | 5.2e-16 | −0.0006 | ❌ used as −0.0 |
+
+Floating point rarely obliges with an exact zero, so `sse == 0` does not reach the second and
+third. `r_squared == 1.0` would catch the second — it is exactly 1.0, and all eight fixtures are
+between 0.028 and 0.691 — but not the third, and a guard that closes two of three while looking
+complete is worse than one that draws its line honestly.
+
+**Both remaining shapes require synthetic input**: real weekly closes are not an exact affine
+function of an index's. So this is a latent hazard on fabricated or badly joined data, not a
+defect reachable from yfinance.
+
+**Trigger: a bars source that can produce placeholder or forward-filled series**, or evidence for
+where a precision cutoff belongs. The fixtures say where real data sits (R² 0.028–0.691) and
+nothing about where a threshold should be, which is why one was not invented.
 
 ### 🟡 `_us_treasury_10y`'s internals have never been tested *(found 2026-08-19)*
 

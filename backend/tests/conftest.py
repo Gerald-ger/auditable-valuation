@@ -87,7 +87,28 @@ def pinned_risk_free_rate(monkeypatch):
     # and that is exactly why it is wrong: the goldens would go on pinning the
     # ChinaBond-is-down path while production ran the other one, which is the
     # trap docs/currency-consistent-discounting.md warned about, one level down.
-    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: TEST_CGB_10Y)
+    #
+    # `(rate, live)` rather than a bare rate since 2026-08-20: the second element
+    # says whether it came from today's fetch or from the store, and a test that
+    # returned only the number would not exercise the branch that labels it.
+    monkeypatch.setattr(data_provider, "_cgb_10y", lambda: (TEST_CGB_10Y, True))
+
+
+@pytest.fixture(autouse=True)
+def isolated_cgb_store(tmp_path, monkeypatch):
+    """Point the CGB fallback store at a throwaway path, for every test.
+
+    `_cgb_10y` writes a good reading to disk so the next run has something to
+    fall back on. The tests that drive the real parse stub `urlopen` rather than
+    the function, so they reach that write — and without this they would leave a
+    file in `backend/data/`, and, worse, a *later* test would find it and pass on
+    a fallback instead of on the path it meant to exercise.
+
+    Autouse and unconditional, the same reasoning as `temp_db`: isolation that
+    each test has to remember to ask for is isolation that will be forgotten.
+    """
+    from backend import data_provider
+    monkeypatch.setattr(data_provider, "CGB_STORE_PATH", tmp_path / "cgb_10y.json")
 
 
 # CNY -> HKD. A round test constant, not a market quote: the point is that the

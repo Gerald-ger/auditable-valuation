@@ -8,6 +8,8 @@ These tests exist to tell you the shape changed *before* the UI does.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 import yfinance as yf
 
@@ -293,6 +295,52 @@ def test_chinabond_still_publishes_a_parseable_ten_year():
     fetched in the same call and compared, which is recorded in TODOLIST; a band
     cannot do it.
     """
-    rate = _real_cgb_10y()
-    assert rate is not None, "ChinaBond unreachable or its table changed shape"
+    out = _real_cgb_10y()
+    assert out is not None, "ChinaBond unreachable or its table changed shape"
+    rate, live = out
+    assert live is True, "served from the store — this test is about the live feed"
     assert 0.014 < rate < 0.05, rate
+
+
+def test_the_ten_year_agrees_with_chinabonds_single_tenor_query():
+    """The tenor, cross-checked against a *second* ChinaBond query.
+
+    `_cgb_10y` asks for every tenor and picks the column whose header says
+    `10Y`. Checking that against the same response would be circular, so this
+    fetches the single-tenor form — `gjqx=10`, exactly what the code sent until
+    2026-08-19 — and requires the two routes to agree.
+
+    This is the assertion the band could never make. The whole Chinese curve sat
+    inside 1.1858 (3M) to 2.1509 (30Y) on 2026-08-18, so no range check can tell
+    the ten-year from the seven- or thirty-year; two independent queries can.
+    """
+    from datetime import datetime, timedelta, timezone
+    from urllib.request import urlopen
+
+    today = datetime.now(timezone.utc)
+    start = (today - timedelta(days=data_provider.CGB_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    url = (f"{data_provider.CGB_URL}?gjqx=10&qxId=ycqx&locale=en_US"
+           f"&startDate={start}&endDate={today.strftime('%Y-%m-%d')}")
+    with urlopen(url, timeout=data_provider.CGB_TIMEOUT_S) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+
+    rows = []
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+        cells = [c for c in (re.sub(r"<[^>]+>", "", x).strip()
+                             for x in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S))
+                 if c]
+        if len(cells) == 3 and cells[0] == data_provider.CGB_CURVE:
+            rows.append((cells[1], float(cells[2])))
+    assert rows, "the single-tenor query returned no government row"
+    single = max(rows, key=lambda r: r[0])[1] / 100
+
+    out = _real_cgb_10y()
+    assert out is not None, "ChinaBond unreachable"
+    # unpacked, not compared whole. Written as `_real_cgb_10y() == approx(single)`
+    # first, which cannot ever be true — `_cgb_10y` returns `(rate, live)` — and
+    # the message would then have reported the two routes as disagreeing when
+    # they are identical. It was shipped unrun because ChinaBond was down for
+    # every attempt that day, which is exactly how a test gets to be wrong.
+    assert out[0] == pytest.approx(single, abs=1e-6), (
+        "the labelled 10Y column and gjqx=10 disagree — one of them is not the "
+        "ten-year")

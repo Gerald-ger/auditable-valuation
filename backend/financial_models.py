@@ -371,17 +371,40 @@ def resolve_beta(info: dict, peers: list[dict] | None = None,
     levered target cannot re-lever its way to an absurd number.
     """
     if bars and index_bars:
-        computed, _observations = market_series.beta(bars, index_bars)
-        if computed is not None:
-            # The band still applies. It was written for a figure that could not
-            # be checked, and a regression over 100+ weeks largely can be — but
-            # a thin or halted series can still produce nonsense, and clamping
-            # costs nothing when the measurement is sound. Worth watching that
-            # it does not silently become load-bearing: on the committed
-            # fixtures it already binds once, pulling XOM's measured 0.289 up to
-            # 0.30, which is a hint the floor is calibrated for equities in
-            # general rather than for a sector that genuinely decouples.
-            return round(min(max(computed, BETA_MIN), BETA_MAX), 4), "computed"
+        fit, _observations = market_series.beta_fit(bars, index_bars)
+        if fit is not None:
+            # **The floor applies only where the regression cannot rule it out.**
+            #
+            # `BETA_MIN` was written for a vendor figure that could not be
+            # checked at all. A regression can be, and it reports how well: on
+            # the committed fixtures 0.30 sits **inside** exactly one confidence
+            # interval — XOM's [0.0828, 0.4948], where R^2 is 0.028 and the data
+            # genuinely cannot separate 0.29 from 0.30. It sits *outside* every
+            # other, and on 0002_HK it is outside by a distance: [0.0747,
+            # 0.2289] against a floor of 0.30, which the measurement rejects at
+            # 95%. Clamping there was not guarding against a bad regression, it
+            # was overruling a good one — worth 5.06% -> 5.80% on the cost of
+            # equity and **74.05 against 97.27** on the fair value.
+            #
+            # So the interval decides. A thin or halted series produces a wide
+            # one that still contains 0.30 and is still clamped; a precise
+            # measurement below the floor is used as measured. Nothing new is
+            # invented for the other side: with no floor a sufficiently negative
+            # beta can drive WACC under terminal growth, and `dcf_valuation`
+            # already refuses that in as many words rather than printing it.
+            #
+            # `BETA_MAX` is deliberately untouched. The same argument would
+            # apply, but no fixture approaches 2.5 — RIVN is the highest at
+            # 1.8371 — so changing it would be a change with no evidence behind
+            # it, which is the thing this comment is objecting to.
+            #
+            # `beta_fit` rather than `beta`: the latter is a thin reading of the
+            # former, so this costs no extra regression, and `_wacc` already
+            # calls `beta_fit` for the audit row.
+            floored = (max(fit["beta"], BETA_MIN)
+                       if fit["confidence_interval"][1] >= BETA_MIN
+                       else fit["beta"])
+            return round(min(floored, BETA_MAX), 4), "computed"
 
     raw = info.get("beta")
     if raw is not None and BETA_MIN <= raw <= BETA_MAX:
