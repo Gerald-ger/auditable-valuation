@@ -9,7 +9,81 @@
 // PriceChart, so nothing in this file needs to know the display timezone.
 
 const HIT_TOLERANCE_PX = 6;
-const HANDLE_RADIUS_PX = 4;
+const HANDLE_RADIUS_PX = 5;
+
+// Readability over candles, which is the background these lines actually sit
+// on. Two changes carry it: a wider stroke, and a dark halo drawn underneath at
+// stroke+3 so the line separates from a green or red body instead of merging
+// into it. The halo is why the colours themselves did not have to get louder —
+// contrast comes from the outline, not from saturation.
+const LINE_WIDTH_PX = 2;
+const LINE_WIDTH_SELECTED_PX = 3;
+const HALO_COLOR = 'rgba(11, 15, 20, 0.75)';
+const COLORS = { hline: '#fbbf24', trendline: '#60a5fa' };
+// The line being placed, before its second click exists. Dashed and dimmed so
+// it reads as "not yet a drawing" rather than as one that failed to save.
+const PREVIEW_COLOR = 'rgba(96, 165, 250, 0.8)';
+const PREVIEW_DASH = [5, 4];
+
+/**
+ * A chart time as a number that can be compared, whatever shape it arrived in.
+ *
+ * lightweight-charts carries three: a UNIX timestamp for intraday bars, an ISO
+ * date string for daily and coarser ones (see charttime.js — only intraday is
+ * shifted), and a `{year, month, day}` business day, which `coordinateToTime`
+ * can return even when the series was given strings. Snapping has to work on
+ * the daily chart, which is the string case, so subtracting the raw values
+ * would have produced `NaN` on the most common range in the app.
+ */
+function timeValue(t) {
+  if (typeof t === 'number') return t;
+  if (typeof t === 'string') return Date.parse(t);
+  if (t && typeof t === 'object' && t.year != null) {
+    return Date.UTC(t.year, (t.month ?? 1) - 1, t.day ?? 1);
+  }
+  return NaN;
+}
+
+/**
+ * Pull a placed point onto the nearest real value on the nearest bar.
+ *
+ * A click lands on a pixel, and a pixel is not a number anybody reported. At a
+ * typical price scale one pixel is worth a few cents, so a trendline drawn
+ * "along the highs" by eye actually connects two arbitrary values near them and
+ * the level it projects is off by however far the hand was. Snapping puts both
+ * ends on figures that exist in the data.
+ *
+ * The bar is chosen by time and then the price by absolute distance across all
+ * four of open/high/low/close, so anchoring to a wick works as well as to a
+ * body — dragging near a spike high gives the high, not the close.
+ *
+ * `bars` is the chart-space series, ascending by time. Returns the input
+ * unchanged when there is nothing to snap to, which keeps the caller free of
+ * the empty and out-of-range cases.
+ */
+export function snapToBar(bars, time, price) {
+  if (!bars?.length || time == null || price == null) return { time, price };
+  const target = timeValue(time);
+  if (!Number.isFinite(target)) return { time, price };
+  let best = null;
+  let bestGap = Infinity;
+  for (const bar of bars) {
+    const value = timeValue(bar.time);
+    if (!Number.isFinite(value)) continue;
+    const gap = Math.abs(value - target);
+    // ascending, so once the gap starts growing the nearest bar is behind us
+    if (gap > bestGap) break;
+    bestGap = gap;
+    best = bar;
+  }
+  if (!best) return { time, price };
+  const candidates = [best.open, best.high, best.low, best.close]
+    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (!candidates.length) return { time: best.time, price };
+  const snapped = candidates.reduce(
+    (a, b) => (Math.abs(b - price) < Math.abs(a - price) ? b : a));
+  return { time: best.time, price: snapped };
+}
 
 /** Where a line sits, in price, at a given chart time. Extends beyond its ends. */
 export function linePriceAt(drawing, time) {
@@ -20,15 +94,29 @@ export function linePriceAt(drawing, time) {
 }
 
 /**
- * Perpendicular distance from a point to the segment's infinite line, in pixels.
- * Used for click selection; the infinite form is right because the rendered line
- * is also extended past its endpoints.
+ * Distance from a point to the **segment**, in pixels.
+ *
+ * This measured the distance to the segment's *infinite* line until 2026-08-20,
+ * justified by a comment claiming "the rendered line is also extended past its
+ * endpoints". It is not — `DrawingsRenderer` draws `moveTo(x1,y1)` then
+ * `lineTo(x2,y2)`, a plain segment. So every trendline carried an invisible
+ * selection corridor running the full width and height of the chart along its
+ * own extension: clicking empty space that happened to line up with an old
+ * trendline selected it, and on a steep line that corridor swept most of the
+ * pane.
+ *
+ * The projection is clamped to [0, 1], which is the only difference — beyond an
+ * endpoint the distance becomes the distance to that endpoint. Horizontal lines
+ * are unaffected either way: their shape already spans the full width, so no
+ * point on screen is ever past an end.
  */
-function distanceToLine(px, py, x1, y1, x2, y2) {
+function distanceToSegment(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1;
   const dy = y2 - y1;
-  if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
-  return Math.abs(dy * px - dx * py + x2 * y1 - y2 * x1) / Math.hypot(dx, dy);
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lengthSquared));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
 
 class DrawingsRenderer {
@@ -41,33 +129,68 @@ class DrawingsRenderer {
       const ctx = scope.context;
       const ratio = scope.horizontalPixelRatio;
       const vRatio = scope.verticalPixelRatio;
+
+      const stroke = (x1, y1, x2, y2, width, color, dash) => {
+        ctx.beginPath();
+        ctx.moveTo(x1 * ratio, y1 * vRatio);
+        ctx.lineTo(x2 * ratio, y2 * vRatio);
+        // The halo goes down first and slightly wider, so the coloured stroke
+        // sits inside it. Dashed lines skip it — a halo through the gaps would
+        // read as a solid line with a coloured pattern on top.
+        if (!dash) {
+          ctx.setLineDash([]);
+          ctx.lineWidth = (width + 3) * vRatio;
+          ctx.strokeStyle = HALO_COLOR;
+          ctx.stroke();
+        }
+        ctx.setLineDash(dash ? dash.map((n) => n * ratio) : []);
+        ctx.lineWidth = width * vRatio;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      };
+
       for (const shape of this._source.screenShapes()) {
         const selected = shape.id === this._source.selectedId();
+        const color = COLORS[shape.kind] ?? COLORS.trendline;
         ctx.save();
-        ctx.lineWidth = (selected ? 2 : 1.5) * vRatio;
-        ctx.strokeStyle = shape.kind === 'hline' ? '#f0b90b' : '#3b82f6';
-        if (selected) ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.moveTo(shape.x1 * ratio, shape.y1 * vRatio);
-        ctx.lineTo(shape.x2 * ratio, shape.y2 * vRatio);
-        ctx.stroke();
+        stroke(shape.x1, shape.y1, shape.x2, shape.y2,
+               selected ? LINE_WIDTH_SELECTED_PX : LINE_WIDTH_PX, color);
 
         // handles only on the selected shape, so an unselected chart stays clean
         if (selected) {
-          ctx.fillStyle = '#fff';
           for (const [hx, hy] of shape.handles) {
             ctx.beginPath();
             ctx.arc(hx * ratio, hy * vRatio, HANDLE_RADIUS_PX * ratio, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
             ctx.fill();
+            // dark rim rather than the line's own colour: a white dot on a pale
+            // candle was invisible, and the rim is what gives it an edge
+            ctx.lineWidth = 2 * vRatio;
+            ctx.strokeStyle = HALO_COLOR;
             ctx.stroke();
           }
         }
 
         if (shape.label) {
-          ctx.fillStyle = shape.kind === 'hline' ? '#f0b90b' : '#3b82f6';
           ctx.font = `${11 * vRatio}px system-ui, sans-serif`;
+          ctx.lineWidth = 3 * vRatio;
+          ctx.strokeStyle = HALO_COLOR;
+          ctx.strokeText(shape.label, (shape.x2 + 6) * ratio, (shape.y2 - 4) * vRatio);
+          ctx.fillStyle = color;
           ctx.fillText(shape.label, (shape.x2 + 6) * ratio, (shape.y2 - 4) * vRatio);
         }
+        ctx.restore();
+      }
+
+      // The trendline being placed. Drawn after the saved ones so it is never
+      // hidden behind them, and it is deliberately not in `screenShapes` — it
+      // has no id, cannot be selected, and must not be hit-testable.
+      const preview = this._source.previewShape();
+      if (preview) {
+        ctx.save();
+        stroke(preview.x1, preview.y1, preview.x2, preview.y2,
+               LINE_WIDTH_PX, PREVIEW_COLOR, PREVIEW_DASH);
         ctx.restore();
       }
     });
@@ -81,9 +204,12 @@ class DrawingsRenderer {
  * single source of truth and a re-render does not have to rebuild the chart.
  */
 export class DrawingsPrimitive {
-  constructor({ getDrawings, getSelectedId }) {
+  constructor({ getDrawings, getSelectedId, getPreview }) {
     this._getDrawings = getDrawings;
     this._getSelectedId = getSelectedId;
+    // `{t1, p1, t2, p2}` while a trendline is half-placed, else null. A callback
+    // like the other two so the chart never has to be rebuilt to show it.
+    this._getPreview = getPreview ?? (() => null);
     this._series = null;
     this._chart = null;
     this._renderer = new DrawingsRenderer(this);
@@ -113,6 +239,20 @@ export class DrawingsPrimitive {
 
   paneViews() {
     return [{ renderer: () => this._renderer, zOrder: () => 'top' }];
+  }
+
+  /** Pixel geometry for the trendline being placed, or null. */
+  previewShape() {
+    if (!this._series || !this._chart) return null;
+    const p = this._getPreview();
+    if (!p || p.t1 == null || p.t2 == null || p.p1 == null || p.p2 == null) return null;
+    const timeScale = this._chart.timeScale();
+    const x1 = timeScale.timeToCoordinate(p.t1);
+    const x2 = timeScale.timeToCoordinate(p.t2);
+    const y1 = this._series.priceToCoordinate(p.p1);
+    const y2 = this._series.priceToCoordinate(p.p2);
+    if (x1 == null || x2 == null || y1 == null || y2 == null) return null;
+    return { x1, y1, x2, y2 };
   }
 
   /** Pixel geometry for every drawing, given the current pan/zoom. */
@@ -156,7 +296,7 @@ export class DrawingsPrimitive {
           return { id: shape.id, handle: i };
         }
       }
-      if (distanceToLine(x, y, shape.x1, shape.y1, shape.x2, shape.y2) <= HIT_TOLERANCE_PX) {
+      if (distanceToSegment(x, y, shape.x1, shape.y1, shape.x2, shape.y2) <= HIT_TOLERANCE_PX) {
         return { id: shape.id, handle: null };
       }
     }

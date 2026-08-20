@@ -466,8 +466,72 @@ nav button.active {
   padding-left: 10px;
 }
 
+.error-boundary-stack {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.error-boundary-stack summary {
+  cursor: pointer;
+}
+
+.error-boundary-stack pre {
+  margin-top: 6px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .chart-wrap {
   position: relative;
+}
+
+/* Full screen.
+   The panel becomes a flex column so the toolbars keep their natural height and
+   `.chart-wrap` takes everything left — `PriceChart`'s `chartHeight` reads that
+   height back, which is what makes the chart fill the screen instead of staying
+   at the size it was built at. A background is required: the fullscreen element
+   is composited against black, and the app's own background does not come with
+   it.
+
+   Keyed on `:fullscreen` rather than on a React class, and that is a
+   correctness point rather than a preference. `fullscreenchange` fires and the
+   chart is resized synchronously from it, while a class driven by React state
+   only lands on a later render — so the resize would measure the *old* layout
+   and the chart would keep its windowed height until something else moved. The
+   pseudo-class is applied by the browser before the event, so the measurement
+   is right the first time. */
+.chart-panel:fullscreen {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 10px 14px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.chart-panel:fullscreen .chart-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Pointer feedback. Set on the container rather than the canvas because
+   lightweight-charts owns the canvas element and replaces it on resize. */
+.cursor-draw { cursor: crosshair; }
+.cursor-grab { cursor: grab; }
+.cursor-grabbing { cursor: grabbing; }
+
+.chart-legend-follow {
+  /* Follows the crosshair, so it must never eat the pointer that drives it. */
+  pointer-events: none;
+  background: rgba(11, 15, 20, 0.82);
+  border: 1px solid rgba(120, 140, 160, 0.25);
+  border-radius: 4px;
+  padding: 3px 7px;
+  white-space: nowrap;
 }
 
 .chart-legend {

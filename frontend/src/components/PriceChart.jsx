@@ -8,9 +8,9 @@ import {
   createSeriesMarkers,
 } from 'lightweight-charts';
 import { smaSeries, rsiSeries, macdSeries, rollingSdBand, windowSpan } from '../indicators';
-import { toChartTime, fromChartTime } from '../charttime';
+import { toChartTime, drawingEpoch, drawingChartTime } from '../charttime';
 import { eventStamp, groupEventsByBar, toDateStr } from '../events';
-import { DrawingsPrimitive } from '../drawingPrimitive';
+import { DrawingsPrimitive, snapToBar } from '../drawingPrimitive';
 import { get, post, patch, del } from '../api';
 
 // Operates on chart-space time, so the date shown on the axis, the date used to
@@ -39,6 +39,13 @@ const MACD_SIGNAL = 9;
 const SD_PERIOD = 20;
 const SD_K = 2;
 const SD_COLOR = 'rgba(148, 163, 184, 0.55)';
+// Wheel gesture. The pan step is a share of the visible window rather than a
+// bar count, so one notch moves the same *proportion* whether the chart holds
+// 126 bars or 2,385 — a fixed bar count crawls on a max chart and leaps on a
+// three-month one. Divided by 100 because a wheel notch is ~100 deltaY.
+const WHEEL_PAN_FRACTION = 0.15;
+const WHEEL_ZOOM_STEP = 0.9;
+
 // lightweight-charts PriceScaleMode: 0 normal, 1 logarithmic, 2 percentage
 const SCALE_MODES = [
   ['Lin', 0, 'Linear price scale'],
@@ -114,9 +121,35 @@ export default function PriceChart({
   const seriesRef = useRef(null);
   const markersRef = useRef(null);
   const groupsRef = useRef(new Map());
+  // The element that goes fullscreen: toolbars and chart together, because a
+  // chart you cannot change the interval of is not much use full screen.
+  const panelRef = useRef(null);
 
   const [chartEpoch, setChartEpoch] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
+  // One switch for two behaviours that mean the same thing to a reader: the
+  // crosshair sticking to OHLC values, and a drawing endpoint landing on one.
+  // Splitting them would mean explaining why the pointer snaps and the line
+  // does not.
+  const [magnet, setMagnet] = useState(true);
+  // Read by the construction effect, which must not *depend* on `magnet`: a
+  // dependency there would rebuild the chart — and discard the reader's pan and
+  // zoom — every time the toggle was pressed. The effect below applies the
+  // change to the live chart instead.
+  const magnetRef = useRef(magnet);
+  magnetRef.current = magnet;
   const [hoverBar, setHoverBar] = useState(null);
+  // Where the cursor is, so the OHLC readout can follow it instead of sitting
+  // in a corner the eye has to travel to.
+  const [hoverAt, setHoverAt] = useState(null); // {x, y}
+  // The moving end of a half-placed trendline, in chart space.
+  const [preview, setPreview] = useState(null);
+  const previewRef = useRef(null);
+  previewRef.current = preview;
+  // Whether a drawing is under the pointer, which is the only thing the cursor
+  // shape needs that CSS cannot work out for itself.
+  const [hovering, setHovering] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [hoverEvents, setHoverEvents] = useState(null); // {x, date, items} — preview only
   const [pinned, setPinned] = useState(null); // {x, date, items} — clickable
   const [chartType, setChartType] = useState('candles');
@@ -127,8 +160,11 @@ export default function PriceChart({
   const [types, setTypes] = useState(DEFAULT_TYPES);
 
   // ── drawings ──────────────────────────────────────────────────────
-  // Stored in chart space (GMT+8 shifted) so rendering needs no conversion;
-  // converted back to true epochs at the persistence boundary below.
+  // State holds the **stored** form — integer UTC epochs, exactly what the API
+  // returns — and `chartDrawings` below converts to chart space for rendering.
+  // It was the other way round until 2026-08-20, converting once at load, which
+  // sent date strings to an integer column and placed a drawing nowhere after a
+  // change of period.
   const [drawings, setDrawings] = useState([]);
   const [tool, setTool] = useState('cursor');
   const [selectedId, setSelectedId] = useState(null);
@@ -136,21 +172,35 @@ export default function PriceChart({
   const drawingsRef = useRef(drawings);
   const selectedRef = useRef(selectedId);
   const primitiveRef = useRef(null);
-  drawingsRef.current = drawings;
   selectedRef.current = selectedId;
 
-  const toRow = (d) => ({
-    id: d.id, kind: d.kind, label: d.label,
-    p1: d.p1, p2: d.p2,
-    t1: d.t1 == null ? null : toChartTime(d.t1),
-    t2: d.t2 == null ? null : toChartTime(d.t2),
-  });
+  // Which representation this series addresses its x-axis in. Read from the bars
+  // rather than from `interval`, so it follows the data even if the two disagree.
+  const intraday = typeof bars[0]?.time === 'number';
+
+  /**
+   * The drawings in chart space, derived rather than stored.
+   *
+   * `drawings` state holds exactly what the API holds — integer epochs — and the
+   * conversion happens here, on every render that changes the series. It used to
+   * happen once at load, which meant a drawing fetched on the 1-year chart kept
+   * daily-shaped times after switching to 5-day and was placed nowhere.
+   */
+  const chartDrawings = useMemo(() => drawings.map((d) => ({
+    ...d,
+    t1: drawingChartTime(d.t1, intraday),
+    t2: drawingChartTime(d.t2, intraday),
+  })), [drawings, intraday]);
+  drawingsRef.current = chartDrawings;
+  // The stored form, for the persistence calls, which must never send chart space.
+  const storedRef = useRef(drawings);
+  storedRef.current = drawings;
 
   useEffect(() => {
     if (!ticker) return;
     let live = true;
     get(`/stock/${ticker}/drawings`)
-      .then((r) => { if (live) setDrawings((r.drawings ?? []).map(toRow)); })
+      .then((r) => { if (live) setDrawings(r.drawings ?? []); })
       .catch(() => { if (live) setDrawings([]); });
     setSelectedId(null);
     setPending(null);
@@ -175,11 +225,37 @@ export default function PriceChart({
   useEffect(() => {
     if (!containerRef.current || !bars.length) return;
 
+    /**
+     * How tall the chart should be right now.
+     *
+     * Normally the sum of the panes that are switched on. Full screen it is
+     * whatever the row is given instead — the panel is a flex column there and
+     * `.chart-wrap` takes the remaining space, so the height follows the screen
+     * rather than a constant that would leave a band of empty page under it.
+     *
+     * `clientHeight` can be 0 for a frame or two after entering fullscreen,
+     * before layout settles; falling back to the stacked height keeps the chart
+     * from collapsing in that window.
+     *
+     * Declared inside the effect deliberately. As a component-scope function it
+     * is rebuilt every render, so it would have to join this effect's
+     * dependencies — and this effect *recreates the chart*, which would throw
+     * away the reader's pan and zoom on any state change at all.
+     */
+    const chartHeight = () => {
+      const stacked =
+        370 + (show.volume ? 115 : 0) + (show.rsi ? 100 : 0) + (show.macd ? 100 : 0);
+      // This panel specifically, not "something on the page is fullscreen": the
+      // flex height below only exists under `.chart-panel:fullscreen`, so if a
+      // different element went fullscreen the parent would still be auto-height
+      // and measuring it would pin the chart to whatever it already was.
+      if (document.fullscreenElement !== panelRef.current) return stacked;
+      return containerRef.current?.parentElement?.clientHeight || stacked;
+    };
+
     const intraday = typeof bars[0]?.time === 'number';
-    const height =
-      370 + (show.volume ? 115 : 0) + (show.rsi ? 100 : 0) + (show.macd ? 100 : 0);
     const chart = createChart(containerRef.current, {
-      height,
+      height: chartHeight(),
       layout: {
         background: { color: 'transparent' },
         textColor: '#9fb0c3',
@@ -189,8 +265,17 @@ export default function PriceChart({
         vertLines: { color: 'rgba(120,140,160,0.08)' },
         horzLines: { color: 'rgba(120,140,160,0.08)' },
       },
-      // magnet snaps the crosshair to OHLC values instead of floating between them
-      crosshair: { mode: 1 },
+      // magnet snaps the crosshair to OHLC values instead of floating between
+      // them; toggleable since 2026-08-20, because it is the wrong mode for
+      // reading the price at an arbitrary point rather than at a bar
+      crosshair: { mode: magnetRef.current ? 1 : 0 },
+      // Both wheel behaviours off: the library maps a *vertical* wheel to zoom
+      // only (`deltaY` -> zoomTime, gated on handleScale.mouseWheel) and pans
+      // on `deltaX` alone, so "wheel pans" cannot be expressed in its options.
+      // Done by hand below instead, and doing half of it here would mean two
+      // handlers fighting over the same gesture.
+      handleScale: { mouseWheel: false },
+      handleScroll: { mouseWheel: false },
       timeScale: {
         borderColor: 'rgba(120,140,160,0.2)',
         timeVisible: intraday,
@@ -229,6 +314,7 @@ export default function PriceChart({
     const primitive = new DrawingsPrimitive({
       getDrawings: () => drawingsRef.current,
       getSelectedId: () => selectedRef.current,
+      getPreview: () => previewRef.current,
     });
     series.attachPrimitive(primitive);
     primitiveRef.current = primitive;
@@ -319,11 +405,13 @@ export default function PriceChart({
     const onMove = (param) => {
       if (!param.time || !param.point) {
         setHoverBar(null);
+        setHoverAt(null);
         setHoverEvents(null);
         return;
       }
       const date = toDateStr(param.time);
       const barData = param.seriesData.get(series);
+      setHoverAt(param.point);
       setHoverBar(barData ? { date, volume: volByTime.get(String(param.time)), ...barData } : null);
       // Exact bar lookup — every event is snapped onto a bar, so the dot and the
       // preview can no longer disagree about which dates have events.
@@ -343,16 +431,86 @@ export default function PriceChart({
       setPinned(group ? { x: param.point.x, date: group.date, items: group.items } : null);
     });
 
-    const resize = () => chart.applyOptions({ width: containerRef.current.clientWidth });
+    const resize = () => chart.applyOptions({
+      width: containerRef.current.clientWidth,
+      height: chartHeight(),
+    });
     resize();
     window.addEventListener('resize', resize);
+
+    /**
+     * Resize from the box actually changing, not from an event that precedes it.
+     *
+     * Entering or leaving fullscreen fires no `resize`. Listening to
+     * `fullscreenchange` and measuring — even a frame later, which is what this
+     * did first — reads the layout while the browser is still reflowing back to
+     * the page, so on the way *out* the chart kept its fullscreen width and the
+     * proportions stayed wrong until something else rebuilt it. Clicking MA
+     * appeared to fix it because that recreates the chart.
+     *
+     * A ResizeObserver on the parent has no timing to get wrong: it reports the
+     * size after layout, whatever caused it — fullscreen, window, or a panel
+     * opening beside it. It also cannot feed back on itself, and that is worth
+     * stating since observing an element whose size you then set usually can:
+     * windowed, `chartHeight()` returns a constant, so the second pass is a
+     * no-op; fullscreen, `.chart-wrap` is `flex: 1` and takes its height from
+     * the panel rather than from the chart inside it.
+     *
+     * Guarded because jsdom has no ResizeObserver — the same gap that makes this
+     * suite mock the chart wholesale. `fullscreenchange` stays as the fallback
+     * for that case only.
+     */
+    const wrap = containerRef.current.parentElement;
+    let observer = null;
+    if (typeof ResizeObserver !== 'undefined' && wrap) {
+      observer = new ResizeObserver(() => resize());
+      observer.observe(wrap);
+    }
+    const onFullscreenChange = () => requestAnimationFrame(resize);
+    document.addEventListener('fullscreenchange', onFullscreenChange);
     const onDblClick = () => fitDisplay(chart, warmupBars, bars.length);
     const el = containerRef.current;
     el.addEventListener('dblclick', onDblClick);
 
+    /**
+     * Wheel pans; Ctrl (or Cmd) + wheel zooms.
+     *
+     * Both library wheel behaviours are off, so this owns the gesture outright
+     * — including `preventDefault`, which the library only calls on the events
+     * it handles. Without it the page would scroll under the chart.
+     *
+     * The trade was chosen deliberately: while the pointer is over the chart the
+     * page can no longer be scrolled with the wheel. That is how charting tools
+     * behave and it is the cost of the gesture doing something useful here.
+     *
+     * `deltaX` is folded in for trackpads, which send horizontal scroll for the
+     * same intent.
+     */
+    const onWheel = (e) => {
+      const ts = chart.timeScale();
+      const range = ts.getVisibleLogicalRange?.();
+      if (!range) return;
+      if (e.cancelable) e.preventDefault();
+      const span = range.to - range.from;
+      if (e.ctrlKey || e.metaKey) {
+        const factor = e.deltaY > 0 ? 1 / WHEEL_ZOOM_STEP : WHEEL_ZOOM_STEP;
+        const mid = (range.from + range.to) / 2;
+        const half = (span / 2) * factor;
+        ts.setVisibleLogicalRange({ from: mid - half, to: mid + half });
+        return;
+      }
+      // in bars, so one notch moves the same share of the window at any zoom
+      const step = (e.deltaY + e.deltaX) * WHEEL_PAN_FRACTION * span / 100;
+      ts.setVisibleLogicalRange({ from: range.from + step, to: range.to + step });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+
     setChartEpoch((e) => e + 1);
     return () => {
       window.removeEventListener('resize', resize);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      observer?.disconnect();
+      el.removeEventListener('wheel', onWheel);
       el.removeEventListener('dblclick', onDblClick);
       chart.remove();
       chartRef.current = null;
@@ -413,10 +571,16 @@ export default function PriceChart({
     const primitive = primitiveRef.current;
     if (!el || !chart || !primitive || !ticker) return undefined;
 
-    const interactive = tool !== 'cursor';
+    // Spelled out per sub-option rather than as a bare boolean. `handleScale:
+    // true` sets *every* member including `mouseWheel`, which would re-enable
+    // the library's own wheel-to-zoom and silently undo the pan gesture — the
+    // first time the reader picked a tool and put it back.
+    const armed = tool !== 'cursor';
     chart.applyOptions({
-      handleScroll: !interactive,
-      handleScale: !interactive,
+      handleScroll: { mouseWheel: false, pressedMouseMove: !armed,
+                      horzTouchDrag: !armed, vertTouchDrag: !armed },
+      handleScale: { mouseWheel: false, pinch: !armed,
+                     axisPressedMouseMove: !armed, axisDoubleClickReset: !armed },
     });
 
     let drag = null; // {id, handle}
@@ -427,24 +591,36 @@ export default function PriceChart({
     };
 
     const persistMove = (d) => {
+      // `d` comes from `storedRef`, which holds the API's own shape, so the
+      // times need no conversion here. They did while state was kept in chart
+      // space, and `fromChartTime` passed date strings through unchanged — which
+      // is how a daily-chart drag sent a string to an integer column.
       patch(`/stock/${ticker}/drawings/${d.id}`, {
-        t1: d.t1 == null ? null : fromChartTime(d.t1),
-        p1: d.p1,
-        t2: d.t2 == null ? null : fromChartTime(d.t2),
-        p2: d.p2,
+        t1: d.t1, p1: d.p1, t2: d.t2, p2: d.p2,
       }).catch(() => {}); // a failed save must not break the gesture
+    };
+
+    // Every placed or dragged point goes through here, so the crosshair and the
+    // line it is used to draw agree about where a bar is.
+    const at = (x, y) => {
+      const raw = primitive.toDataPoint(x, y);
+      return magnet ? snapToBar(bars, raw.time, raw.price) : raw;
     };
 
     const onDown = (e) => {
       const { x, y } = localPoint(e);
-      const { time, price } = primitive.toDataPoint(x, y);
+      const { time, price } = at(x, y);
 
       if (tool === 'cursor') {
         const hit = primitive.hitTest(x, y);
         setSelectedId(hit?.id ?? null);
         if (hit) {
           drag = hit;
-          chart.applyOptions({ handleScroll: false, handleScale: false });
+          setDragging(true);
+          chart.applyOptions({
+            handleScroll: { mouseWheel: false, pressedMouseMove: false },
+            handleScale: { mouseWheel: false, pinch: false },
+          });
           e.preventDefault();
         }
         primitive.update();
@@ -467,28 +643,64 @@ export default function PriceChart({
         }
         const body = {
           kind: 'trendline',
-          t1: fromChartTime(pending.t1), p1: pending.p1,
-          t2: fromChartTime(time), p2: price,
+          t1: drawingEpoch(pending.t1), p1: pending.p1,
+          t2: drawingEpoch(time), p2: price,
         };
+        // Refused rather than posted when either end will not resolve to an
+        // epoch. The API answers 422 for that and the catch below is silent, so
+        // without this the line would simply never appear and say nothing.
+        if (body.t1 == null || body.t2 == null) return;
         post(`/stock/${ticker}/drawings`, body)
-          .then(({ id }) => setDrawings((cur) => [...cur,
-            { id, kind: 'trendline', t1: pending.t1, p1: pending.p1, t2: time, p2: price }]))
+          .then(({ id }) => setDrawings((cur) => [...cur, { id, ...body }]))
           .catch(() => {});
         setPending(null);
+        setPreview(null);
         setTool('cursor');
       }
     };
 
     const onMove = (e) => {
-      if (!drag) return;
       const { x, y } = localPoint(e);
-      const { time, price } = primitive.toDataPoint(x, y);
+
+      if (!drag) {
+        // Two things that only need the pointer's position: what the cursor
+        // should look like, and where the half-placed trendline currently ends.
+        if (tool === 'cursor') {
+          setHovering(primitive.hitTest(x, y) != null);
+        } else if (pending) {
+          const p = at(x, y);
+          setPreview(p.time == null || p.price == null
+            ? null
+            : { t1: pending.t1, p1: pending.p1, t2: p.time, p2: p.price });
+        }
+        return;
+      }
+
+      const { time, price } = at(x, y);
       if (price == null) return;
+      // Captured before the updater, and that is the whole point.
+      //
+      // `drag` is a mutable closure variable that `onUp` sets to null, and React
+      // runs a functional update during the *render* phase rather than when it
+      // is queued. Release the pointer quickly enough after a move and the order
+      // becomes: move queues the update -> up nulls `drag` -> React runs the
+      // updater -> `drag.id` throws **during render**, which the error boundary
+      // catches as "This panel failed to render". Intermittent by nature: it
+      // needs the release to beat the render, which is exactly what the end of a
+      // fast drag looks like.
+      //
+      // Reading a mutable variable inside an updater makes the update impure —
+      // it depends on when React chooses to run it. Closing over the value
+      // instead makes the queued update mean what it meant when it was queued.
+      const target = drag;
+      // stored form: chart time converted on the way in, exactly as a freshly
+      // placed point is
+      const epoch = drawingEpoch(time);
       setDrawings((cur) => cur.map((d) => {
-        if (d.id !== drag.id) return d;
+        if (d.id !== target.id) return d;
         if (d.kind === 'hline') return { ...d, p1: price };
-        if (drag.handle === 0) return { ...d, t1: time ?? d.t1, p1: price };
-        if (drag.handle === 1) return { ...d, t2: time ?? d.t2, p2: price };
+        if (target.handle === 0) return { ...d, t1: epoch ?? d.t1, p1: price };
+        if (target.handle === 1) return { ...d, t2: epoch ?? d.t2, p2: price };
         return d;
       }));
       primitive.update();
@@ -496,25 +708,72 @@ export default function PriceChart({
 
     const onUp = () => {
       if (drag) {
-        const moved = drawingsRef.current.find((d) => d.id === drag.id);
+        const moved = storedRef.current.find((d) => d.id === drag.id);
         if (moved) persistMove(moved);
         drag = null;
-        chart.applyOptions({ handleScroll: true, handleScale: true });
+        setDragging(false);
+        // Restored as objects, not `true`: `handleScale: true` would re-enable
+        // `mouseWheel` and hand the wheel back to the library's zoom, quietly
+        // undoing the pan gesture the first time anyone dragged a line.
+        chart.applyOptions({
+          handleScroll: { mouseWheel: false, pressedMouseMove: true },
+          handleScale: { mouseWheel: false, pinch: true },
+        });
+      }
+    };
+
+    // Esc abandons a half-drawn trendline and clears a selection. Without it the
+    // only way out of a pending line was to switch tool, which is not where
+    // anyone looks for "cancel".
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setPending(null);
+        setPreview(null);
+        setSelectedId(null);
+        setTool('cursor');
       }
     };
 
     el.addEventListener('pointerdown', onDown);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('keydown', onKey);
     return () => {
       el.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('keydown', onKey);
     };
-  }, [tool, pending, ticker, chartEpoch]);
+  }, [tool, pending, ticker, chartEpoch, magnet, bars]);
 
-  // repaint whenever the drawing set or the selection changes
-  useEffect(() => { primitiveRef.current?.update(); }, [drawings, selectedId]);
+  // repaint whenever the drawing set, the selection or the preview changes
+  useEffect(() => { primitiveRef.current?.update(); }, [drawings, selectedId, preview]);
+
+  // Applied rather than rebuilt: recreating the chart to change one option
+  // would throw away the pan and zoom the reader had set up.
+  useEffect(() => {
+    chartRef.current?.applyOptions({ crosshair: { mode: magnet ? 1 : 0 } });
+  }, [magnet, chartEpoch]);
+
+  // ── fullscreen ────────────────────────────────────────────────────
+  // `fullscreenchange` is the source of truth, not the button: Esc, the browser
+  // menu and F11 all leave without going through it, and a flag set on click
+  // would then disagree with the screen.
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === panelRef.current);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+      return;
+    }
+    // Rejects when the gesture is not trusted or the browser refuses; nothing to
+    // recover, and throwing here would take the toolbar down with it.
+    panelRef.current?.requestFullscreen?.().catch(() => {});
+  };
 
   function deleteSelected() {
     if (selectedId == null) return;
@@ -543,8 +802,14 @@ export default function PriceChart({
 
   const totalShown = visibleGroups.reduce((n, g) => n + g.items.length, 0);
 
+  // What the pointer says it will do if you press now. Ordered by precedence:
+  // a live drag beats a hover, and an armed tool beats both.
+  const cursorMode = dragging ? 'grabbing'
+    : tool !== 'cursor' ? 'draw'
+      : hovering ? 'grab' : 'default';
+
   return (
-    <div>
+    <div className="chart-panel" ref={panelRef}>
       <div className="chart-toolbar">
         <span className="seg-group">
           {CHART_TYPES.map(([key, label]) => (
@@ -607,6 +872,24 @@ export default function PriceChart({
             Reset
           </button>
         </span>
+        <span className="seg-group">
+          <button
+            className={`seg ${magnet ? 'active' : ''}`}
+            title={magnet
+              ? 'Magnet on: the crosshair sticks to open/high/low/close, and a line you draw lands on one. Click to read prices at any point instead.'
+              : 'Magnet off: the crosshair and new lines follow the pointer exactly.'}
+            onClick={() => setMagnet((m) => !m)}
+          >
+            Magnet
+          </button>
+          <button
+            className={`seg ${fullscreen ? 'active' : ''}`}
+            title={fullscreen ? 'Leave full screen (Esc)' : 'Full screen'}
+            onClick={toggleFullscreen}
+          >
+            {fullscreen ? 'Exit' : 'Full screen'}
+          </button>
+        </span>
         {show.ma && (
           <span className="ma-legend">
             {MA_CONFIG.map(([p, color]) => (
@@ -656,7 +939,7 @@ export default function PriceChart({
               key={key}
               className={`seg ${tool === key ? 'active' : ''}`}
               title={hint}
-              onClick={() => { setTool(key); setPending(null); }}
+              onClick={() => { setTool(key); setPending(null); setPreview(null); }}
             >
               {label}
             </button>
@@ -705,7 +988,18 @@ export default function PriceChart({
 
       <div className="chart-wrap">
         {hoverBar && (
-          <div className="chart-legend">
+          <div
+            className="chart-legend chart-legend-follow"
+            /* Follows the pointer, offset up-left of it so the readout is not
+               under the hand. Flips to the other side within 300px of the right
+               edge and below the cursor near the top, so it never leaves the
+               pane — the reason both offsets are computed rather than fixed. */
+            style={hoverAt ? {
+              left: Math.max(4, Math.min(hoverAt.x + 14,
+                (containerRef.current?.clientWidth ?? 600) - 300)),
+              top: Math.max(4, hoverAt.y - 30),
+            } : undefined}
+          >
             {hoverBar.date}
             {hoverBar.open !== undefined ? (
               <>
@@ -718,7 +1012,7 @@ export default function PriceChart({
             {' '}V {fmtVol(hoverBar.volume)}
           </div>
         )}
-        <div ref={containerRef} />
+        <div ref={containerRef} className={`chart-canvas cursor-${cursorMode}`} />
 
         {hoverEvents && !pinned && (
           <div

@@ -7,6 +7,125 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-20 (b) — the tracker gets full screen, a cursor, and working lines
+
+Frontend **101 → 137**. Three requested changes, and **four bugs — two of them mine and shipped
+the same day, one that had never worked, and one reported from use that is fixed but unproven.**
+
+### Requested
+
+- **Full screen** on the whole panel, toolbars included, via `requestFullscreen`. Esc exits.
+- **Cursor**: shape feedback (`crosshair` armed, `grab` over a line, `grabbing` while dragging),
+  a **Magnet** toggle, the OHLC readout following the crosshair instead of sitting in a corner,
+  and the wheel **panning** with ctrl+wheel to zoom.
+- **Drawing**: a live rubber-band preview while placing a trendline, endpoints snapping to real
+  open/high/low/close values, a wider stroke with a dark halo for readability over candles, and
+  Esc to abandon a half-drawn line.
+
+The wheel change has no library support: lightweight-charts maps a **vertical** wheel to zoom
+only (`deltaY` → `zoomTime`, gated on `handleScale.mouseWheel`) and pans on `deltaX` alone. Both
+options are off and the gesture is handled directly, `preventDefault` included — the library only
+cancels events it handles, so without it the page scrolled under the chart.
+
+### Bug 1 — the drawing tools did nothing at all *(mine, shipped)*
+
+`snapToBar` was used and **never imported**. `onDown` resolves the click to a data point *before*
+it branches on the tool, so every `pointerdown` threw `ReferenceError` and died: no line could be
+placed and no existing line could be selected. The chart simply looked inert.
+
+Nothing caught it. oxlint does not run `no-undef`, a bundler does not resolve free variables, and
+**every test in `PriceChart.test.jsx` drove buttons and the primitive seam — not one performed the
+gesture.** Three tests now do, and removing the import fails them.
+
+### Bug 2 — the chart kept its fullscreen proportions on the way out *(mine, shipped)*
+
+The resize ran on `fullscreenchange`, which fires while the browser is still reflowing back to the
+page, so `clientWidth` was still the fullscreen width. Clicking MA appeared to fix it because that
+recreates the chart. Deferring a frame was the first attempt and is the same guess with a longer
+fuse.
+
+A **ResizeObserver on the container's parent** has no timing to get wrong — it reports the box
+after layout, whatever caused it. It cannot feed back on itself either: windowed, the height is a
+constant, and fullscreen `.chart-wrap` is `flex: 1` and takes its height from the panel. Verified
+in Chrome — shrinking the wrap to 600px moved the canvas 786 → 534 and back.
+
+The fullscreen styles moved to the `:fullscreen` pseudo-class for the same reason: a React class
+lands a render later than the event that measures it.
+
+### Bug 3 — trendlines have never been saveable on a daily chart *(pre-existing)*
+
+Found while verifying bug 1, and it predates all of this work. `coordinateToTime` returns a **date
+string** on any daily-or-coarser range — `6mo` through `max`, the most-used ones — `fromChartTime`
+passes strings through by design, and the API declares `t1`/`t2` as integers. Reproduced against
+the running backend:
+
+```
+POST {"kind":"trendline","t1":"2025-12-15",...}  ->  422 int_parsing
+```
+
+`post(...).catch(() => {})` swallowed it, so the line never appeared and nothing was said.
+
+Drawings state now holds the **stored** form — integer epochs, exactly what the API returns — and
+converts to chart space at render through the new `drawingEpoch` / `drawingChartTime`. Converting
+at load, as it did, also meant a drawing fetched on the 1-year chart kept daily-shaped times after
+a switch to 5-day and was placed nowhere. A trendline whose endpoints will not resolve is now
+refused instead of posted, because the API's answer to that is a 422 nobody sees.
+
+### A fourth bug, found from a screenshot — and **not** verified like the others
+
+Reported from real use: dragging a trendline sometimes replaced the panel with
+*"This panel failed to render — Cannot read properties of null (reading 'id')"*.
+
+The boundary catches **render** errors, so the throw is in the render phase, and exactly one
+`.id` read in the tracker subtree can be null:
+
+```js
+setDrawings((cur) => cur.map((d) => {
+  if (d.id !== drag.id) return d;      // `drag` read inside the updater
+```
+
+`drag` is a mutable closure variable that `onUp` sets to null, and React runs a functional
+update during render rather than when it is queued. Release the pointer before the render and
+the updater dereferences null — intermittently, which is what the end of a fast drag looks
+like. Reading a mutable variable inside an updater is unsound whatever the timing; the value is
+captured before the update now. **Pre-existing** — `git show HEAD` has the same shape.
+
+**Stated plainly: this one is not proven.** Four attempts failed to reproduce it — batching move
+and release in one `act`, three moves then a release, the *original* code restored, and a
+25-move burst in real Chrome. React computes the first update on an empty queue eagerly and
+flushes between discrete browser events, which is exactly what hides the race. The message
+matches, the unsoundness is real and the fix cannot make anything worse, but it has not been
+demonstrated to be the cause of what was seen.
+
+So the next occurrence is made diagnosable instead: `ErrorBoundary` showed the message and
+logged the stack only to the console. It now carries the stack on screen behind a *"Where it
+threw"* disclosure, because a property name without a line number left this crash with several
+candidate call sites and no way to choose between them.
+
+### Also fixed
+
+The **hit area of a trendline ran the full diagonal of the chart.** `distanceToLine` measured to
+the segment's *infinite* line, justified by a comment claiming the renderer extends past the
+endpoints — it does not, it draws a plain segment. Clicking empty space in line with an old
+trendline selected it. The projection is clamped now, and reverting that fails a test.
+
+`TrackerTab`'s caption still read "scroll to zoom" after the wheel became a pan — caught by
+looking at a screenshot, which no test would have.
+
+`linePriceAt` is exported and called from nowhere. Flagged, not deleted.
+
+### Verified in a real browser, not only in jsdom
+
+Chrome is already installed, so this needed no driver: the app was driven over the DevTools
+Protocol against the real backend. A trendline placed by two synthetic clicks stored
+`t1: 1765756800, t2: 1774483200` — the exact dates clicked — and the snapped price `258.309` is
+one of the 1,168 real OHLC values in the range, which is what the magnet is for. After a **full
+page reload**, clearing the drawings moved the canvas pixel counts by 176 (trendline) and 786
+(horizontal line), so both persist *and* render. The database was backed up first and is back to
+zero rows.
+
+---
+
 ## 2026-08-20 — three guards: the tenor, the outage, and the beta floor
 
 Backend **519 → 532**, live **24 → 25**, frontend 101. Three independent items, ordered by how

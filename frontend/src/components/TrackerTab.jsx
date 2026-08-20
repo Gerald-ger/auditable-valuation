@@ -137,8 +137,11 @@ export default function TrackerTab({ ticker, aiOnline }) {
             {interval.endsWith('m') || interval.endsWith('h')
               ? ' (a US session runs 21:30-04:00 and so spans two dates)'
               : ''}{' '}
-            · scroll to zoom · drag to pan · double-click to fit · hover a dot to preview,
-            click to open its stories
+            {/* Kept in step with the gesture. This said "scroll to zoom" until
+                2026-08-20, when the wheel became a pan — a caption describing
+                the opposite of what the chart does is worse than none. */}
+            · scroll to pan · ctrl+scroll to zoom · drag to pan · double-click to fit
+            · hover a dot to preview, click to open its stories
           </div>
         </div>
 

@@ -25,3 +25,55 @@ export const toChartTime = (t) =>
 /** Chart space -> true epoch, for anything leaving the chart (e.g. drawings). */
 export const fromChartTime = (t) =>
   typeof t === 'number' ? t - DISPLAY_TZ_OFFSET_S : t;
+
+/**
+ * Chart time -> the integer UTC epoch a drawing is **stored** as.
+ *
+ * `fromChartTime` above cannot do this and should not: it passes a date string
+ * through untouched, which is correct for a bar (a daily bar dated 2026-08-06
+ * *is* that session, not a moment) and wrong for a drawing, because the API
+ * declares `t1`/`t2` as integers and `backend/drawings.py` does arithmetic on
+ * them to project a line forward.
+ *
+ * That gap made trendlines impossible to save on every daily-or-coarser range —
+ * `coordinateToTime` returns a date string there, the POST carried it, and the
+ * API answered **422 `int_parsing`**, which `post(...).catch(() => {})` then
+ * swallowed. Confirmed against the running backend on 2026-08-20; the failure
+ * was silent and total, and it predates the drawing work of that day.
+ *
+ * Three inputs, because lightweight-charts uses three representations: a
+ * timestamp for intraday bars (shifted, so the display offset comes back off), a
+ * date string for daily and coarser, and a `{year, month, day}` business day,
+ * which `coordinateToTime` can return even for a string series.
+ */
+export function drawingEpoch(t) {
+  if (t == null) return null;
+  if (typeof t === 'number') return Math.round(t - DISPLAY_TZ_OFFSET_S);
+  if (typeof t === 'string') {
+    const ms = Date.parse(t);
+    return Number.isFinite(ms) ? Math.round(ms / 1000) : null;
+  }
+  if (typeof t === 'object' && t.year != null) {
+    return Math.round(Date.UTC(t.year, (t.month ?? 1) - 1, t.day ?? 1) / 1000);
+  }
+  return null;
+}
+
+/**
+ * A stored epoch -> chart time in the representation **this series** uses.
+ *
+ * The other half of the same problem. A drawing is stored as one number, but a
+ * chart addresses its x-axis in whatever type its bars carry, so handing a
+ * daily series an epoch places the line nowhere — `timeToCoordinate` cannot
+ * match it against date strings. `intraday` is read from the bars themselves
+ * rather than from the interval string, so it follows the data.
+ *
+ * Converting here, at render, rather than once at load is what makes a drawing
+ * survive a change of period: the same stored epoch becomes a timestamp on the
+ * 5-day chart and `2026-08-06` on the yearly one.
+ */
+export function drawingChartTime(epoch, intraday) {
+  if (typeof epoch !== 'number') return epoch ?? null;
+  if (intraday) return epoch + DISPLAY_TZ_OFFSET_S;
+  return new Date(epoch * 1000).toISOString().slice(0, 10);
+}

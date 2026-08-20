@@ -16,7 +16,7 @@ import { Component } from 'react';
 export default class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, stack: null };
   }
 
   static getDerivedStateFromError(error) {
@@ -26,10 +26,17 @@ export default class ErrorBoundary extends Component {
   componentDidCatch(error, info) {
     // keep the stack in the console for the dev who is about to go looking
     console.error('Render failed:', error, info?.componentStack);
+    // ...and on screen, because the console is not where a reader looks. A
+    // message alone names the property that was null and not the line that read
+    // it, which on `Cannot read properties of null (reading 'id')` left an
+    // intermittent drag crash with several candidate call sites and no way to
+    // choose between them. Hidden behind a disclosure so the panel still leads
+    // with the actionable sentence.
+    this.setState({ stack: [error?.stack, info?.componentStack].filter(Boolean).join('\n\n') });
   }
 
   render() {
-    const { error } = this.state;
+    const { error, stack } = this.state;
     if (!error) return this.props.children;
     return (
       <div className="error-boundary">
@@ -40,7 +47,13 @@ export default class ErrorBoundary extends Component {
           does not expect. Restart the backend, then reload.
         </p>
         <pre className="error-boundary-detail">{String(error?.message || error)}</pre>
-        <button className="primary" onClick={() => this.setState({ error: null })}>
+        {stack && (
+          <details className="error-boundary-stack">
+            <summary>Where it threw</summary>
+            <pre>{stack}</pre>
+          </details>
+        )}
+        <button className="primary" onClick={() => this.setState({ error: null, stack: null })}>
           Try again
         </button>
       </div>
