@@ -11,6 +11,7 @@ import { smaSeries, rsiSeries, macdSeries, rollingSdBand, windowSpan } from '../
 import { toChartTime, drawingEpoch, drawingChartTime } from '../charttime';
 import { eventStamp, groupEventsByBar, toDateStr } from '../events';
 import { DrawingsPrimitive, snapToBar } from '../drawingPrimitive';
+import SearchBar from './SearchBar';
 import { get, post, patch, del } from '../api';
 
 // Operates on chart-space time, so the date shown on the axis, the date used to
@@ -109,6 +110,9 @@ const dominantType = (items) =>
 export default function PriceChart({
   bars: rawBars = [], events, filingsSupported = true, interval = '1d', ticker = '',
   warmupBars = 0,
+  // Only used full screen, where the page's own copies of these are unreachable:
+  // the fullscreen element is this panel, and nothing outside it is rendered.
+  loading = false, periods = [], period, onPeriod, saved = [], onTicker,
 }) {
   // Shift once, here, so every downstream consumer — the series, the volume
   // pane, event grouping, the crosshair legend — works in one time space.
@@ -202,8 +206,17 @@ export default function PriceChart({
     get(`/stock/${ticker}/drawings`)
       .then((r) => { if (live) setDrawings(r.drawings ?? []); })
       .catch(() => { if (live) setDrawings([]); });
+    // Cleared up front rather than left to the response. Until 2026-08-20 a
+    // ticker change remounted this component, so all three started empty for
+    // free; now that it survives one, the previous name's lines would stay on
+    // screen — drawn over a different company's prices — until the fetch
+    // returned. `preview` matters for the same reason: the primitive reads it
+    // unconditionally, so a half-drawn line would outlive the stock it was
+    // being drawn on.
+    setDrawings([]);
     setSelectedId(null);
     setPending(null);
+    setPreview(null);
     return () => { live = false; };
   }, [ticker]);
 
@@ -431,10 +444,15 @@ export default function PriceChart({
       setPinned(group ? { x: param.point.x, date: group.date, items: group.items } : null);
     });
 
-    const resize = () => chart.applyOptions({
-      width: containerRef.current.clientWidth,
-      height: chartHeight(),
-    });
+    const resize = () => {
+      // The fullscreen fallback below defers this by a frame, and a queued frame
+      // can outlive the effect that scheduled it: leave full screen, unmount in
+      // the same frame, and this ran against a null ref. Found by the tests
+      // added on 2026-08-20, which enter full screen and then unmount.
+      const el = containerRef.current;
+      if (!el) return;
+      chart.applyOptions({ width: el.clientWidth, height: chartHeight() });
+    };
     resize();
     window.addEventListener('resize', resize);
 
@@ -810,6 +828,28 @@ export default function PriceChart({
 
   return (
     <div className="chart-panel" ref={panelRef}>
+      {/* Which chart you are looking at — the stock and the range — as opposed
+          to how it is drawn, which the toolbars below already cover. Rendered
+          only full screen because both controls exist on the page already, and
+          two live copies of the same picker on one screen is worse than none. */}
+      {fullscreen && (
+        <div className="chart-toolbar fullscreen-bar">
+          {onTicker && <SearchBar value={ticker} saved={saved} onSelect={onTicker} />}
+          {onPeriod && periods.length > 0 && (
+            <span className="period-picker">
+              {periods.map((p) => (
+                <button
+                  key={p}
+                  className={p === period ? 'active' : ''}
+                  onClick={() => onPeriod(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </span>
+          )}
+        </div>
+      )}
       <div className="chart-toolbar">
         <span className="seg-group">
           {CHART_TYPES.map(([key, label]) => (
@@ -987,6 +1027,7 @@ export default function PriceChart({
       </div>
 
       <div className="chart-wrap">
+        {loading && <div className="chart-loading">Loading…</div>}
         {hoverBar && (
           <div
             className="chart-legend chart-legend-follow"

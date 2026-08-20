@@ -85,15 +85,33 @@ const attached = () => series.attachPrimitive.mock.calls[0][0];
 const button = (container, text) =>
   [...container.querySelectorAll('button')].find((b) => b.textContent.trim() === text);
 
-async function mount(drawings = []) {
+async function mount(drawings = [], props = {}) {
   api.get.mockResolvedValue({ drawings });
-  const view = render(<PriceChart bars={bars} events={[]} interval="1d" ticker="AAPL" />);
+  const view = render(
+    <PriceChart bars={bars} events={[]} interval="1d" ticker="AAPL" {...props} />);
   await flush();
   return view;
 }
 
+/**
+ * Put the panel into the state the *browser* reports, not a React flag.
+ *
+ * `PriceChart` derives `fullscreen` from `document.fullscreenElement` on a
+ * `fullscreenchange` event, deliberately: Esc, F11 and the browser menu all
+ * leave full screen without going through the button. jsdom implements neither,
+ * so the property is shadowed and the event dispatched by hand.
+ */
+const enterFullscreen = (container) => {
+  const panel = container.querySelector('.chart-panel');
+  Object.defineProperty(document, 'fullscreenElement', { value: panel, configurable: true });
+  act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // Shared across files through the jsdom `document`, so a test that entered
+  // full screen must not leave every later one believing it is still there.
+  Object.defineProperty(document, 'fullscreenElement', { value: null, configurable: true });
 });
 
 describe('the primitive handoff', () => {
@@ -394,6 +412,103 @@ describe('full screen', () => {
   });
 });
 
+describe('the full-screen control bar', () => {
+  /**
+   * Which chart you are looking at — the stock and the range — as opposed to how
+   * it is drawn. Both controls live on the page, and the page is not rendered
+   * while a panel is full screen: the fullscreen element is the panel, and the
+   * top layer holds nothing else. So going full screen used to mean giving up
+   * the ability to change stock or period until you came back out.
+   */
+  const PROPS = {
+    periods: ['1d', '5d', '1y'], period: '5d', onPeriod: () => {},
+    saved: ['MSFT'], onTicker: () => {},
+  };
+
+  it('keeps both controls off the windowed panel, where the page already has them', async () => {
+    const { container, unmount } = await mount([], PROPS);
+    expect(container.querySelector('.fullscreen-bar')).toBeNull();
+    unmount();
+  });
+
+  it('offers the period picker and the ticker box once full screen', async () => {
+    const { container, unmount } = await mount([], PROPS);
+    enterFullscreen(container);
+
+    const bar = container.querySelector('.fullscreen-bar');
+    expect(bar).not.toBeNull();
+    expect([...bar.querySelectorAll('.period-picker button')].map((b) => b.textContent))
+      .toEqual(['1d', '5d', '1y']);
+    // marked to whatever the caller says is current, not to an internal copy
+    expect(bar.querySelector('.period-picker button.active').textContent).toBe('5d');
+    expect(bar.querySelector('.search-box input').value).toBe('AAPL');
+    unmount();
+  });
+
+  it('reports a period choice upward rather than keeping it', async () => {
+    // The period decides which bars are fetched, which only the caller can do.
+    const onPeriod = vi.fn();
+    const { container, unmount } = await mount([], { ...PROPS, onPeriod });
+    enterFullscreen(container);
+
+    click([...container.querySelectorAll('.fullscreen-bar .period-picker button')]
+      .find((b) => b.textContent === '1y'));
+    expect(onPeriod).toHaveBeenCalledWith('1y');
+    unmount();
+  });
+
+  it('renders neither control when the caller cannot act on it', async () => {
+    // A picker whose choice goes nowhere is worse than no picker: it looks live.
+    const { container, unmount } = await mount([], {});
+    enterFullscreen(container);
+    const bar = container.querySelector('.fullscreen-bar');
+    expect(bar.querySelector('.period-picker')).toBeNull();
+    expect(bar.querySelector('.search-box')).toBeNull();
+    unmount();
+  });
+});
+
+describe('the loading badge', () => {
+  it('marks the chart busy instead of the caller replacing it', async () => {
+    /**
+     * The panel IS the fullscreen element, so swapping it for a "Loading…"
+     * placeholder removes it from the document and the browser leaves full
+     * screen — measured in Chrome on 2026-08-20: one click on a period button
+     * and `.chart-panel` was gone from the DOM. The previous chart stays up and
+     * this badge says a newer one is coming.
+     */
+    const { container, unmount } = await mount([], { loading: true });
+    expect(container.querySelector('.chart-loading')).not.toBeNull();
+    // and the chart is still there underneath, which is the whole point
+    expect(container.querySelector('.chart-canvas')).not.toBeNull();
+    unmount();
+  });
+
+  it('shows nothing when idle', async () => {
+    const { container, unmount } = await mount();
+    expect(container.querySelector('.chart-loading')).toBeNull();
+    unmount();
+  });
+});
+
+describe('changing ticker without remounting', () => {
+  it('drops the previous name\'s drawings rather than showing them on the new chart', async () => {
+    /**
+     * `App` stopped keying this subtree on the ticker on 2026-08-20, because the
+     * remount destroyed the fullscreen element and dropped the browser out of
+     * full screen. The remount was also what cleared this state for free: without
+     * it, AAPL's lines stayed drawn over MSFT's prices until the fetch returned.
+     */
+    const { rerender, unmount } = await mount([HLINE]);
+    expect(attached()._getDrawings()).toHaveLength(1);
+
+    api.get.mockReturnValue(new Promise(() => {})); // in flight, never resolves
+    rerender(<PriceChart bars={bars} events={[]} interval="1d" ticker="MSFT" />);
+    expect(attached()._getDrawings()).toHaveLength(0);
+    unmount();
+  });
+});
+
 describe('resizing', () => {
   it('watches the box rather than the fullscreen event', async () => {
     /**
@@ -419,6 +534,30 @@ describe('resizing', () => {
     expect(observe.mock.calls[0][0]).toBe(container.querySelector('.chart-wrap'));
     unmount();
     delete globalThis.ResizeObserver;
+  });
+
+  it('does not measure a container that has gone', async () => {
+    /**
+     * The fullscreen fallback defers the resize by a frame, and a queued frame
+     * outlives the effect that queued it: leave full screen and unmount in the
+     * same frame and it ran against a null ref.
+     *
+     * Driven by taking the frames rather than waiting for them. The throw would
+     * happen inside a `requestAnimationFrame` callback, i.e. unhandled — vitest
+     * reports that separately from a failure, so a test that merely waited would
+     * stay green while the crash happened. Calling the callback here puts it
+     * back inside an assertion.
+     */
+    const frames = [];
+    const raf = vi.spyOn(globalThis, 'requestAnimationFrame')
+      .mockImplementation((cb) => { frames.push(cb); return 1; });
+    const { container, unmount } = await mount();
+
+    enterFullscreen(container); // queues the deferred resize
+    unmount();                  // and takes the container with it
+    expect(frames.length).toBeGreaterThan(0);
+    expect(() => frames.forEach((f) => f(0))).not.toThrow();
+    raf.mockRestore();
   });
 
   it('sets height as well as width, or fullscreen could never change it', async () => {

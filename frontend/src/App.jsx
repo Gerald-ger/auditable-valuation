@@ -94,12 +94,28 @@ export default function App() {
             {' '}— then reload this page.
           </div>
         )}
-        {/* keyed on tab+ticker so navigating away from a failed render resets it
-            rather than leaving the boundary stuck on a stale error */}
-        <ErrorBoundary key={`${tab}:${ticker}`}>
-          {tab === 'tracker' && <TrackerTab ticker={ticker} aiOnline={aiOnline} />}
-          {tab === 'models' && <ModelsTab ticker={ticker} />}
-          {tab === 'scorecard' && <ScorecardTab ticker={ticker} aiOnline={aiOnline} />}
+        {/* `resetKey`, not `key`: navigating away from a failed render still
+            clears the boundary, but a healthy subtree is left standing. As a
+            `key` this rebuilt everything on every ticker change, which took the
+            tracker's chart panel down with it — and that panel is the fullscreen
+            element, so changing stock always dropped you out of full screen.
+
+            Models and Scorecard keep the remount as their own `key`, because
+            they hold per-ticker working state — DCF overrides, a peer list, a
+            generated narrative — that a plain prop change does not reset. The
+            tracker refetches everything it shows from `[ticker, period]`, so it
+            has nothing to clear. */}
+        <ErrorBoundary resetKey={`${tab}:${ticker}`}>
+          {tab === 'tracker' && (
+            <TrackerTab
+              ticker={ticker}
+              aiOnline={aiOnline}
+              saved={saved}
+              onTicker={setTicker}
+            />
+          )}
+          {tab === 'models' && <ModelsTab key={ticker} ticker={ticker} />}
+          {tab === 'scorecard' && <ScorecardTab key={ticker} ticker={ticker} aiOnline={aiOnline} />}
           {tab === 'screener' && <ScreenerTab onPick={openScorecard} />}
           {tab === 'portfolio' && <PortfolioTab onPick={openScorecard} />}
         </ErrorBoundary>

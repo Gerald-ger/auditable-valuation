@@ -16,11 +16,37 @@ import { Component } from 'react';
 export default class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null, stack: null };
+    // `resetKey` is mirrored into state because that is the only way to compare
+    // it against the previous render from a static method.
+    this.state = { error: null, stack: null, resetKey: props.resetKey };
   }
 
   static getDerivedStateFromError(error) {
     return { error };
+  }
+
+  /**
+   * Clear a stale error when the caller moves to a different tab or ticker.
+   *
+   * This used to be a `key` on the element, which did the same job by throwing
+   * the whole subtree away and building a new one. That is more than it needs
+   * to do: it also destroyed the tracker's chart on every ticker change, and
+   * since the chart panel *is* the fullscreen element, destroying it dropped
+   * the browser out of full screen — so switching stock full screen was
+   * impossible by construction. Resetting here leaves a healthy subtree alone.
+   *
+   * Nothing is lost in the error case: React has already unmounted the children
+   * that threw, so clearing the flag mounts them fresh either way.
+   *
+   * Derived here rather than set from `componentDidUpdate`, which was the first
+   * version: that clears the error one render *after* the key changed, so the
+   * new ticker gets a frame of the old ticker's error panel before recovering.
+   * This is also the pattern React documents for resetting state on a prop
+   * change, and the one the linter does not warn about.
+   */
+  static getDerivedStateFromProps(props, state) {
+    if (props.resetKey === state.resetKey) return null;
+    return { error: null, stack: null, resetKey: props.resetKey };
   }
 
   componentDidCatch(error, info) {

@@ -7,7 +7,7 @@ import ChatBox from './ChatBox';
 
 const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
 
-export default function TrackerTab({ ticker, aiOnline }) {
+export default function TrackerTab({ ticker, aiOnline, saved = [], onTicker }) {
   const [quote, setQuote] = useState(null);
   const [bars, setBars] = useState([]);
   // interval is chosen by the backend per period (1m for 1d, 1d for 1y, ...).
@@ -117,7 +117,13 @@ export default function TrackerTab({ ticker, aiOnline }) {
               ))}
             </span>
           </div>
-          {loading ? (
+          {/* Swapped for the placeholder only when there is nothing to show yet.
+              A reload with bars already on screen keeps the chart mounted and
+              marks it busy instead — the panel is the fullscreen element, so
+              unmounting it removes it from the document and the browser leaves
+              full screen. Measured 2026-08-20: one click on a period button
+              while full screen and `.chart-panel` was gone from the DOM. */}
+          {loading && !bars.length ? (
             <div className="empty-state loading">Loading…</div>
           ) : (
             <PriceChart
@@ -127,6 +133,12 @@ export default function TrackerTab({ ticker, aiOnline }) {
               interval={interval}
               ticker={ticker}
               warmupBars={warmupBars}
+              loading={loading}
+              periods={PERIODS}
+              period={period}
+              onPeriod={setPeriod}
+              saved={saved}
+              onTicker={onTicker}
             />
           )}
           <div className="chart-note">

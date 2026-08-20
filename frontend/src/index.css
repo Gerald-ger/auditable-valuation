@@ -487,6 +487,59 @@ nav button.active {
 
 .chart-wrap {
   position: relative;
+  /* Stops the chart from reporting its own width upward, which is what made
+     leaving full screen leave the page stretched.
+
+     `.tracker-main` is a grid item, and a grid item's automatic minimum size is
+     its content's, so an oversized chart widened the column it lives in. On the
+     way out of full screen that closed a loop: the chart was still 1412px, the
+     column stretched to 1412px to hold it, `PriceChart`'s resize measured the
+     column, got 1412 back and set the chart to 1412. Measured 2026-08-20 —
+     `.chart-panel` 829 -> 1440 full screen -> stuck at 1412 with a horizontal
+     scrollbar and the chat column pushed off the page. It could never shrink,
+     because the only thing holding it open was itself; clicking MA appeared to
+     fix it because that destroys the chart, and an empty container measures
+     honestly.
+
+     No JS timing could have fixed that, which is why the ResizeObserver did
+     not: it fires correctly, it was just being told the wrong number.
+
+     Inline-size containment makes this box's width computed as if it had no
+     contents. It is on `.chart-wrap` rather than `min-width: 0` on the grid item
+     so that the guarantee travels with the component that depends on it, and so
+     that a wide table added elsewhere in the column still sizes normally. */
+  contain: inline-size;
+}
+
+/* Shown only in full screen, where the page's own ticker box and period picker
+   are unreachable — the fullscreen element is the panel, and the top layer
+   renders nothing outside it. Without this row, going full screen meant giving
+   up the two controls that choose *which* chart you are looking at.
+   `align-items: flex-start` because the search box is two rows tall once it has
+   recents chips under it, and centring it would drag the period buttons down. */
+.chart-panel:fullscreen .fullscreen-bar {
+  align-items: flex-start;
+}
+
+/* Progress without unmounting. The panel IS the fullscreen element, so swapping
+   it for a "Loading…" placeholder removed it from the document and the browser
+   dropped out of full screen — measured 2026-08-20: one click on a period
+   button and the chart-panel was gone from the DOM. The previous chart stays on
+   screen underneath, undimmed, because a stale chart still reads correctly and
+   a blank one reads as broken. */
+.chart-loading {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(13, 17, 23, 0.88);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 3px 12px;
+  pointer-events: none;
 }
 
 /* Full screen.
@@ -498,12 +551,12 @@ nav button.active {
    it.
 
    Keyed on `:fullscreen` rather than on a React class, and that is a
-   correctness point rather than a preference. `fullscreenchange` fires and the
-   chart is resized synchronously from it, while a class driven by React state
-   only lands on a later render — so the resize would measure the *old* layout
-   and the chart would keep its windowed height until something else moved. The
-   pseudo-class is applied by the browser before the event, so the measurement
-   is right the first time. */
+   correctness point rather than a preference. The browser applies the
+   pseudo-class as part of the same layout that resizes the box, so the
+   ResizeObserver's first callback already sees these rules. A class driven by
+   React state lands a render later, so that callback would measure the
+   windowed layout and the chart would stay at its old size until something
+   else moved. */
 .chart-panel:fullscreen {
   display: flex;
   flex-direction: column;

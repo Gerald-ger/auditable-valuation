@@ -7,6 +7,89 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-20 (c) — the ratio bug was never the height, and full screen can now change chart
+
+Frontend **137 → 153**, backend 532 unchanged. Reported: leaving full screen still wrecked the
+layout, and full screen offered no way to choose a different chart.
+
+### The ratio bug — **(b) fixed half of it and said it had fixed all of it**
+
+The entry above claims the fullscreen-exit problem solved. It solved the **height**. The **width**
+was still wrong, and the ResizeObserver could never have fixed it, because the fault was not in
+the JS at all.
+
+Measured in Chrome, AAPL 1y, three states:
+
+| | `.tracker-main` | `.chart-panel` | chart width | h-scroll |
+|---|---|---|---|---|
+| windowed | 863 | 829 | 828px | no |
+| full screen | 886 | 1440 | 1412px | no |
+| **after exit** | **1446** | **1412** | **1412px** | **yes** |
+
+`.tracker-main` is a grid item in `grid-template-columns: 1fr 340px`, and a grid item's automatic
+minimum size is its **content's**. So the oversized chart held its own column open: the chart was
+1412px, the column stretched to 1412px to contain it, `resize()` measured the column, got 1412
+back, and set the chart to 1412. A latch — the only thing keeping it wide was itself. The chat
+column was pushed off the page and a horizontal scrollbar appeared, which is the "ratio" that
+looked wrong. Clicking MA appeared to fix it because that destroys the chart, and an empty
+container measures honestly.
+
+Proved by injecting `min-width: 0` into the live page with no code change: every number snapped
+back to the windowed values within 400ms, the ResizeObserver doing exactly what it was written to
+do once it was told the truth.
+
+Fixed with **`contain: inline-size` on `.chart-wrap`** — the box's width is then computed as if it
+had no contents, so the chart can no longer report its own width upward. On the wrap rather than
+`min-width: 0` on the grid item so the guarantee travels with the component that depends on it,
+and so a wide table added elsewhere in that column still sizes normally. Both were measured and
+both work; this one is local to the thing that was lying.
+
+### Choosing a chart from full screen
+
+The fullscreen element is the chart panel, so nothing outside it renders — which left the ticker
+box and the period picker unreachable. Both now appear as a bar at the top of the panel **only
+while full screen**, since the page already has them otherwise and two live copies of one picker
+is worse than none.
+
+Two things had to stop unmounting the panel first, because the Fullscreen API ends full screen the
+moment its element leaves the document — measured both times:
+
+- **TrackerTab swapped the chart for a "Loading…" placeholder on every reload.** One click on a
+  period button and `.chart-panel` was gone from the DOM. The placeholder is now used only when
+  there is nothing to draw yet; a reload keeps the chart up and marks it busy with a badge.
+- **`App` keyed the ErrorBoundary on `` `${tab}:${ticker}` ``,** so changing stock rebuilt the whole
+  subtree. That key is now a `resetKey` prop and the boundary clears its own error from
+  `getDerivedStateFromProps`, which does the job the key was there for without destroying a
+  healthy subtree. Models and Scorecard keep the remount as their own `key`: they hold per-ticker
+  working state — DCF overrides, a peer list, a generated narrative — that a prop change does not
+  reset. The tracker refetches everything it shows, so it has nothing to clear.
+
+That remount was also clearing the drawing state for free. Without it, the previous name's lines
+stayed drawn over the new company's prices until the fetch returned, so the ticker effect now
+clears `drawings`, `selectedId`, `pending` and `preview` up front.
+
+### A crash the new tests found
+
+`resize()` dereferenced `containerRef.current` unguarded, and the fullscreen fallback defers it by
+a frame — leave full screen and unmount in the same frame and it ran against a null ref. Its test
+takes the queued frames and calls them inside an assertion rather than waiting for them: the throw
+would otherwise land in a `requestAnimationFrame` callback, which vitest reports as an unhandled
+error and **not** as a failure, so a test that waited would have stayed green through the crash.
+
+### Verified
+
+End-to-end in Chrome over CDP, against the running app: full screen 828 → 1412 → **828** with no
+horizontal scrollbar; a period change full screen stays full screen, shows the badge and switches
+to 5-minute bars; a ticker change full screen stays full screen and moves AAPL → MSFT, its drawing
+count going 7 → 0 as the new name's lines replace the old ones. Zero page errors throughout.
+
+**Mutation tested**: nine guards broken one at a time, nine caught. The first attempt at this
+scored eight-of-nine and was itself broken — a relative backup path plus a `cd` meant every
+restore silently failed and the mutations stacked, so the counts were measured against a tree that
+already had three other guards removed. Rerun with absolute paths.
+
+---
+
 ## 2026-08-20 (b) — the tracker gets full screen, a cursor, and working lines
 
 Frontend **101 → 137**. Three requested changes, and **four bugs — two of them mine and shipped
@@ -51,6 +134,11 @@ in Chrome — shrinking the wrap to 600px moved the canvas 786 → 534 and back.
 
 The fullscreen styles moved to the `:fullscreen` pseudo-class for the same reason: a React class
 lands a render later than the event that measures it.
+
+> **Correction (2026-08-20 (c)).** This fixed the height and left the width broken, and the
+> heading above claims otherwise. The width had a second cause in the CSS — a grid item's
+> automatic minimum size, which let the chart hold its own column open — that no amount of JS
+> timing could have addressed. See the entry above.
 
 ### Bug 3 — trendlines have never been saveable on a daily chart *(pre-existing)*
 

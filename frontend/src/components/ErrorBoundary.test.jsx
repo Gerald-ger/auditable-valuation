@@ -10,6 +10,7 @@
  * reports it, because the thing that would have reported it is the thing that
  * broke.
  */
+import { useEffect } from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import ErrorBoundary from './ErrorBoundary';
 import { render, click } from '../test-utils';
@@ -86,6 +87,54 @@ describe('when a child throws during render', () => {
     );
     expect(consoleError).toHaveBeenCalledWith(
       'Render failed:', expect.any(Error), expect.anything());
+    unmount();
+  });
+});
+
+describe('resetKey', () => {
+  /**
+   * This was a `key` on the element until 2026-08-20, which cleared a stale
+   * error by rebuilding the whole subtree. That worked, and did more: it
+   * destroyed the tracker's chart on every ticker change. The chart panel is
+   * the element handed to `requestFullscreen`, and the Fullscreen API ends full
+   * screen when its element leaves the document — so changing stock full screen
+   * was impossible by construction, not by oversight.
+   */
+  it('clears a caught error when the caller moves to a different tab or ticker', () => {
+    const { container, rerender, unmount } = render(
+      <ErrorBoundary resetKey="tracker:AAPL"><Boom message="bars is undefined" /></ErrorBoundary>,
+    );
+    expect(container.querySelector('.error-boundary')).not.toBeNull();
+
+    rerender(<ErrorBoundary resetKey="tracker:MSFT"><Healthy /></ErrorBoundary>);
+    expect(container.querySelector('.healthy')).not.toBeNull();
+    expect(container.querySelector('.error-boundary')).toBeNull();
+    unmount();
+  });
+
+  it('holds the fallback when the key has not moved', () => {
+    // Otherwise every parent re-render would clear an error nobody had acted on.
+    const { container, rerender, unmount } = render(
+      <ErrorBoundary resetKey="tracker:AAPL"><Boom message="bars is undefined" /></ErrorBoundary>,
+    );
+    rerender(<ErrorBoundary resetKey="tracker:AAPL"><Healthy /></ErrorBoundary>);
+    expect(container.querySelector('.error-boundary')).not.toBeNull();
+    unmount();
+  });
+
+  it('leaves a healthy subtree standing, which is the whole reason it is not a key', () => {
+    let mounts = 0;
+    const Counted = () => {
+      useEffect(() => { mounts += 1; }, []);
+      return <p className="healthy">rendered fine</p>;
+    };
+    const { rerender, unmount } = render(
+      <ErrorBoundary resetKey="tracker:AAPL"><Counted /></ErrorBoundary>,
+    );
+    expect(mounts).toBe(1);
+
+    rerender(<ErrorBoundary resetKey="tracker:MSFT"><Counted /></ErrorBoundary>);
+    expect(mounts).toBe(1); // a `key` here would read 2, and the chart would be gone
     unmount();
   });
 });
