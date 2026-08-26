@@ -372,6 +372,201 @@ def _cgb_fetch() -> tuple[str, float] | None:
         return None
 
 
+# The last good HKGB reading, kept between runs. Beside the CGB store above and
+# for the same reason — a cache of someone else's data, not the user's.
+HKGB_STORE_PATH = Path(__file__).resolve().parent / "data" / "hkgb_10y.json"
+
+# The HKSAR Government's own daily closing reference pricings for its bonds.
+#
+# **Not HKMA, and that is a finding rather than a preference.** HKMA's
+# `monthly-statistical-bulletin/gov-bond/instit-bond-price-yield-daily` answers
+# `success: true` and returns every yield field null at every date sampled on
+# 2026-08-26 — alive and empty, so retrying it can never help. Its Exchange Fund
+# Bills & Notes series stops at two years in any case: issuance at three years
+# and above ceased in 2015. TODOLIST recorded this gap as "HKMA unreachable",
+# which was wrong twice over — the host answers in 2.6 s, and the series that
+# does carry a ten-year is published somewhere else entirely.
+#
+# Fetched at runtime and never vendored, which is the same licensing choice made
+# for ChinaBond next door: the workbook's own notice asks users to quote the
+# Government as owner of the pricings and of the intellectual property in them,
+# so committing the file into a public repository is the act that notice
+# addresses and calling the endpoint is not.
+HKGB_URL = ("https://www.hkgb.gov.hk/en/others/documents/"
+            "HKD_DailyClosingReferencePricings_IBPandGSBP.xls")
+# The workbook is a grid rather than a table: tenor labels on one row, a
+# Price/Yield band beneath them, dates down column 0. All three are matched by
+# their own text and never by position — the same discipline `CGB_TENOR`
+# follows, for the same reason. The sheet carries 1, 3, 5, 7, 10, 15 and 20-year
+# columns, so an off-by-one lands on a real tenor with a plausible yield and
+# nothing fails; requiring the neighbouring cell to actually say "Yield" is what
+# makes the wrong column unrepresentable instead of merely unlikely.
+HKGB_TENOR = "10-year"
+HKGB_TENOR_HEADING = "Tenor"
+HKGB_YIELD_HEADING = "Yield"
+# The same bound the CGB store uses and for the same reason, kept as its own
+# constant rather than shared: the two feeds publish on different calendars, and
+# a measurement that moves one should not silently move the other.
+HKGB_MAX_STALE_DAYS = 14
+# Measured 2026-08-26 over six sequential fetches of the 80 KB workbook: 1.98 s
+# cold including DNS and TLS, then 0.29-0.35 s warm. 8 s is ~4x the worst
+# observation, and affordable for the same reason CGB's ceiling is — a failure
+# is never cached, so a miss costs one request and the next one retries.
+HKGB_TIMEOUT_S = 8
+_HKGB_CACHE: tuple[str, float, bool] | None = None  # (date, rate, was it live?)
+
+
+def _hkgb_stored() -> tuple[str, float] | None:
+    """The last good `(published date, rate)` from an earlier run, or None.
+
+    The CGB store's two hard-won properties, deliberately duplicated rather than
+    abstracted over: the date is **parsed** so the lexicographic staleness check
+    downstream cannot fail open on a non-string, and the `except` is broad so a
+    damaged file costs the fallback and never the valuation. See `_cgb_stored`
+    for what each one was written against.
+    """
+    try:
+        raw = json.loads(HKGB_STORE_PATH.read_text(encoding="utf-8"))
+        published, rate = raw["published"], float(raw["rate"])
+        datetime.strptime(published, "%Y-%m-%d")
+        return published, rate
+    except Exception:
+        return None
+
+
+def _hkgb_remember(published: str, rate: float) -> None:
+    """Keep a good reading for the next run. Never raises.
+
+    Temp file then `os.replace`, because `write_text` truncates first and
+    `os.replace` is atomic on Windows as well as POSIX. See `_cgb_remember`.
+    """
+    try:
+        HKGB_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = HKGB_STORE_PATH.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(
+            json.dumps({"published": published, "rate": rate}), encoding="utf-8")
+        os.replace(tmp, HKGB_STORE_PATH)
+    except OSError:
+        pass
+
+
+def _hkgb_10y() -> tuple[float, bool] | None:
+    """`(rate, live)` for Hong Kong's 10-year government benchmark, or **None**.
+
+    A ratio, not percent. `live` is False when the number came from the store
+    rather than from today's fetch, so the caller can say which.
+
+    **The store earns its place differently here than it does for CGB.** That
+    one exists because ChinaBond is unreliable; this one exists because the
+    workbook is a *rolling window*. Measured 2026-08-26, it held 17 business
+    days — 2026-08-03 to 2026-08-25 — so it is a month of history, not an
+    archive, and a reading that is not kept is a reading that is gone.
+
+    Everything else is the CGB shape on purpose: the same staleness bound
+    applied to the row's own **published** date in both paths, the same sanity
+    band, and only a live reading cached — see `_cgb_10y` for why that last one
+    is load-bearing rather than an asymmetry.
+    """
+    global _HKGB_CACHE
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _HKGB_CACHE and _HKGB_CACHE[0] == today:
+        return _HKGB_CACHE[1], _HKGB_CACHE[2]
+    live = _hkgb_fetch()
+    published, rate = live if live is not None else (_hkgb_stored() or (None, None))
+    if published is None or rate is None:
+        return None
+    if published < (datetime.now(timezone.utc)
+                    - timedelta(days=HKGB_MAX_STALE_DAYS)).strftime("%Y-%m-%d"):
+        return None
+    # The workbook quotes percent, so a switch to ratios would silently divide
+    # by 100 — the same band, and the same reason, as the two feeds above.
+    if not 0 < rate < 0.25:
+        return None
+    if live is None:
+        return rate, False
+    _hkgb_remember(published, rate)
+    _HKGB_CACHE = (today, rate, True)
+    return rate, True
+
+
+def _hkgb_fetch() -> tuple[str, float] | None:
+    """`(published date, rate as a ratio)` from the HKGB workbook, or None.
+
+    Split from `_hkgb_10y` so the fallback above has one thing to test for; the
+    freshness and sanity checks live in the caller because they apply equally to
+    a stored reading.
+
+    **Three anchors, all textual.** The tenor row is found by its own `Tenor`
+    label in column 0, the ten-year by its `10-year` header, and the yield by
+    the `Yield` cell that must sit beside it.
+
+    The first two are load-bearing and pinned: a hard-coded column index reads
+    the right number on today's sheet and the wrong one the moment a tenor is
+    added, and a missing `10-year` label would otherwise fall through to a
+    neighbour whose yield is equally plausible.
+
+    **The third is defence in depth, and mutation testing said so rather than
+    the other way round.** An earlier draft of this paragraph claimed it made a
+    mis-read "unrepresentable"; measured 2026-08-26, removing the check changes
+    no outcome any caller can see. Swap the Price/Yield pair and the unchecked
+    parse returns 99.0 — a price — which the sanity band below rejects anyway,
+    so both paths degrade to `usd_proxy`. What the check buys is the *reason*
+    arriving at the label rather than at the band, which is worth one line and
+    is not worth overstating.
+
+    **The last row is not the newest row.** Rows 37-40 of the sheet as fetched
+    are disclaimer prose sitting in the date column, so `iloc[-1]` reads legal
+    text where a date should be. Rows are kept only where column 0 really is a
+    date and the yield really is a number, and the newest is then chosen by date
+    rather than by position — the same rule `_cgb_fetch` follows, and for the
+    same reason: nothing documents that the order is stable.
+    """
+    try:
+        # Deferred, and this is the CI contract rather than a micro-optimisation:
+        # `xlrd` is absent from `requirements-test.txt`, which is all CI installs,
+        # so importing it at module scope would abort pytest collection before a
+        # single offline test ran. `_us_treasury_10y` defers `openbb` for the
+        # neighbouring reason.
+        from io import BytesIO
+
+        import pandas as pd
+        with urlopen(HKGB_URL, timeout=HKGB_TIMEOUT_S) as resp:
+            book = resp.read()
+        for df in pd.read_excel(BytesIO(book), sheet_name=None, header=None).values():
+            labels = [str(v).strip() for v in df.iloc[:, 0]]
+            if HKGB_TENOR_HEADING not in labels:
+                continue
+            tenor_row = labels.index(HKGB_TENOR_HEADING)
+            tenors = [str(v).strip().lower().replace(" ", "-")
+                      for v in df.iloc[tenor_row]]
+            if HKGB_TENOR not in tenors:
+                continue
+            tenor_col = tenors.index(HKGB_TENOR)
+            band = next(
+                (i for i in range(tenor_row + 1, min(tenor_row + 8, df.shape[0]))
+                 if HKGB_YIELD_HEADING in [str(v).strip() for v in df.iloc[i]]), None)
+            if band is None:
+                continue
+            cells = [str(v).strip() for v in df.iloc[band]]
+            if (tenor_col + 1 >= len(cells)
+                    or cells[tenor_col + 1] != HKGB_YIELD_HEADING):
+                continue
+            rows = []
+            for i in range(band + 1, df.shape[0]):
+                day, yld = df.iloc[i, 0], df.iloc[i, tenor_col + 1]
+                # `yld == yld` rejects NaN, which is what an unpriced tenor and
+                # every blank cell below the table both read as.
+                if (isinstance(day, datetime) and isinstance(yld, (int, float))
+                        and not isinstance(yld, bool) and yld == yld):
+                    rows.append((day.strftime("%Y-%m-%d"), float(yld)))
+            if rows:
+                newest, rate = max(rows, key=lambda r: r[0])
+                return newest, rate / 100
+        return None
+    except Exception:
+        return None
+
+
 def _us_treasury_10y() -> float | None:
     """The live US 10-year yield, or **None** when it cannot be fetched.
 
@@ -420,12 +615,18 @@ def risk_free_rate(fallback: float,
     one. `None` means the caller did not say; it is treated as USD, which is
     what this function did before the parameter existed.
 
-    Five sources, mirroring `equity_risk_premium_for`:
+    Seven sources, mirroring `equity_risk_premium_for`:
       us_treasury_10y              USD cash flows, and the Fed feed answered
       platform_default             USD cash flows, no feed — `fallback` stands in
       cgb_10y_less_spread          CNY cash flows, priced off China's own curve
       cgb_10y_stored_less_spread   the same curve, from the last good reading
                                    rather than today's — ChinaBond did not answer
+      hkgb_10y_less_spread         HKD cash flows, priced off Hong Kong's own
+                                   government benchmark
+      hkgb_10y_stored_less_spread  the same benchmark, from the last good
+                                   reading — the workbook holds only a rolling
+                                   month, so this is the ordinary case for any
+                                   gap longer than that, not a rare one
       usd_proxy                    a non-USD currency with no curve of its own; a
                                    US rate is standing in
 
@@ -440,9 +641,10 @@ def risk_free_rate(fallback: float,
 
     A non-USD currency reports `usd_proxy` whether the US number came from the
     feed or from `fallback`. The distinction the reader needs is that no rate
-    for *this* currency was used, and that is identical in both cases. **CNY
-    degrades to exactly that** when ChinaBond cannot be reached, so a bad day
-    returns the platform to its pre-2026-08-19 behaviour rather than to an error.
+    for *this* currency was used, and that is identical in both cases. **CNY and
+    HKD both degrade to exactly that** when their own curve cannot be reached,
+    so a bad day returns the platform to its earlier behaviour rather than to an
+    error.
     """
     # `str(...)` because this reads straight off a vendor payload: a non-string
     # here used to be harmless and would now raise inside `_wacc`, which is a
@@ -473,6 +675,24 @@ def risk_free_rate(fallback: float,
             # stand-in — but only one of them is today's.
             return (cgb[0] - sovereign_spread,
                     "cgb_10y_less_spread" if cgb[1] else "cgb_10y_stored_less_spread")
+    if ccy == "HKD":
+        # The same shape as CNY above, including the band re-check *after* the
+        # subtraction: HK's published default spread is 51bp, so a low enough
+        # print nets to zero or below, and a negative risk-free rate would cap
+        # terminal growth negative through `min(TERMINAL_GROWTH, rf)` — the
+        # model asserting perpetual shrinkage for a going concern, with no error
+        # and no flag. Out of band degrades to the proxy like any other miss.
+        #
+        # Why this is a correction and not a preference: an HKD-reporting issuer
+        # was discounted at the **US** 10-year, which on 2026-08-26 was 4.70%
+        # against Hong Kong's own 3.495% — 120bp of pure currency mismatch, on
+        # exactly the reasoning that made the CNY branch above necessary. The
+        # peg is not the answer either: it fixes the exchange rate, not the term
+        # structure, and the two curves demonstrably differ.
+        hkgb = _hkgb_10y()
+        if hkgb is not None and 0 < hkgb[0] - sovereign_spread < 0.25:
+            return (hkgb[0] - sovereign_spread,
+                    "hkgb_10y_less_spread" if hkgb[1] else "hkgb_10y_stored_less_spread")
     rate = _us_treasury_10y()
     if ccy != "USD":
         return (fallback if rate is None else rate), "usd_proxy"

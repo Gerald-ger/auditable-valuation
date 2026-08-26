@@ -1241,10 +1241,12 @@ def test_a_non_usd_currency_says_the_rate_is_a_stand_in(monkeypatch):
     # before this parameter existed.
     assert data_provider.risk_free_rate(0.043, None) == (0.0431, "us_treasury_10y")
 
-    # CNY is deliberately absent: since 2026-08-19 it has a curve of its own and
-    # is covered by test_cny_is_priced_off_chinas_own_curve_net_of_its_default_
-    # spread. These are the currencies that still have no local source.
-    for ccy in ("HKD", "JPY", "EUR"):
+    # CNY and HKD are deliberately absent: each has a curve of its own since
+    # 2026-08-19 and 2026-08-26 respectively, covered by
+    # test_cny_is_priced_off_chinas_own_curve_net_of_its_default_spread and
+    # test_hkd_is_priced_off_hong_kongs_own_benchmark_net_of_its_default_spread.
+    # These are the currencies that still have no local source.
+    for ccy in ("JPY", "EUR"):
         rate, source = data_provider.risk_free_rate(0.043, ccy)
         assert (rate, source) == (0.0431, "usd_proxy"), ccy
 
@@ -1285,24 +1287,36 @@ def test_an_unreachable_feed_is_named_apart_from_a_substituted_currency(monkeypa
     """
     monkeypatch.setattr(data_provider, "_us_treasury_10y", lambda: None)
     assert data_provider.risk_free_rate(0.043, "USD") == (0.043, "platform_default")
-    # Still `usd_proxy`, not `platform_default`: the material fact for a Hong
-    # Kong filer is that no HKD rate was used, and that holds either way.
-    assert data_provider.risk_free_rate(0.043, "HKD") == (0.043, "usd_proxy")
+    # Still `usd_proxy`, not `platform_default`: the material fact for a filer in
+    # a currency with no curve is that no rate of its own was used, and that
+    # holds whether or not the US feed answered.
+    #
+    # JPY rather than HKD since 2026-08-26. HKD used to be the example here and
+    # stopped being one the moment it got a source — which is the point of the
+    # distinction this test draws, arriving from the other direction.
+    assert data_provider.risk_free_rate(0.043, "JPY") == (0.043, "usd_proxy")
 
 
-def test_the_hkd_filer_discloses_the_mismatch_between_its_two_capm_halves():
-    """0002.HK is the fixture this was added for: a Hong Kong premium against a
-    US rate. The valuation is unchanged and the disclosure is new."""
+def test_the_hkd_filer_now_has_both_capm_halves_in_its_own_market():
+    """0002.HK is the fixture this was added for, and it has changed sides.
+
+    It used to pin the *mismatch* — a Hong Kong equity premium paired with a US
+    risk-free rate, disclosed as `usd_proxy` because nothing better existed.
+    Since 2026-08-26 both halves come from Hong Kong, so what is pinned now is
+    that they agree, and that the US control still differs from them.
+    """
     a = fm.dcf_valuation(load_fundamentals("0002_HK"))["assumptions"]
-    assert a["risk_free_source"] == "usd_proxy"
+    assert a["risk_free_source"] == "hkgb_10y_less_spread"
     assert a["equity_risk_premium_market"] == "Hong Kong"
 
-    # The USD control, so this test fails if `usd_proxy` were returned for
+    # The USD control, so this test fails if one source were returned for
     # everything — which would look identical on the HK assertion alone.
     us = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
     assert (us["risk_free_source"],
             us["equity_risk_premium_market"]) == ("us_treasury_10y", "United States")
-    assert us["risk_free_rate"] == a["risk_free_rate"]  # same number, still
+    # The assertion that inverted. It read `==` while HKD borrowed the US rate;
+    # a rate of Hong Kong's own is only meaningful if it is a *different* number.
+    assert us["risk_free_rate"] != a["risk_free_rate"]
 
 
 # ── CNY gets a rate of its own ───────────────────────────────────────
@@ -1983,9 +1997,19 @@ def test_the_floor_and_the_values_it_decides_are_pinned():
                                 market_bars=load_market_bars(stem),
                                 wacc_override=override)["fair_value_per_share"]
 
-    # 0002_HK, freed by the interval — the case the change exists for
-    assert fair("0002_HK", 0.165) == pytest.approx(97.27, abs=0.01)
-    # what the floor was producing instead, reached by pinning the clamped WACC
+    # 0002_HK, freed by the interval — the case the change exists for.
+    #
+    # 97.27 until 2026-08-26, when HKD stopped borrowing the US risk-free rate.
+    # The beta argument this test guards is unaffected — the floor still binds or
+    # does not bind on the same interval — but the value it produces is now
+    # struck at Hong Kong's own rate, so the old figure would pin a regime the
+    # platform no longer runs. The two numbers below are therefore from
+    # different rate regimes and are not a like-for-like pair; see the note on
+    # the override.
+    assert fair("0002_HK", 0.165) == pytest.approx(234.83, abs=0.01)
+    # What the floor was producing instead. `override=0.0542` is a hard-coded
+    # WACC, so this one is untouched by the rate change and still pins exactly
+    # what it always did: what *that* WACC yields.
     assert fair("0002_HK", 0.165, override=0.0542) == pytest.approx(74.05, abs=0.01)
     # XOM, still clamped, still where it was
     assert fair("XOM", 0.21) == pytest.approx(157.30, abs=0.01)
@@ -2269,3 +2293,308 @@ def test_the_bridge_terms_are_converted_once_like_net_debt():
     assert d["assumptions"]["fx_basis"] == "converted"
     assert b["per_share"]["marked_securities"] == pytest.approx(
         b["marked_securities"] * fx / shares, abs=0.01)
+
+
+# ── HKD gets a benchmark of its own ──────────────────────────────────
+#
+# The second currency to stop borrowing the US rate, and the second time the
+# reason is that a peg fixes an exchange rate rather than a term structure:
+# Hong Kong's own ten-year sat at 3.495% on 2026-08-26 against the US 4.70%.
+#
+# The parse is tested over a DataFrame rather than a real workbook. `xlrd` and
+# `openpyxl` are both absent from `requirements-test.txt`, so a test that built
+# a genuine spreadsheet could not run in CI at all — and what needs pinning is
+# the grid walk, which is the new code. That pandas can read the real file is a
+# different claim, and `test_provider_live.py` makes it against the real file.
+
+_real_hkgb_10y = data_provider._hkgb_10y
+
+# The tenors the workbook actually publishes, in order. Two 1-year floaters, so
+# the ten-year is neither first nor last and an off-by-one lands on a real
+# neighbour with a plausible yield — exactly the failure the label anchors exist
+# to make unrepresentable.
+HKGB_TENORS = ("1-year*", "1-year*", "3-year", "5-year", "7-year",
+               "10-year", "15-year", "20-year")
+# In-band decoys, taken from the shape of the real 2026-08-25 sheet, so a wrong
+# column reads as a believable yield rather than failing loudly.
+HKGB_DECOYS = {"1-year*": 2.61, "3-year": 3.11, "5-year": 3.15,
+               "7-year": 3.28, "15-year": 3.82, "20-year": 4.37}
+
+
+def _hkgb_book(rows, tenors=HKGB_TENORS, yield_label="Yield",
+               tenor_label="Tenor", trailing_prose=True, yield_first=False):
+    """A DataFrame shaped like the workbook's Benchmark sheet.
+
+    Column 0 carries the row labels; each tenor occupies a Price column with its
+    Yield in the next one. `rows` is `[(date, ten_year_yield)]`.
+    """
+    from datetime import datetime
+
+    import pandas as pd
+    width = 1 + 2 * len(tenors)
+    grid = [[None] * width for _ in range(9)]
+    grid[0][0] = "Daily HKD Institutional Government Bond Closing Reference Pricings"
+    grid[4][0] = tenor_label
+    grid[5][0] = "Issue code"
+    grid[7][0] = "Maturity date"
+    for i, t in enumerate(tenors):
+        grid[4][1 + 2 * i] = t
+        grid[5][1 + 2 * i] = f"{i:02d}GB3507001"
+        # `yield_first` puts the Yield column *before* its Price instead of
+        # after. The sheet as published is Price-then-Yield, so this is the
+        # layout change that makes `tenor_col + 1` land on a price — the exact
+        # off-by-one the label check exists to refuse.
+        grid[8][1 + 2 * i] = yield_label if yield_first else "Price"
+        grid[8][2 + 2 * i] = "Price" if yield_first else yield_label
+    grid.append([None] * width)          # the blank band between header and data
+    for day, ten in rows:
+        row = [None] * width
+        row[0] = datetime.strptime(day, "%Y-%m-%d")
+        for i, t in enumerate(tenors):
+            y = ten if t == "10-year" else HKGB_DECOYS.get(t, 3.0)
+            row[1 + 2 * i] = y if yield_first else 99.0
+            row[2 + 2 * i] = 99.0 if yield_first else y
+        grid.append(row)
+    if trailing_prose:
+        # Rows 37-40 of the real sheet are disclaimer text sitting in the date
+        # column. `iloc[-1]` reads legal prose where a date should be.
+        for text in ("While The Government of the Hong Kong Special Administrative "
+                     "Region endeavours to provide a continuous and timely service",
+                     "By reviewing or downloading any reference yield you accept "
+                     "this disclaimer and agree to its terms and conditions."):
+            row = [None] * width
+            row[0] = text
+            # Numbers in the yield columns of a prose row. The published sheet
+            # leaves them blank, and a fixture that copies that cannot tell the
+            # date filter apart from the NaN check beside it — measured, the
+            # `isinstance(day, datetime)` guard survived a mutation run until
+            # these were added. A footnote carrying a figure is the realistic
+            # shape this protects against.
+            for i in range(len(tenors)):
+                row[1 + 2 * i] = 9.99
+                row[2 + 2 * i] = 9.99
+            grid.append(row)
+    return {"Daily GB Closings - Benchmark": pd.DataFrame(grid)}
+
+
+def _stub_hkgb(monkeypatch, book):
+    """Replace the download and the workbook read, not the function under test.
+
+    `_hkgb_fetch` imports pandas inside itself, so patching `pandas.read_excel`
+    reaches it: the import resolves the already-patched module. Everything after
+    that — the three text anchors, the date filter, the newest-row choice — is
+    the real code.
+    """
+    import pandas as pd
+
+    class _Resp:
+        def read(self): return b"not-really-a-workbook"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(data_provider, "urlopen", lambda *a, **k: _Resp())
+    monkeypatch.setattr(pd, "read_excel", lambda *a, **k: book)
+    monkeypatch.setattr(data_provider, "_HKGB_CACHE", None)
+    out = _real_hkgb_10y()
+    return None if out is None else out[0]
+
+
+def test_the_hkd_ten_year_is_read_by_its_own_label(monkeypatch):
+    """The happy path, and the reason the label matters.
+
+    Every tenor beside the ten-year carries a plausible in-band decoy, so a
+    parse that took the wrong column would return a number no band could reject.
+    """
+    rate = _stub_hkgb(monkeypatch, _hkgb_book([(_days_ago(1), 3.495)]))
+    assert rate == pytest.approx(0.03495)
+
+
+def test_a_renamed_tenor_degrades_instead_of_taking_a_neighbour(monkeypatch):
+    """If the sheet stops saying `10-year` this must refuse, not guess.
+
+    The 7-year and 15-year sit either side at 3.28% and 3.82% — both inside any
+    sane band — so guessing would be undetectable.
+    """
+    tenors = tuple("10Y" if t == "10-year" else t for t in HKGB_TENORS)
+    assert _stub_hkgb(monkeypatch, _hkgb_book([(_days_ago(1), 3.495)], tenors=tenors)) is None
+
+    # And the column is found rather than assumed. In the sheet as published the
+    # ten-year happens to sit at index 11, so a parse that hard-coded 11 reads
+    # correctly and no fixture built to match the real layout can tell —
+    # measured, that mutation survived. An extra tenor in front moves it.
+    shifted = ("2-year",) + HKGB_TENORS
+    assert _stub_hkgb(monkeypatch,
+                      _hkgb_book([(_days_ago(1), 3.495)], tenors=shifted))         == pytest.approx(0.03495)
+
+
+def test_a_price_column_is_never_read_as_a_yield(monkeypatch):
+    """The guard that makes an off-by-one unrepresentable.
+
+    `yield_first` swaps the Price/Yield pair, so the cell beside the ten-year
+    tenor says `Price` while a `Yield` band still exists on the row. That is the
+    only shape that isolates this check: renaming the band outright is refused
+    one line earlier, when no row contains `Yield` at all, so a test written
+    that way passes without the guard — measured, it survived a mutation run.
+    Without the check this returns 99.0, a price, as a 9900% rate.
+    """
+    book = _hkgb_book([(_days_ago(1), 3.495)], yield_first=True)
+    assert _stub_hkgb(monkeypatch, book) is None
+
+    # ...and the band being absent entirely is still refused, one line earlier.
+    assert _stub_hkgb(monkeypatch,
+                      _hkgb_book([(_days_ago(1), 3.495)], yield_label="Yld")) is None
+
+
+def test_the_disclaimer_rows_are_not_read_as_data(monkeypatch):
+    """`iloc[-1]` would read legal prose out of the date column.
+
+    Asserted by giving the newest real row a value nothing else has, so a parse
+    that fell off the end of the table cannot accidentally agree.
+    """
+    rows = [(_days_ago(3), 3.100), (_days_ago(2), 3.200), (_days_ago(1), 3.495)]
+    assert _stub_hkgb(monkeypatch, _hkgb_book(rows)) == pytest.approx(0.03495)
+
+
+def test_the_newest_row_wins_whatever_order_the_sheet_is_in(monkeypatch):
+    """Chosen by date rather than by position — nothing documents the order."""
+    rows = [(_days_ago(1), 3.495), (_days_ago(9), 1.000), (_days_ago(4), 2.000)]
+    assert _stub_hkgb(monkeypatch, _hkgb_book(rows)) == pytest.approx(0.03495)
+
+
+def test_a_frozen_hkgb_workbook_expires_on_its_published_date(monkeypatch):
+    """A stale sheet is well-formed and plausible; only its date says otherwise.
+
+    The bound is the constant's own value rather than a figure derived from it:
+    deriving both sides lets the constant move without the test noticing, which
+    is the mistake the CGB equivalent records having made.
+    """
+    assert data_provider.HKGB_MAX_STALE_DAYS == 14
+    assert _stub_hkgb(monkeypatch, _hkgb_book([(_days_ago(13), 3.495)])) is not None
+    assert _stub_hkgb(monkeypatch, _hkgb_book([(_days_ago(15), 3.495)])) is None
+
+
+@pytest.mark.parametrize("published_yield", [0.0, -1.5, 25.0, 99.0])
+def test_a_hkd_yield_outside_the_band_is_refused(monkeypatch, published_yield):
+    """The workbook quotes percent; a switch to ratios would divide by 100, and
+    a price read as a yield would arrive as 99. Both land outside 0 < r < 0.25."""
+    assert _stub_hkgb(monkeypatch, _hkgb_book([(_days_ago(1), published_yield)])) is None
+
+
+def test_a_transient_hkgb_failure_does_not_pin_the_stored_reading_all_day(monkeypatch):
+    """The load-bearing asymmetry, mirrored from the CGB store.
+
+    Only a *live* reading is cached. Were the stored one cached too, one timeout
+    would serve a reading up to a fortnight old for the rest of the UTC day and
+    never retry — which is precisely the sticky failure the timeout is not sized
+    for. The count is the assertion: upstream must be contacted every time.
+    """
+    monkeypatch.setattr(data_provider, "_HKGB_CACHE", None)
+    data_provider._hkgb_remember(_days_ago(1), 0.03495)
+
+    calls = []
+
+    def _down(*a, **k):
+        calls.append(1)
+        raise OSError("hkgb.gov.hk did not answer")
+    monkeypatch.setattr(data_provider, "urlopen", _down)
+
+    assert [_real_hkgb_10y() for _ in range(3)] == [(pytest.approx(0.03495), False)] * 3
+    assert len(calls) == 3, "a stored reading must not suppress the retry"
+
+
+def test_a_live_hkd_reading_is_stored_for_the_next_run(monkeypatch):
+    """The store exists because the workbook is a rolling month, not an archive:
+    a reading that is not kept is a reading that is gone."""
+    monkeypatch.setattr(data_provider, "_HKGB_CACHE", None)
+    assert _stub_hkgb(monkeypatch, _hkgb_book([(_days_ago(1), 3.495)])) is not None
+    assert data_provider._hkgb_stored() == (_days_ago(1), pytest.approx(0.03495))
+
+
+def test_a_corrupt_hkd_store_reads_as_no_store(monkeypatch):
+    """A damaged file costs the fallback, never the valuation — and the date is
+    parsed rather than coerced, so a non-string cannot sort as permanently
+    fresh."""
+    for junk in ('{"published": null, "rate": 0.035}',
+                 '{"published": 20260825, "rate": 0.035}',
+                 '{"published": "2026/08/25", "rate": 0.035}',
+                 "[" * 400 + "]" * 400,
+                 "not json at all"):
+        data_provider.HKGB_STORE_PATH.write_text(junk, encoding="utf-8")
+        assert data_provider._hkgb_stored() is None, junk[:40]
+
+
+def test_an_unwritable_hkd_store_costs_the_fallback_and_not_the_valuation(monkeypatch):
+    """A read-only checkout must lose the next outage its fallback, never this
+    request its answer."""
+    def _boom(*a, **k):
+        raise OSError("read-only file system")
+    monkeypatch.setattr(data_provider.Path, "write_text", _boom)
+    data_provider._hkgb_remember("2026-08-25", 0.03495)  # must not raise
+
+
+def test_hkd_is_priced_off_hong_kongs_own_benchmark_net_of_its_default_spread(monkeypatch):
+    """The same arithmetic CNY gets, and for the same reason: a government yield
+    is not risk-free, and the country-inclusive ERP paired with it carries that
+    spread a second time. Subtracting once removes the double count."""
+    monkeypatch.setattr(data_provider, "_hkgb_10y", lambda: (0.03495, True))
+
+    rate, source = data_provider.risk_free_rate(0.043, "HKD", 0.0051)
+    assert (round(rate, 6), source) == (0.02985, "hkgb_10y_less_spread")
+
+    # The stored reading is the same number wearing a different label, because a
+    # reader deciding what to trust needs to know which one they have.
+    monkeypatch.setattr(data_provider, "_hkgb_10y", lambda: (0.03495, False))
+    assert data_provider.risk_free_rate(0.043, "HKD", 0.0051)[1] == \
+        "hkgb_10y_stored_less_spread"
+
+    # And an unreachable benchmark degrades to exactly what it did before.
+    monkeypatch.setattr(data_provider, "_hkgb_10y", lambda: None)
+    assert data_provider.risk_free_rate(0.043, "HKD", 0.0051)[1] == "usd_proxy"
+
+
+@pytest.mark.parametrize("hkgb", [0.0050, 0.0051, 0.002, 0.0])
+def test_a_yield_below_the_hkd_spread_never_becomes_a_negative_rate(monkeypatch, hkgb):
+    """`_hkgb_10y`'s band guards the published yield; the subtraction happens
+    outside it, and 51bp is enough to net a low print to zero or below. A
+    negative risk-free rate caps terminal growth negative through
+    `min(TERMINAL_GROWTH, rf)` — the model asserting perpetual shrinkage for a
+    going concern, with no error and no flag."""
+    monkeypatch.setattr(data_provider, "_hkgb_10y", lambda: (hkgb, True))
+    assert data_provider.risk_free_rate(0.043, "HKD", 0.0051)[1] == "usd_proxy"
+
+
+# ── the precision the fair value rests on ────────────────────────────
+
+def test_the_terminal_spread_is_published_rather_than_thresholded():
+    """`WACC - g` is the terminal value's denominator, so the answer scales as
+    its reciprocal and the sensitivity as the reciprocal squared. Published so a
+    reader can weigh it; no cutoff, because none has evidence behind it."""
+    d = fm.dcf_valuation(load_fundamentals("0002_HK"), tax_rate=0.165,
+                         market_bars=load_market_bars("0002_HK"))
+    a, diag = d["assumptions"], d["diagnostics"]
+    assert diag["terminal_spread"] == pytest.approx(a["wacc"] - a["terminal_growth"], abs=1e-9)
+    # A utility at Hong Kong's own rate is the tight case this exists to show.
+    assert diag["terminal_spread"] < 0.02
+    # ...and a US mega-cap is not, so the field is not merely always small.
+    us = fm.dcf_valuation(load_fundamentals("AAPL"), tax_rate=0.21,
+                          market_bars=load_market_bars("AAPL"))
+    assert us["diagnostics"]["terminal_spread"] > 0.05
+
+
+def test_cost_of_equity_below_debt_is_flagged_and_never_corrected():
+    """An inequality between two computed inputs, not a tuned threshold: a
+    lender ranks ahead of a shareholder, so a share cannot require less return
+    than the bond above it. CAPM produces it anyway when `beta x ERP` comes in
+    under the credit spread, and the figures are reported as computed."""
+    d = fm.dcf_valuation(load_fundamentals("0002_HK"), tax_rate=0.165,
+                         market_bars=load_market_bars("0002_HK"))
+    a, diag = d["assumptions"], d["diagnostics"]
+    assert diag["cost_of_debt_pre_tax"] == pytest.approx(
+        a["risk_free_rate"] + a["credit_spread"], abs=1e-9)
+    assert diag["cost_of_equity_below_debt"] is True
+    # Never corrected: the inversion is still there in the numbers themselves.
+    assert a["cost_of_equity"] < diag["cost_of_debt_pre_tax"]
+
+    # The control, or the flag would look identical to one that is always true.
+    us = fm.dcf_valuation(load_fundamentals("AAPL"), tax_rate=0.21,
+                          market_bars=load_market_bars("AAPL"))
+    assert us["diagnostics"]["cost_of_equity_below_debt"] is False

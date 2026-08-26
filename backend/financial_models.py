@@ -871,6 +871,13 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             k = current_multiple / conversion
             market_implied_growth = round((k * wacc - 1) / (1 + k), 4)
 
+    # `rf + spread` is exactly how `_wacc` builds it (see its
+    # `cost_of_debt` line); recomputing it here from the two published
+    # parts keeps the flag below checkable against numbers already on
+    # screen rather than resting on a figure nobody can see.
+    cost_of_debt_pre_tax = (wacc_parts["risk_free_rate"]
+                            + wacc_parts["credit_spread"])
+
     sensitivity = []
     for dw in (-0.01, -0.005, 0.0, 0.005, 0.01):
         row = {"wacc": round(wacc + dw, 4), "values": []}
@@ -1013,6 +1020,38 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             # driven by the terminal assumption, not by the explicit forecast.
             "terminal_value_share": terminal_share,
             "terminal_value_high": terminal_share is not None and terminal_share > 0.75,
+            # How much room the perpetuity has. The terminal value is
+            # `1 / (WACC - g)` times the final year's cash flow, so the answer
+            # scales as the reciprocal of this number and its sensitivity to a
+            # WACC error as the reciprocal *squared* — which is why a spread
+            # deserves to be read, not just the share above it.
+            #
+            # Published rather than thresholded, the same choice made for the
+            # beta regression's R² and interval on 2026-08-17 (e): a reader can
+            # weigh a narrow spread, and no cutoff between "fine" and "fragile"
+            # has any evidence behind it. Measured on `0002_HK` 2026-08-26,
+            # 2.76% at the US proxy rate against 1.12% at Hong Kong's own — a
+            # 50bp WACC error is worth 21% of the share price at the first and
+            # 55% at the second.
+            "terminal_spread": round(wacc - terminal_growth, 4),
+            # Equity priced below debt, which cannot be true of the same
+            # company: a lender is senior to a shareholder, so a share cannot
+            # require less return than the bond that outranks it.
+            #
+            # CAPM produces it anyway whenever `beta x ERP` comes in under the
+            # credit spread. On `0002_HK` that is 0.1544 x 5.01% = 77bp against
+            # an 85bp spread, so the cost of equity lands 7bp *under* the
+            # pre-tax cost of debt — and it does so at either risk-free rate,
+            # because both legs move with the rate together. Pre-existing, and
+            # invisible until now.
+            #
+            # This is an inequality between two computed inputs, not a tuned
+            # cutoff, which is why it can be flagged without inventing a
+            # threshold. Reported and never corrected: ordering the two would be
+            # a modelling change, and it belongs with the open CAPM question in
+            # TODOLIST rather than here.
+            "cost_of_debt_pre_tax": round(cost_of_debt_pre_tax, 4),
+            "cost_of_equity_below_debt": wacc_parts["cost_of_equity"] < cost_of_debt_pre_tax,
             "implied_exit_ev_ebitda": implied_exit_multiple,
             # The implied exit above is built from statement figures and is
             # already reporting-currency throughout, so the multiple it is read

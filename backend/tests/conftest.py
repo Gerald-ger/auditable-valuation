@@ -54,6 +54,12 @@ def load_market_bars(stem: str) -> tuple[list[dict], list[dict]]:
 # ChinaBond published 1.6864% on 2026-08-19. Net of the vendored CNY default
 # spread of 0.60% this leaves a round 1.10% risk-free.
 TEST_CGB_10Y = 0.017
+# The same idea for Hong Kong, and the same arithmetic: HKD's published
+# default spread is 0.51%, so 3.51% leaves a round 3.00% risk-free. Close to
+# the 3.495% the HKGB workbook actually carried on 2026-08-26, because a
+# fixture rate far from the real one would let a sign or scale error look
+# reasonable in the goldens.
+TEST_HKGB_10Y = 0.0351
 
 
 @pytest.fixture(autouse=True)
@@ -92,23 +98,35 @@ def pinned_risk_free_rate(monkeypatch):
     # says whether it came from today's fetch or from the store, and a test that
     # returned only the number would not exercise the branch that labels it.
     monkeypatch.setattr(data_provider, "_cgb_10y", lambda: (TEST_CGB_10Y, True))
+    # And `_hkgb_10y`, added 2026-08-26 with the HKD source. Identical hazard
+    # for the third time: `0002_HK` reports HKD, so any test running a DCF over
+    # it would fetch an 80 KB workbook from hkgb.gov.hk from inside the offline
+    # suite. Pinned to a rate rather than `None` for the reason spelled out
+    # above — `None` degrades every HKD name to the US proxy, which is the one
+    # path production no longer takes, so the goldens would pin the failure
+    # case and stay green whatever the real branch did.
+    monkeypatch.setattr(data_provider, "_hkgb_10y", lambda: (TEST_HKGB_10Y, True))
 
 
 @pytest.fixture(autouse=True)
-def isolated_cgb_store(tmp_path, monkeypatch):
-    """Point the CGB fallback store at a throwaway path, for every test.
+def isolated_rate_stores(tmp_path, monkeypatch):
+    """Point both sovereign-rate fallback stores at throwaway paths, every test.
 
-    `_cgb_10y` writes a good reading to disk so the next run has something to
-    fall back on. The tests that drive the real parse stub `urlopen` rather than
-    the function, so they reach that write — and without this they would leave a
-    file in `backend/data/`, and, worse, a *later* test would find it and pass on
-    a fallback instead of on the path it meant to exercise.
+    `_cgb_10y` and `_hkgb_10y` each write a good reading to disk so the next run
+    has something to fall back on. The tests that drive the real parse stub the
+    fetch rather than the function, so they reach that write — and without this
+    they would leave files in `backend/data/`, and, worse, a *later* test would
+    find one and pass on a fallback instead of on the path it meant to exercise.
 
     Autouse and unconditional, the same reasoning as `temp_db`: isolation that
     each test has to remember to ask for is isolation that will be forgotten.
+
+    Renamed from `isolated_cgb_store` when the HKD store arrived on 2026-08-26.
+    Safe as a rename because an autouse fixture is never named by a test.
     """
     from backend import data_provider
     monkeypatch.setattr(data_provider, "CGB_STORE_PATH", tmp_path / "cgb_10y.json")
+    monkeypatch.setattr(data_provider, "HKGB_STORE_PATH", tmp_path / "hkgb_10y.json")
 
 
 # CNY -> HKD. A round test constant, not a market quote: the point is that the

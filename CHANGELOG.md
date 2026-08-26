@@ -2,8 +2,97 @@
 
 Notable changes to the Stock Analysis Platform. Newest first.
 
-Format note: entries record *what changed and why it mattered*, with the measured
-before/after where a change moved numbers the UI displays.
+## 2026-08-26 — Hong Kong stops borrowing America's risk-free rate
+
+Backend **532 → 553**, frontend unchanged. The last currency leg of the CAPM work, and two
+disclosures that exist because of what it exposed.
+
+### The source, and why it is not HKMA
+
+TODOLIST recorded this gap as blocked on *"HKMA has not responded on three attempts across six
+days"*. **Both halves of that were wrong**, measured 2026-08-26:
+
+- **HKMA answers.** `daily-figures-interbank-liquidity` returned HTTP 200 in 2.6 s with data dated
+  2026-08-25.
+- **And it is the wrong source anyway.** Its bond-yield endpoint — reachable once the path is
+  corrected to include `monthly-statistical-bulletin` — answers `success: true` with **12 of 13
+  fields null at every date sampled**. Alive and empty, so no amount of retrying helps. Its
+  Exchange Fund Bills & Notes stop at two years regardless; issuance at three years and above
+  ceased in 2015.
+
+The ten-year is published by the HKSAR Government instead, at `hkgb.gov.hk`, as a daily `.xls`
+carrying an explicit **10-year benchmark column** (issue `10GB3507001`, maturing 2035-07-24).
+**HKD 10Y = 3.495% on 2026-08-25** against the US 4.70% — 120bp of pure currency mismatch, on
+exactly the reasoning that made the CNY branch necessary in the first place. A peg fixes an
+exchange rate, not a term structure.
+
+Fetched at runtime and never vendored, the same licensing choice made for ChinaBond: the
+workbook's own notice asks that the Government be quoted as owner of the pricings and of the IP in
+them, so committing it to a public repo is the act that notice addresses and calling the endpoint
+is not.
+
+`_hkgb_10y` mirrors the CGB store guard for guard — parsed store date, atomic write, staleness on
+the row's **published** date in both paths, sanity band, and **only a live reading cached**. The
+store earns its place differently, though: ChinaBond's exists because ChinaBond is unreliable,
+this one because the workbook is a **rolling month** — 17 business days when measured — so a
+reading not kept is a reading gone.
+
+### What it moved
+
+`0002_HK` is the only fixture reporting HKD, so it is the only one that moves.
+
+| | before | after |
+|---|---|---|
+| risk-free rate | 4.70% `usd_proxy` | **2.985%** `hkgb_10y_less_spread` |
+| WACC | 5.26% | **3.62%** |
+| fair value / share (fixture) | 97.27 | **234.83** |
+| composite score | 67 | 68 |
+| valuation pillar | 71 | 76 |
+| `dcf_upside_pct` metric | 78 | **100 — saturated** |
+
+**3 of 260 golden leaf values**, tier unchanged at A. The metric hitting 100 is worth naming: the
+anchor now cannot separate +199% from +500%, which is a pre-existing property of the curve rather
+than something this change introduced, but this is the first input that reaches it.
+
+Direction-blind, which is what makes it a correction rather than tuning: it moves the model from
+**agreeing** with the market price (+1.7%) to disagreeing with it by 199%.
+
+### The two disclosures, and why they were needed
+
+A +199% headline on a regulated utility is not something to ship silently. Both additions are
+**publication, not correction** — the same choice made for the beta regression's R² and interval
+on 2026-08-17 (e).
+
+- **`terminal_spread`** — `WACC − g`, the terminal value's denominator. The answer scales as its
+  reciprocal and its sensitivity as the reciprocal *squared*. On `0002_HK` it is **1.12%**, so the
+  terminal value is 89× the final year's cash flow; a 50bp WACC error is worth **55% of the share
+  price**, against 21% at the old rate. No threshold: none has evidence behind it.
+- **`cost_of_equity_below_debt`** — cost of equity 3.76% against a pre-tax cost of debt of 3.84%.
+  A lender ranks ahead of a shareholder, so this cannot be true of one company. It is an
+  **inequality between two computed inputs, not a tuned cutoff**, which is why it can be flagged
+  without inventing one.
+
+  **Pre-existing, and not caused by the rate**: both legs move with the risk-free rate together,
+  so the gap was the same 7bp at 4.70%. It is `beta × ERP` (0.1544 × 5.01% = 77bp) coming in under
+  the 85bp credit spread. Cross-sectionally it fires on **two of six** DCF-eligible fixtures —
+  `0002_HK` and `O`, a REIT — so it is a low-beta phenomenon rather than a Hong Kong one, and it
+  belongs with the open CAPM question in TODOLIST. Reported, never corrected.
+
+### Verified
+
+**12 mutations of the new guards, 11 caught.** The survivor is recorded rather than papered over:
+removing the "the cell beside the tenor must say `Yield`" check changes no outcome a caller can
+see, because a mis-read returns a *price* and the sanity band rejects it anyway. The docstring
+claimed that check made a mis-read "unrepresentable" and has been corrected to say what the
+measurement says. Three earlier survivors were **test** weaknesses and were fixed: the fixture
+happened to put the ten-year at the same column index a hard-coded parse would use, and its
+disclaimer rows carried no numbers, so two anchors and the date filter were untested.
+
+Offline suite stays offline — `conftest` stubs `_hkgb_10y` beside `_cgb_10y` for the third time
+against the same hazard, and 553 tests run in ~10 s with no network. Live coverage is two new
+`network`-marked tests, which are also the only place the claim "pandas can read *this* workbook"
+is made: the offline parse tests stub `read_excel`, because neither `xlrd` nor `openpyxl` is in
+`requirements-test.txt`.
 
 ---
 

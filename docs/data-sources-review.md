@@ -28,7 +28,7 @@ case got on 2026-08-19, as `0002_HK`.
 
 ## 1. What the platform actually depends on
 
-Five external systems. Not five data sources — **one data source and four narrow helpers.**
+Six external systems. Not six data sources — **one data source and five narrow helpers.**
 
 | System | What it feeds | Auth | Fallback when it fails |
 |---|---|---|---|
@@ -37,6 +37,7 @@ Five external systems. Not five data sources — **one data source and four narr
 | OpenBB → `sec` | SEC filing markers, the 10,398-symbol search index | none | `[]` / stale disk cache |
 | OpenBB → `fmp` | peer discovery where no curated list exists | key | `[]`, curated map is consulted first |
 | **ChinaBond** (CCDC), direct HTTP *(added 2026-08-19)* | China 10Y government yield → CAPM for CNY-reporting issuers | none | the last good reading while its published date is inside `CGB_MAX_STALE_DAYS` (`cgb_10y_stored_less_spread`, added 2026-08-20 after nine observed failure episodes in two days); past that, the US 10Y labelled `usd_proxy`. A live failure is never cached |
+| **HKGB** (hkgb.gov.hk), direct HTTP *(added 2026-08-26)* | Hong Kong 10Y government benchmark → CAPM for HKD-reporting issuers | none | the last good reading while its published date is inside `HKGB_MAX_STALE_DAYS` (`hkgb_10y_stored_less_spread`); past that, the US 10Y labelled `usd_proxy`. A live failure is never cached |
 | Ollama (local) | commentary only — never a number | none | features disable with a note |
 
 **ChinaBond is fetched at runtime and never vendored, and that is a licensing choice.** CCDC
@@ -45,6 +46,18 @@ committing the curve into this public repo is the act the notice addresses and c
 endpoint is not. That inverts the pattern used for Damodaran's premiums next door, which are
 vendored precisely because Damodaran *publishes* a dated annual snapshot; the CGB curve is
 published daily, and a snapshot taken 2023-08-21 would be **85bp wrong** by 2026-08.
+
+**HKGB is fetched at runtime and never vendored for the same reason**, and the notice is
+explicit rather than inferred: the workbook asks that users quote the Government as owner of the
+Closing Reference Pricings and of the intellectual property in them. A store holding one number is
+a cache, not redistribution — the same posture the CGB store takes.
+
+**It is also not the source this repo spent six days failing to reach.** HKMA was recorded as the
+HKD blocker across three attempts; measured 2026-08-26 it answers in 2.6 s, and its bond-yield
+endpoint returns `success: true` with 12 of 13 fields null at every date sampled. Alive and empty.
+The ten-year lives at hkgb.gov.hk, which nothing here had checked. Recorded because the failure
+mode is reusable: repeated failures at one host are evidence about that host, not about whether
+the number is published.
 
 It is the same licence class as yfinance — see §3, whose conclusion covers both: acceptable
 while the platform is personal, resolve before it is hosted.

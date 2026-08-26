@@ -9,6 +9,7 @@ These tests exist to tell you the shape changed *before* the UI does.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import yfinance as yf
@@ -344,3 +345,51 @@ def test_the_ten_year_agrees_with_chinabonds_single_tenor_query():
     assert out[0] == pytest.approx(single, abs=1e-6), (
         "the labelled 10Y column and gjqx=10 disagree — one of them is not the "
         "ten-year")
+
+
+def test_hong_kong_still_publishes_a_parseable_ten_year_benchmark():
+    """The HKD risk-free rate, live, keyless, and from a real workbook.
+
+    The offline tests for this parse stub `pandas.read_excel` and feed it a
+    DataFrame, because neither `xlrd` nor `openpyxl` is in
+    `requirements-test.txt` and a test that built a genuine spreadsheet could
+    not run in CI. That leaves exactly one claim unpinned offline — that pandas
+    can read *this* file, a legacy OLE2 `.xls` served as
+    `application/vnd.ms-excel` — and this is the test that makes it.
+
+    A band rather than a level. Hong Kong's ten-year sat at 3.495% on
+    2026-08-26; 1%-7% is wide enough not to fail on an ordinary market and
+    narrow enough to catch the failure that would actually hurt, which is a
+    units change from percent to ratio.
+
+    **What the band does not catch**, stated because the gap is the same one the
+    ChinaBond test records: the sheet publishes 1, 3, 5, 7, 10, 15 and 20-year
+    columns, and on 2026-08-25 they ran 3.11% to 4.37%. Every one of them clears
+    this band, so a column mis-read is invisible here. That is why the parse
+    anchors on three separate labels — `Tenor`, `10-year`, and a `Yield` cell
+    that must sit beside it — and why those anchors are pinned offline where a
+    band cannot reach them.
+    """
+    out = data_provider._hkgb_fetch()
+    assert out is not None, "hkgb.gov.hk unreachable or the workbook changed shape"
+    published, rate = out
+    assert 0.01 < rate < 0.07, rate
+    # The workbook is a rolling month, so a published date far in the past means
+    # it has stopped being updated rather than that today is quiet.
+    assert published >= (
+        datetime.now(timezone.utc)
+        - timedelta(days=data_provider.HKGB_MAX_STALE_DAYS)).strftime("%Y-%m-%d"), published
+
+
+def test_the_hkd_rate_is_materially_different_from_the_us_one():
+    """The reason this source exists at all.
+
+    A peg fixes an exchange rate, not a term structure. If the two curves ever
+    did sit on top of each other the whole HKD branch would be ceremony — this
+    is what would say so. Measured 2026-08-26: 3.495% against 4.70%, a 120bp gap
+    worth roughly a doubling of a low-beta utility's fair value.
+    """
+    hk = data_provider._hkgb_fetch()
+    us = data_provider._us_treasury_10y()
+    assert hk is not None and us is not None, "one of the two feeds did not answer"
+    assert abs(hk[1] - us) > 0.002, (hk[1], us)

@@ -719,7 +719,7 @@ Testing it needs the `openbb` import stubbed rather than the function replaced �
 touches this function; not worth a commit of its own, since the untested code is a cache and a
 guard whose failure modes are a slow request and a rejected absurd rate.
 
-### 🔵 HK stocks still use the USD risk-free rate *(CNY resolved 2026-08-19; HKD still open)*
+### ⚪ ~~HK stocks still use the USD risk-free rate~~ — closed 2026-08-26 *(CNY 2026-08-19, HKD 2026-08-26)*
 
 **The ERP leg is done.** `EQUITY_RISK_PREMIUM = 0.05` is replaced by Damodaran's published
 country table, vendored dated at `backend/market_risk_premiums.json` and keyed on
@@ -734,11 +734,31 @@ of the vendored CNY default spread and reported as `cgb_10y_less_spread`. Measur
 touched. Against the 481.40 price the model moves from −2.5% to +27.1% — *away* from agreement
 with the quote, which is what makes it a correction rather than tuning.
 
-**What is still open is HKD**, and it is open for a data reason rather than a modelling one: an
-HKD-reporting issuer such as `0002_HK` still gets `usd_proxy`, because HKMA has not responded on
-three attempts across six days (`502` on 08-14, `http_code=000` on 08-18 and again on 08-19).
-The peg argument below is the standing justification for that half, and it is sound for HKD in
-a way it never was for CNY.
+**HKD closed 2026-08-26, and the blocker recorded here was wrong in both halves.**
+
+This paragraph read: *"an HKD-reporting issuer such as `0002_HK` still gets `usd_proxy`, because
+HKMA has not responded on three attempts across six days."* Measured 2026-08-26:
+
+- **HKMA answers.** `daily-figures-interbank-liquidity` returned HTTP 200 in 2.6 s, data dated
+  2026-08-25. The three failures were real observations; treating them as a property of the
+  endpoint rather than of those attempts is what turned them into a blocker.
+- **And HKMA was never the right source.** Its bond-yield endpoint returns `success: true` with
+  **12 of 13 fields null at every date sampled** — alive and empty, so retrying could not have
+  helped however many times it was tried.
+
+The ten-year is published by the HKSAR Government at `hkgb.gov.hk` as a daily `.xls` with an
+explicit 10-year benchmark column. **3.495% on 2026-08-25** against the US 4.70%. `0002_HK` moves
+97.27 → 234.83 on the fixture, composite 67 → 68, 3 of 260 golden leaves. See CHANGELOG 2026-08-26.
+
+**The peg argument below is superseded rather than merely weakened.** It held that an HKD issuer
+may take the US rate because the currency is pegged. A peg fixes an exchange rate, not a term
+structure, and the two curves differ by 120bp — which is 164bp of WACC on a low-beta name.
+
+**What this opened instead** is the more interesting half: at Hong Kong's own rate `0002_HK`'s cost
+of equity (3.76%) lands **below its pre-tax cost of debt** (3.84%), which cannot be true of one
+company. That is `beta x ERP` = 77bp against an 85bp credit spread — pre-existing, identical at
+either rate, and now flagged rather than corrected. It fires on `O` as well, so it is a low-beta
+property and not a Hong Kong one, and it belongs to the beta-credibility item above.
 
 **How it got here, in two steps on the same day.** `risk_free_rate(fallback, currency)`
 first returned `(rate, source)` with every currency still resolving to the US 10-year — no number
@@ -859,6 +879,13 @@ and they matter because it is the line that makes this item look ready to start.
 right source has not responded on either attempt — and the HKD case barely arises in this
 platform's actual coverage. **Reachability is a prerequisite to discharge before this item is
 scoped**, not a caveat to carry into it.
+
+> **Correction (2026-08-26).** The prerequisite was discharged and the conclusion did not survive
+> it. HKMA is reachable; its yield series is empty; and the source that has the ten-year is
+> `hkgb.gov.hk`, which was never checked because every attempt went to HKMA. "The right source has
+> not responded" was a statement about the source being *looked at*, not about the one holding the
+> number. The lesson worth keeping is narrow: three failed attempts at one host is evidence about
+> that host, not about the availability of the figure.
 
 *(Distinct from the reporting-currency mismatch fixed 2026-08-10. That was a units bug —
 CNY cash flows compared against an HKD price. This is a choice of discount-rate inputs,
