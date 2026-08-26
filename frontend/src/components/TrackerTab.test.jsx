@@ -20,7 +20,11 @@ import TrackerTab from './TrackerTab';
 import { render, click, flush } from '../test-utils';
 
 const { api, chart } = vi.hoisted(() => ({
-  api: { get: vi.fn(), stream: vi.fn() },
+  // Both return promises in `../api`, and so must the double: `vi.fn()` returns
+  // undefined, and a `.then`/`.catch` on that throws inside whatever listener
+  // called it — unhandled, so vitest passes the test and exits 1 anyway. That
+  // shape cost CI runs #38 and #39. Tests override `get` per case.
+  api: { get: vi.fn(() => Promise.resolve({})), stream: vi.fn(() => Promise.resolve()) },
   chart: { mounts: 0, unmounts: 0, props: null },
 }));
 

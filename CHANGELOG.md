@@ -7,6 +7,47 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-20 (d) — CI had been red for two commits and the local summary said green
+
+**CI #38 and #39 both failed**, on `5520aac` and on `bab4296`. The backend job passed both times;
+the frontend job failed on `npm test`. Nothing was wrong with the product — the failure was in the
+test doubles, and in how the two preceding commits were verified.
+
+### Why it went unnoticed for two commits
+
+`vitest run` exits **1** when it catches an unhandled error, even with every test passing. Both
+runs printed `137 passed` and exited 1. Locally the same thing happened — and both commits were
+signed off on the *summary line* rather than the exit code, because the suite was run through a
+`grep` pipeline, which reports the exit status of `grep`. The one number CI actually reads was
+never looked at.
+
+The lesson is not "read harder". It is that a verification which does not run the command CI runs,
+and check what CI checks, is not verification. `npm test; echo $?` is the whole fix.
+
+### The two gaps, both the same shape: a double that does not match its module
+
+- **`timeScale` had no `width()`.** `DrawingsPrimitive.screenShapes` calls it on every hit test,
+  and the cursor feedback added in (b) hit-tests on every `pointermove`. The real `ITimeScaleApi`
+  has `width()`; three hand-written copies of the mock did not. Now one `timeScaleApi(extra)`
+  helper the two wheel tests spread from, so the next method cannot drift in only two of three
+  places.
+- **`api.patch` returned `undefined`.** `persistMove` does `patch(...).catch(() => {})`, so
+  finishing a drag threw on `undefined.catch`. All four of `get/post/patch/del` return promises in
+  `../api`; the double now does too, as a floor that per-test `mockResolvedValue` overrides.
+
+Both threw inside event listeners — `pointermove` and `pointerup` — which is why they were
+unhandled rather than failures, and why the tests that triggered them still passed.
+
+### Verified the way it should have been the first time
+
+`npm run lint`, `npm test` ×3, `npm run build`, `ruff check backend/`, `python -m pytest -q` — all
+**exit 0**. Frontend 153 passed with **0 errors** (was 153 passed with 5 errors); backend 532.
+
+Not touched: `PortfolioTab.test.jsx` stubs `post`/`del`/`patch` as bare `vi.fn()` the same way. No
+test reaches them today, so it is latent rather than broken, and it is left alone deliberately.
+
+---
+
 ## 2026-08-20 (c) — the ratio bug was never the height, and full screen can now change chart
 
 Frontend **137 → 153**, backend 532 unchanged. Reported: leaving full screen still wrecked the

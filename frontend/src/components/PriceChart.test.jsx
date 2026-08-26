@@ -25,7 +25,7 @@ import PriceChart from './PriceChart';
 import { render, click, flush } from '../test-utils';
 import { toChartTime } from '../charttime';
 
-const { api, chart, series, createChart } = vi.hoisted(() => {
+const { api, chart, series, createChart, timeScaleApi } = vi.hoisted(() => {
   const series = {
     setData: vi.fn(), createPriceLine: vi.fn(),
     priceScale: () => ({ applyOptions: vi.fn() }),
@@ -43,19 +43,45 @@ const { api, chart, series, createChart } = vi.hoisted(() => {
       chart, series, requestUpdate: () => {},
     })),
   };
+  /**
+   * The `ITimeScaleApi` surface this component reaches for, defined once.
+   *
+   * It was three hand-maintained copies until 2026-08-20, and they drifted:
+   * `DrawingsPrimitive.screenShapes` calls `width()` on every hit test, none of
+   * the three had it, and the TypeError fired inside a `pointermove` listener.
+   * Unhandled rather than failed, so vitest printed "137 passed" and *exited 1*
+   * — green-looking locally, red on CI runs #38 and #39. Adding it in three
+   * places would have fixed those two runs and left the next method to drift.
+   */
+  const timeScaleApi = (extra = {}) => ({
+    fitContent: vi.fn(), subscribeVisibleLogicalRangeChange: vi.fn(),
+    coordinateToTime: vi.fn(() => 1), timeToCoordinate: vi.fn(() => 10),
+    logicalToCoordinate: vi.fn(() => 10), coordinateToLogical: vi.fn(() => 1),
+    width: vi.fn(() => 600),
+    ...extra,
+  });
   const chart = {
     addSeries: vi.fn(() => series), applyOptions: vi.fn(), remove: vi.fn(),
     panes: vi.fn(() => Array.from({ length: 4 }, () => ({ setHeight: vi.fn() }))),
-    timeScale: () => ({
-      fitContent: vi.fn(), subscribeVisibleLogicalRangeChange: vi.fn(),
-      coordinateToTime: vi.fn(() => 1), timeToCoordinate: vi.fn(() => 10),
-      logicalToCoordinate: vi.fn(() => 10), coordinateToLogical: vi.fn(() => 1),
-    }),
+    timeScale: () => timeScaleApi(),
     subscribeCrosshairMove: vi.fn(), subscribeClick: vi.fn(),
   };
   return {
-    api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn() },
-    chart, series, createChart: vi.fn(() => chart),
+    /**
+     * Every one of these returns a promise in `../api`, and so must the double.
+     * `vi.fn()` returns undefined, so `persistMove`'s `.catch(() => {})` threw
+     * the moment a test actually dragged something — inside a `pointerup`
+     * listener, i.e. unhandled, so vitest counted the test as passing and still
+     * exited 1. Individual tests override with `mockResolvedValue`; this is the
+     * floor, so a call nobody stubbed cannot take the run down.
+     */
+    api: {
+      get: vi.fn(() => Promise.resolve({})),
+      post: vi.fn(() => Promise.resolve({ id: 1 })),
+      patch: vi.fn(() => Promise.resolve({})),
+      del: vi.fn(() => Promise.resolve({})),
+    },
+    chart, series, createChart: vi.fn(() => chart), timeScaleApi,
   };
 });
 
@@ -589,9 +615,7 @@ describe('the wheel gesture', () => {
     const { container, unmount } = await mount();
     const range = { from: 0, to: 100 };
     const setVisibleLogicalRange = vi.fn();
-    chart.timeScale = () => ({
-      fitContent: vi.fn(), subscribeVisibleLogicalRangeChange: vi.fn(),
-      coordinateToTime: vi.fn(() => 1), timeToCoordinate: vi.fn(() => 10),
+    chart.timeScale = () => timeScaleApi({
       getVisibleLogicalRange: () => range, setVisibleLogicalRange,
     });
 
@@ -606,9 +630,7 @@ describe('the wheel gesture', () => {
   it('zooms on ctrl+wheel, keeping the window centred', async () => {
     const { container, unmount } = await mount();
     const setVisibleLogicalRange = vi.fn();
-    chart.timeScale = () => ({
-      fitContent: vi.fn(), subscribeVisibleLogicalRangeChange: vi.fn(),
-      coordinateToTime: vi.fn(() => 1), timeToCoordinate: vi.fn(() => 10),
+    chart.timeScale = () => timeScaleApi({
       getVisibleLogicalRange: () => ({ from: 0, to: 100 }), setVisibleLogicalRange,
     });
 
