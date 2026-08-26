@@ -358,7 +358,9 @@ function DcfAudit({ dcf }) {
         </div>
       )}
 
-      <div className="dcf-audit-row">
+      {/* Named so the headline badge can jump here. The row is the only place
+          that says which check failed and why; the badge only says how many. */}
+      <div className="dcf-audit-row" id="trust-checks">
         <span className="dcf-label">Trust checks</span>
         <span>
           {/* A bridge leg the provider did not report is assumed zero so the
@@ -390,6 +392,48 @@ function DcfAudit({ dcf }) {
               {' '}
               above 75%: the perpetuity assumption, not the forecast, is driving this
             </span>
+          )}
+          {/* How much room the perpetuity has. Deliberately a plain number and
+              not a chip: a chip implies a pass/fail line, and there is no
+              evidence for where one would sit. The tooltip says what the number
+              does instead, which is what lets a reader weigh it — the same
+              choice made for the beta regression's R² above. */}
+          {d.terminal_spread != null && (
+            <span
+              className="muted-note"
+              title={
+                `Terminal value is 1/(WACC − g) times the final year's cash flow, so it is `
+                + `${(1 / d.terminal_spread).toFixed(0)}× here, and its sensitivity to a WACC `
+                + `error goes as the square of that. A narrow spread does not make the `
+                + `valuation wrong; it makes every input behind it matter more.`
+              }
+            >
+              {' · '}WACC − g <b>{pct(d.terminal_spread)}</b>
+            </span>
+          )}
+          {/* An inequality between two computed inputs, not a tuned threshold.
+              A lender ranks ahead of a shareholder, so a share cannot require
+              less return than the bond above it — CAPM produces it anyway when
+              beta × ERP comes in under the credit spread. Reported, never
+              corrected: ordering the two would be a modelling change. */}
+          {d.cost_of_equity_below_debt && (
+            <>
+              {' '}
+              <span
+                className="alert-chip"
+                title={
+                  // Two decimals, not the usual one: the gap is often a few
+                  // basis points — 3.76% against 3.84% on 0002.HK — and at one
+                  // decimal the sentence reads "3.8% is below 3.8%".
+                  `Cost of equity ${pct(a.cost_of_equity, 2)} is below the pre-tax cost of `
+                  + `debt ${pct(d.cost_of_debt_pre_tax, 2)}, which cannot be true of one company: debt `
+                  + `ranks ahead of equity. It happens here because beta × ERP is smaller than `
+                  + `the credit spread. The figures are shown as computed rather than reordered.`
+                }
+              >
+                cost of equity below cost of debt
+              </span>
+            </>
           )}
           {d.implied_exit_ev_ebitda !== null && (
             <>
@@ -706,6 +750,40 @@ function BaseYearPanel({ dcf }) {
   );
 }
 
+/* How many of the Trust checks this valuation failed, said where the number
+   is rather than where the explanation is.
+ *
+ * No threshold. A single contradiction is worth surfacing on its own, and
+ * picking a cutoff would mean choosing a number the diagnostics do not supply.
+ * Measured 2026-08-26: AAPL trips one (market-implied growth), 0002.HK trips
+ * two, one of which is the CAPM inversion — so the badge discriminates between
+ * them where the caveat rows below render at near-identical density.
+ */
+function TrustFlagBadge({ dcf }) {
+  const d = dcf?.diagnostics;
+  if (!d) return null;
+  const flags = [
+    d.cost_of_equity_below_debt,
+    d.terminal_value_high,
+    d.market_implied_growth_high,
+    d.net_debt_assumed_zero?.length > 0,
+    dcf.assumptions?.fx_basis === 'rate_unavailable',
+  ].filter(Boolean).length;
+  if (!flags) return null;
+  return (
+    <button
+      type="button"
+      className={`dcf-flags ${d.cost_of_equity_below_debt ? 'alert' : ''}`}
+      title="Jump to Trust checks, which names each one and why it fired."
+      onClick={() =>
+        document.getElementById('trust-checks')?.scrollIntoView({ block: 'center' })
+      }
+    >
+      {flags} trust check{flags > 1 ? 's' : ''} flagged
+    </button>
+  );
+}
+
 export default function ModelsTab({ ticker }) {
   const [analysis, setAnalysis] = useState(null);
   const [card, setCard] = useState(null);
@@ -815,7 +893,7 @@ export default function ModelsTab({ ticker }) {
             disagree in silence. The model is still shown — the reader may want
             the sensitivity grid — but it is not presented as an answer. */}
         {card && card.dcf_applicable === false && (
-          <div className="ai-offline-note">
+          <div className="notice-banner">
             A discounted-cash-flow valuation does not apply to a{' '}
             {card.classification.replaceAll('_', ' ')}: free cash flow here is{' '}
             {card.classification === 'real_estate_reit'
@@ -849,7 +927,10 @@ export default function ModelsTab({ ticker }) {
           </button>
         </div>
         {dcf?.error ? (
-          <div className="ai-offline-note">{dcf.error}</div>
+          /* An override the model could not run is the user's own input coming
+             back at them. It wore the AI-outage banner, which said the wrong
+             thing about whose problem it was. */
+          <div className="error-banner">{dcf.error}</div>
         ) : (
           dcf && (
             <>
@@ -880,6 +961,7 @@ export default function ModelsTab({ ticker }) {
                     {dcf.upside_pct > 0 ? '+' : ''}
                     {num(dcf.upside_pct, 1)}%
                   </span>
+                  <TrustFlagBadge dcf={dcf} />
                 </div>
                 <div>
                   <span className="dcf-label">Enterprise value</span>

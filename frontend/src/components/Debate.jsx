@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { stream } from '../api';
+import AiOffline from './AiOffline';
 
 /**
  * Bull → bear → verdict, streamed as three separate passes.
@@ -52,10 +53,10 @@ export default function Debate({ ticker, aiOnline }) {
       </div>
 
       {!aiOnline && (
-        <div className="ai-offline-note">
-          Requires the local AI. Install Ollama to enable (see README). Three passes on a
-          CPU-only 7B model takes several minutes; the text streams in as it is written.
-        </div>
+        <AiOffline>
+          Three passes on a CPU-only 7B model takes several minutes; the text streams in
+          as it is written.
+        </AiOffline>
       )}
       {error && <div className="error-banner">{error}</div>}
 

@@ -735,6 +735,24 @@ nav button.active {
   font-size: 12px;
   color: var(--muted);
   margin-top: 8px;
+  /* Measured 2026-08-26, AAPL at 1440x900: these paragraphs were running the
+     full 1206px panel at 158, 173.7 and 180 characters per line against a
+     45-75 optimum, while `line-height: normal` resolved to 1.2 — under the 1.4
+     floor. Long measure and tight leading multiply: the eye has to make a
+     180-character return sweep and then find the right line to land on.
+
+     Neither number is invented here. .ratio-legend below already caps at 78ch
+     with 1.5, and .verdict at 90ch with 1.6 — and .verdict is the one block on
+     the scorecard that measures 39 characters per line and reads easily. This
+     extends a rule the stylesheet already had to the class carrying 38 of the
+     sites. Not one word was cut to do it; the worst paragraph goes 180 -> 78,
+     a 57% shorter sweep at identical content.
+
+     ff-divergence, ff-skipped, screener-why, filter-note and draw-hint are all
+     modifiers on this class and inherit both. The two in PriceChart are inline
+     spans, where max-width is inert — harmless, not an oversight. */
+  line-height: 1.5;
+  max-width: 78ch;
 }
 
 .news-tag {
@@ -832,6 +850,19 @@ nav button.active {
 .ai-offline-note {
   background: rgba(246, 70, 93, 0.1);
   border: 1px solid rgba(246, 70, 93, 0.35);
+  border-radius: var(--r-control);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+
+/* Same shape as the banner above, none of its alarm. "A discounted-cash-flow
+   valuation does not apply to a real estate reit" is the model declining to
+   answer, which is the model working — and it was rendering in the red outage
+   banner on every bank and REIT. */
+.notice-banner {
+  background: rgba(139, 152, 165, 0.1);
+  border: 1px solid var(--border);
   border-radius: var(--r-control);
   padding: 8px 10px;
   font-size: 12.5px;
@@ -941,6 +972,32 @@ nav button.active {
   font-weight: 700;
 }
 
+/* The Trust-checks row answers "should you believe this number", and it sits
+   below the sensitivity grid — far enough down that a reader who already has
+   their answer never reaches it. This is the pointer, not a second opinion:
+   the upside keeps its own up/down colour, because that colour is the model's
+   answer and a count of failed checks does not overturn it. Column, not row:
+   .dcf-result > div already stacks. */
+.dcf-flags {
+  align-self: flex-start;
+  margin-top: 3px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--r-control);
+  cursor: pointer;
+  color: var(--gold);
+  background: rgba(240, 185, 11, 0.14);
+  border: 1px solid transparent;
+}
+
+.dcf-flags.alert {
+  color: var(--down);
+  background: transparent;
+  border-color: var(--down);
+}
+
 .dcf-audit {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -1006,11 +1063,15 @@ nav button.active {
 }
 
 .ok-chip,
-.warn-chip {
+.warn-chip,
+.alert-chip {
   display: inline-block;
   padding: 1px 8px;
   border-radius: var(--r-control);
   font-weight: 600;
+  /* Transparent on the two filled chips so all three keep one height; only
+     .alert-chip spends the border. */
+  border: 1px solid transparent;
 }
 
 .ok-chip {
@@ -1023,10 +1084,33 @@ nav button.active {
   background: rgba(240, 185, 11, 0.14);
 }
 
+/* `warn-chip` was carrying two unrelated claims. "We substituted a figure"
+   — net debt assumed zero, upside withheld, terminal value past 75% — is a
+   disclosed gap, and gold already means exactly that everywhere else in this
+   sheet (see .src-tag below the beta row). "Cost of equity is under the
+   pre-tax cost of debt" is not a gap; it is two numbers that cannot both be
+   true of one company, and it was wearing the same pill as the routine case.
+   A reader who has learned to skim gold skims it.
+
+   Outlined rather than filled, so the difference survives on a second channel
+   besides hue. That is also the only way it passes AA here: --down on --panel
+   measures 4.91:1, while the same red at the 0.14 fill the other chips use
+   lands on 4.25:1 and fails at this size. */
+.alert-chip {
+  color: var(--down);
+  background: transparent;
+  border-color: var(--down);
+}
+
 .sens-title {
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 6px;
+  line-height: 1.5;
+  /* Wider than the prose above on purpose. These measured 63-81 characters and
+     render on one line; at 78ch the longest would break in two, which costs
+     more than the stretch does. */
+  max-width: 100ch;
 }
 
 .sens-table {
@@ -1135,7 +1219,9 @@ nav button.active {
   letter-spacing: normal;
   font-weight: 400;
   color: var(--muted);
-  font-size: 11.5px;
+  /* 11.5px measured. Prose, not a label: the uppercase .dcf-label above keeps
+     11.5px because tracking and caps carry it, this reads as a sentence. */
+  font-size: 12px;
 }
 
 /* ── Scorecard verdict ───────────────────────── */
@@ -1454,6 +1540,7 @@ nav button.active {
   font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
+  max-width: 78ch;  /* measured 95.7 characters per line at 579px */
 }
 
 .ff-chart {
@@ -1773,6 +1860,7 @@ nav button.active {
   font-size: 12px;
   line-height: 1.5;
   padding: 10px 4px;
+  max-width: 78ch;  /* measured 105.8 characters per line at 1240px */
 }
 
 /* ── Score history ───────────────────────────── */
@@ -1977,7 +2065,10 @@ textarea:focus {
 .forensic-hint {
   display: block;
   font-weight: 400;
-  font-size: 11px;
+  /* 11px measured, the smallest text in the app and it carries the thresholds
+     the whole panel is read against. */
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--muted);
   margin-top: 2px;
 }

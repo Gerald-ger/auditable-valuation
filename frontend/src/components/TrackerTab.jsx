@@ -4,6 +4,7 @@ import { num, big } from '../format';
 import PriceChart from './PriceChart';
 import { DISPLAY_TZ_LABEL } from '../charttime';
 import ChatBox from './ChatBox';
+import AiOffline from './AiOffline';
 
 const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'];
 
@@ -185,9 +186,7 @@ export default function TrackerTab({ ticker, aiOnline, saved = [], onTicker }) {
             </button>
           </div>
           {!aiOnline && (
-            <div className="ai-offline-note">
-              Requires the local AI. Install Ollama to enable (see README).
-            </div>
+            <AiOffline />
           )}
           {outlook !== null && (
             <div className="outlook-text">

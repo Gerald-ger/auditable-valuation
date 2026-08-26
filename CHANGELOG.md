@@ -2,6 +2,152 @@
 
 Notable changes to the Stock Analysis Platform. Newest first.
 
+## 2026-08-26 — 180 characters per line
+
+The same day's second finding, from the user looking at a screenshot and saying
+there were too many words. Measured, the words were not the problem.
+
+**What was measured.** AAPL at 1440x900, 40 prose elements across the Models and
+Scorecard tabs. `.chart-note` — the class carrying 38 sites — set `font-size`,
+`color` and `margin-top`, and nothing else. No `max-width`, no `line-height`. So
+every paragraph ran the full 1206px panel:
+
+| | before |
+|---|---|
+| "We do not choose between these…" | **180 characters per line** |
+| "Enterprise value belongs to everyone…" | 173.7 |
+| "Computed from the same statements…" | 165.6 |
+| median across 40 elements | 76.5 |
+| over 75 cpl | 21 of 40 |
+| over 100 cpl | 10 of 40 |
+| `line-height: normal`, resolving to 1.2 | 27 of 40 |
+
+Against a 45-75 optimum. Every multi-line `.chart-note` and `.ff-divergence` was
+simultaneously past 75 characters and under the 1.4 leading floor — the two
+conditions multiply, because a long line needs more leading to find the next one,
+not less.
+
+**The control was already in the file.** `.verdict` measures 39 characters per
+line at 1.6 leading, and nobody finds that block hard to read. `.ratio-legend`
+caps at 78ch with 1.5. The author knew the rule; it had never reached the class
+doing the heavy lifting.
+
+**Changed — seven declarations, no text touched.**
+- `.chart-note`: `line-height: 1.5`, `max-width: 78ch`. `.ff-divergence`,
+  `.ff-skipped`, `.screener-why`, `.filter-note` and `.draw-hint` are modifiers
+  on it and inherit both, which is why one rule reached all of them.
+- `.sens-title`: `1.5` and `100ch` — deliberately wider. These are one-line
+  titles measured at 63-81 characters; 78ch would have broken them in two, which
+  costs more than the stretch does. Verified still one line, all four.
+- `.caveat` and `.analyst-context-note`: `78ch` (both already had the leading).
+- `.forensic-hint`: `1.5` (short enough not to need the measure).
+
+**Measured after**, same script, same settle-poll:
+
+| | before | after |
+|---|---|---|
+| median cpl | 76.5 | **66.3** |
+| p90 cpl | 130.3 | **89.4** |
+| max cpl | 180.0 | **127.3** |
+| over 75 | 21/40 | **15/40** |
+| over 100 | 10/40 | **2/40** |
+| leading under 1.4 | 27/40 | **3/40** |
+| words, Models / Scorecard | 431 / 674 | **431 / 674** |
+| characters, Models / Scorecard | 2537 / 3939 | **2537 / 3939** |
+
+Character counts identical element-for-element across all 40: nothing was cut to
+get this. The cost is height — Models 2078 -> 2284px, Scorecard 2513 -> 2725px,
+about +9%. Caveat ink area fell 7.8% on Models and rose 3.6% on Scorecard, so
+this did not reduce how much of the page is caveat; it reduced how hard each line
+is to read. Bundle +0.11 kB raw, +0.01 kB gzip. No overflow, no clipping, no
+console output.
+
+**What this did NOT fix.** The three `.dcf-audit-row` lines at the top of the DCF
+panel — "Inputs used", "Terminal growth", "Trust checks" — are inline `<span>`s,
+where `max-width` is inert. "Inputs used" is still one 327-character run-on with
+eight middle-dot separators wrapping to two lines, and a `.muted-note` fragment
+inside "Terminal growth" is now the worst line in the app at 127 characters.
+Fixing those means restructuring that row, not restyling it. Left alone
+deliberately.
+
+## 2026-08-26 — The warnings were all the same colour
+
+An audit of every caveat surface in the frontend, then the one change it
+justified. Three reviewers: a design read, a mechanical/browser evidence pass,
+and a copy-and-necessity pass, the first two isolated from each other.
+
+**What the audit measured.** 82 caveat elements in JSX across 17 classes,
+~46 distinct strings. What a reader actually meets, measured live at 1440x900:
+25 rendered on 0002.HK's Models tab, **16 of them above the fold**, occupying
+14.6% of the content column.
+
+**The finding that mattered.** Density does not track risk. AAPL renders 22
+caveat elements against 0002.HK's 25 — a company with a CAPM inversion and a
+90%-terminal-value DCF looks 12% noisier than a plain blue chip, and on the
+Scorecard tab the two are identical at 19 each. A caveat system that fires at
+the same volume regardless of what is wrong has spent its signal before it
+reaches the case it exists for.
+
+**The defect, stated narrowly.** `.warn-chip` was carrying two unrelated
+claims. "We substituted a figure" — net debt assumed zero, upside withheld,
+terminal value past 75% — is a disclosed gap, and gold already means exactly
+that elsewhere in the sheet (`.src-tag`). "Cost of equity is under the pre-tax
+cost of debt" is not a gap; it is two numbers that cannot both be true of one
+company. Both wore the same pill.
+
+**Correction to the audit's own conclusion.** The design read reported that
+`--gold` carried five unrelated meanings and should be stripped to one. It
+counted call sites without weighing the comments beside them: `.src-tag`'s gold
+is documented as "substitutes that mean we could not measure this company", and
+`.ff-conviction` / `.ff-tag` are self-consistent three-step scales where gold is
+the middle. Ripping gold out of those would have broken working systems. The
+conflict was zero, not five, and the planned diff halved.
+
+**Changed**
+- `.alert-chip`: red, outlined rather than filled. Two channels, not one, and
+  the only way it passes AA — `--down` on `--panel` measures 4.90:1 live, while
+  the same red at the 0.14 fill the other chips use lands on 4.25:1 and fails.
+  `cost_of_equity_below_debt` is its sole current member; the tier is defined by
+  a rule, not by a count.
+- `TrustFlagBadge`, beside the headline upside: how many trust checks this
+  valuation failed, said where the number is instead of below the sensitivity
+  grid. The number keeps its own up/down colour — that colour is the model's
+  answer and a count does not overturn it. Clicking scrolls to `#trust-checks`.
+  No threshold: one contradiction is worth surfacing alone, and a cutoff would
+  mean choosing a number the diagnostics do not supply. Measured 2026-08-26:
+  AAPL 1 (gold), 0002.HK 2 (red).
+- `.notice-banner`: "a DCF does not apply to a real estate reit" is the model
+  declining to answer, and it was rendering in the red outage banner on every
+  bank and REIT. `dcf.error` moved the other way, to `.error-banner` — a failed
+  override is the user's own input coming back, not an AI outage.
+- `AiOffline`: one sentence for one event. Three surfaces reported the local AI
+  being down in three different wordings; the clauses that were genuinely
+  per-surface are kept as children. Nothing was dropped in the merge.
+- Footer: "not **certified** financial advice" conceded that it is financial
+  advice and merely uncertified, while `backend/scoring.py`'s caveat denies the
+  category outright — two claims, both on screen together on the Scorecard tab.
+  The weaker one now matches the stronger.
+- `.title-note` 11.5px and `.forensic-hint` 11px, the two prose sizes measured
+  under the 12px floor, both to 12px. `.dcf-label` stays 11.5px: uppercase with
+  tracking is a label, not a sentence.
+
+**Measured after.** Caveat count went **up** by one on Models (22→23 AAPL,
+25→26 0002.HK); ink ratio 14.6%→14.7%; page height +29px. Readability did not
+improve by removing anything — nothing was removed. It improved by making two
+of the sixteen above-the-fold elements separable from the other fourteen.
+Bundle +0.63 kB gzip (+0.41%). Console clean across four states. Full gate:
+ruff 0, pytest 553 passed, oxlint 0, vitest 157 passed, build 0.
+
+**Not done, deliberately.** No caveat text deleted or demoted to a tooltip; no
+collapse mode; no mobile work. The horizontal overflow measured at 390px comes
+from the tab `<nav>` (469px) and the two `.sens-table`s, not from any caveat.
+
+
+Format note: entries record *what changed and why it mattered*, with the measured
+before/after where a change moved numbers the UI displays.
+
+---
+
 ## 2026-08-26 — Hong Kong stops borrowing America's risk-free rate
 
 Backend **532 → 553**, frontend unchanged. The last currency leg of the CAPM work, and two

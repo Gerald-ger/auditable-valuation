@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { stream } from '../api';
+import AiOffline from './AiOffline';
 
 export default function ChatBox({ ticker, aiOnline }) {
   const [messages, setMessages] = useState([]);
@@ -45,10 +46,7 @@ export default function ChatBox({ ticker, aiOnline }) {
         <span className={`ai-dot ${aiOnline ? 'on' : 'off'}`} title={aiOnline ? 'Local AI online' : 'Local AI offline'} />
       </div>
       {!aiOnline && (
-        <div className="ai-offline-note">
-          Local AI is offline. Install and start Ollama (see README). The chat will
-          activate automatically.
-        </div>
+        <AiOffline>The chat will activate automatically.</AiOffline>
       )}
       <div className="chat-messages">
         {messages.length === 0 && (

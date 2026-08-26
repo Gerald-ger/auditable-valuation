@@ -121,8 +121,13 @@ export default function App() {
         </ErrorBoundary>
       </main>
       <footer>
+        {/* "not *certified* financial advice" conceded that it is financial
+            advice and merely uncertified, while the scorecard's own caveat
+            (backend/scoring.py) denies the category outright. Two claims, one
+            of them weaker, both on screen together on the Scorecard tab. This
+            one now matches that one. */}
         Data: yfinance (OpenBB adapter ready) · AI: local Ollama · Decision support only,
-        not certified financial advice.
+        not financial advice.
       </footer>
     </div>
   );
