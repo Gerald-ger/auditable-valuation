@@ -429,7 +429,7 @@ fallback when the fetch fails:
 
 | call | what it feeds | where |
 |---|---|---|
-| `fixedincome.government.treasury_rates` (`federal_reserve`) | US 10Y yield → CAPM in `_wacc()`; cached once per calendar day, falls back to a constant offline | [backend/data_provider.py](backend/data_provider.py) |
+| `fixedincome.government.treasury_rates` (`federal_reserve`) | US 10Y yield → CAPM in `_wacc()` for a USD reporter, and the last-resort fallback for the other two currencies; cached once per calendar day, falls back to a constant offline | [backend/data_provider.py](backend/data_provider.py) |
 | `equity.fundamental.filings` (`sec`) | the SEC filing markers on the chart | [backend/data_provider.py](backend/data_provider.py) |
 | `equity.search` (`sec`) | the 10,398-symbol index behind typo-tolerant search; fetched once, cached to disk for 30 days | [backend/search.py](backend/search.py) |
 | `equity.compare.peers` (`fmp`) | the peer set behind peer comps and the re-levered beta | [backend/comps.py](backend/comps.py) |
@@ -437,7 +437,7 @@ fallback when the fetch fails:
 So OpenBB is not an optional extra: without it you lose SEC chart depth, typo tolerance
 and peer betas as well as the live risk-free rate.
 
-**One rate does not come through OpenBB.** Since 2026-08-19 a CNY-reporting issuer — `0700.HK`
+**Two rates do not come through OpenBB.** Since 2026-08-19 a CNY-reporting issuer — `0700.HK`
 is the one in the fixture set — is discounted at China's own 10-year rather than America's,
 read from ChinaBond's published CGB curve by a direct HTTP call in
 [backend/data_provider.py](backend/data_provider.py). No key, one fetch per calendar day. The
@@ -456,6 +456,18 @@ where the gap to the US one is ~360bp and worth 30% of Tencent's fair value.
 The curve itself is fetched at runtime and never committed here — CCDC restricts redistribution
 rather than access — and the one cached reading lives in `backend/data/`, which is already
 outside the repository.
+
+Since 2026-08-26 an HKD-reporting issuer — `0002.HK` in the fixture set — reads Hong Kong's,
+from the daily `.xls` the HKSAR Government publishes at `hkgb.gov.hk`. Same shape: no key, one
+fetch per calendar day, a stored fallback bounded by the yield's own published date, and the
+tenor found by the label `10-year` rather than by a column position. TODOLIST had this recorded
+as blocked on HKMA being unreachable across three attempts; measured 2026-08-26, HKMA answers in
+2.6s and its bond-yield endpoint returns `success: true` with 12 of 13 fields null at every date
+sampled — alive and empty. The ten-year was published somewhere nobody had looked.
+
+`hkgb.gov.hk` is treated the same way and for the same reason: the workbook asks that the
+Government be quoted as owner of the Closing Reference Pricings, so the reading is cached rather
+than vendored, in the same directory and equally outside the repository.
 
 **Free-tier reality check** (measured 2026-08-02 with valid Tiingo + FMP free keys, verified
 by raw HTTP against both vendors):
@@ -584,12 +596,17 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   fundamentals snapshot — the audit row names which is which. The batch screener keeps the
   snapshot price throughout: a stale quote cannot reorder a ranking, and a fetch per ticker
   would roughly double a fifty-name run.
-- The DCF risk-free rate is the live US 10Y treasury yield, refreshed once per day, with a
-  4.3% fallback when OpenBB or the Fed feed is unreachable. HK issuers use the same USD
-  rate — the HKD peg makes it an acceptable proxy, not a correct one, and for a *CNY*
-  reporter such as 0700.HK the peg argument does not apply at all. This is the one half of
-  the cost-of-capital pair still unsourced; see `docs/data-sources-review.md` §7 for why
-  the obvious fix is gated rather than shipped.
+- The DCF risk-free rate matches the currency the cash flows are reported in. USD reads the
+  live US 10Y treasury yield, refreshed once per day, with a 4.3% fallback when OpenBB or the
+  Fed feed is unreachable; CNY reads China's own curve (`cgb_10y_less_spread`, since
+  2026-08-19) and HKD reads Hong Kong's (`hkgb_10y_less_spread`, since 2026-08-26), each net
+  of that country's sovereign default spread so country risk is not counted twice against a
+  country-inclusive ERP. Only when a curve is unreachable *and* nothing recent enough is
+  stored does an issuer fall back to the US 10Y, labelled `usd_proxy`.
+  **The HKD peg argument this section used to make is superseded rather than weakened**: a peg
+  fixes an exchange rate, not a term structure, and measured 2026-08-25 the two ten-years
+  differ by 120bp — 164bp of WACC on a low-beta name, moving `0002.HK` from 97.27 to 234.83.
+  See `docs/data-sources-review.md` for the full source table.
 - **The vendor's own EV multiples mixed those two currencies, and now do not.**
   `enterpriseToEbitda` and `enterpriseToRevenue` arrive from Yahoo already divided, and the
   legs are not in the same unit: enterprise value is built from market cap (trading) while

@@ -515,6 +515,33 @@ component to fix it.
 **Trigger:** the stylesheet passing ~3,000 lines, or the first component deletion — whichever
 comes first, since either turns the structural risk into a live one.
 
+### 🟡 The chart panel overflows horizontally on a phone *(found 2026-08-26)*
+
+Measured at 390×844: `document.documentElement.scrollWidth` is **489px** against a 390px
+client width. Nothing in the caveat layer causes it — all 22 visible note elements were
+checked for self-overflow and none contributes. Two things do: the tab `<nav>` (469px, an
+unwrapped button row) and the two `.sens-table` grids (373px and 385px, whose 61-66px
+columns do not compress).
+
+Separately the page runs **2125px at 1440px wide against 4127px at 390px**, 1.94×, because
+every prose caveat rewraps from one line into six to nine.
+
+**Fix:** let the nav wrap or scroll, and give the sensitivity tables their own
+`overflow-x: auto` container. Neither touches the caveat layer, which is why the
+2026-08-26 typography pass deliberately left this alone rather than bundling it.
+
+### 🟡 "Inputs used" is a 327-character run-on *(found 2026-08-26)*
+
+The `INPUTS USED` row of the DCF panel is a single sentence of **327 characters carrying
+eight middle-dot separators**, wrapping to two lines at 1440px and measuring **127
+characters per line** — the longest line left in the app after the 2026-08-26 typography
+pass, which could not reach it: the row's content is an inline `<span>`, and `max-width` is
+inert on an inline element. The house rule allows one middle dot per line.
+
+**Fix:** a small label/value grid — beta, WACC, risk-free, ERP, credit spread, tax, FCF,
+forecast horizon, price-as-of, each in its own cell. That is a structural change to
+`DcfAudit`, not a restyle, which is why it was scoped out rather than attempted.
+
 ### 🟡 Cosmetic
 
 Line references re-verified 2026-08-09.
@@ -901,15 +928,24 @@ yfinance provides. The chart states this rather than looking broken.
 filings feed, but it is not in OpenBB and would need its own adapter); or drop event
 markers for HK entirely so the gap is not implied to be a bug.
 
-### 🟡 Volume pane shows no intermediate axis ticks
+### ⚪ ~~Volume pane shows no intermediate axis ticks~~ — closed 2026-08-26
 
-Volume now has its own pane and scale, so it can no longer be misread against the
-price axis — but lightweight-charts renders only the last-value badge (`49.18M`) in
-a pane that short, not tick labels. A custom price formatter was tried and reverted:
-it changed the badge format without producing ticks. The value is legible from the
-badge and the hover legend, so this is cosmetic.
+Filed as cosmetic, with *"a taller volume pane"* offered as the fix if it ever mattered.
+The first half was right. The second was already in the code and had never worked: the
+pane asked for 110px via `chart.panes()[i].setHeight(110)` and rendered at **27px**,
+because lightweight-charts converts `setHeight` into a stretch factor against the panes
+existing at that moment, so a call made while later panes are still being added is diluted
+by every one of them. It was never a short pane by choice, and nothing failed to say so.
+RSI carried the same fault and fell to 27px whenever MACD was switched on.
 
-**Fix if it matters:** a taller volume pane, or a hand-drawn axis overlay.
+Replaced with `setStretchFactor`, applied once after the last pane exists. Volume renders
+at 110px (**+307%**) and the axis now draws 150M/200M/250M/300M rather than a lone badge —
+exactly the ticks this item recorded as unobtainable. The custom price formatter tried and
+reverted here was treating the symptom.
+
+*(Lesson worth keeping: "the library will not do this" was really "the call we make is
+silently ignored". Neither the code nor a test observed the rendered height.)*
+See CHANGELOG 2026-08-26.
 
 ### 🔵 Historical news — pay, work around, or drop
 

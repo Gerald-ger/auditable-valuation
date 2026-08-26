@@ -17,6 +17,16 @@ past that does the issuer fall back to `usd_proxy` and the mismatch this documen
 return. The trade is explicit: a CNY yield some days old is a far smaller error than a US yield
 today, ~22bp of annual range against a ~360bp gap.
 
+**Amended 2026-08-26: HKD now reads Hong Kong's own curve, and the peg argument below is
+superseded rather than weakened.** §4 and §7 hold that an HKD-reporting issuer may keep the US
+10-year because the currency is pegged. A peg fixes an exchange rate, not a term structure.
+Measured 2026-08-25 the Hong Kong ten-year is 3.495% against the US 4.70% — 120bp, which is
+164bp of WACC on a low-beta name and moves the `0002_HK` fixture 97.27 → 234.83.
+`risk_free_rate` now reads the HKSAR Government's daily publication at `hkgb.gov.hk` for an HKD
+reporter, net of the HKD sovereign default spread, as `hkgb_10y_less_spread`. **Every table
+below that shows `usd_proxy` for an HKD issuer, and every sentence that defends the peg, is left
+as written and is wrong as of this date.**
+
 **The second question this document ended on — the terminal-growth ceiling — was answered by
 choosing to let it bind.** A 1.09% CNY risk-free asserts 1.09% perpetual growth for Tencent, and
 that is a consequence of a market observable rather than a forecast anyone here made. The

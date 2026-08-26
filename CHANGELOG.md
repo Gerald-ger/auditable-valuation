@@ -2,6 +2,52 @@
 
 Notable changes to the Stock Analysis Platform. Newest first.
 
+## 2026-08-26 - The README went stale the same day
+
+A documentation pass over the eleven markdown files, after the three commits above.
+Three claims in README.md had become false within hours of being true, and one open
+TODOLIST item had been closed without anyone noticing.
+
+**Corrected in README.md.** The risk-free bullet said the rate "is the live US 10Y
+treasury yield", that "HK issuers use the same USD rate" because "the HKD peg makes it an
+acceptable proxy", and that this was "the one half of the cost-of-capital pair still
+unsourced". The first is now true only of a USD reporter, and the other two stopped being
+true this morning. Rewritten to say the rate matches the reporting currency, with all
+three curves named and the peg argument marked superseded rather than quietly dropped: a
+peg fixes an exchange rate, not a term structure, and the two ten-years differ by 120bp.
+"One rate does not come through OpenBB" is now two, with hkgb.gov.hk described alongside
+ChinaBond and placed after ChinaBond's own fallback and licensing paragraphs rather than
+between them.
+
+**Amended docs/currency-consistent-discounting.md** rather than rewriting it, which is
+that file's existing convention -- it already carries an "Implemented 2026-08-19" status
+and an "Amended 2026-08-20" note above the analysis it preserves as written. The new note
+says plainly that every table below showing `usd_proxy` for an HKD issuer, and every
+sentence defending the peg, is left as written and is wrong as of this date.
+
+**Closed TODOLIST's "Volume pane shows no intermediate axis ticks".** Filed as cosmetic,
+offering "a taller volume pane" as the fix if it ever mattered. The first half was right
+and the second was already in the code: the pane asked for 110px and rendered at 27,
+because `setHeight` is converted into a stretch factor against the panes existing at that
+moment. It was never a short pane by choice. The custom price formatter tried and reverted
+under that item was treating a symptom. Worth keeping as a pattern: "the library will not
+do this" was really "the call we make is silently ignored", and neither the code nor a
+test ever observed the rendered height.
+
+**Recorded two findings that existed only in a transcript**, both measured during the
+2026-08-26 typography work and deliberately out of its scope:
+
+  - The chart panel overflows horizontally at 390px -- `scrollWidth` 489 against a 390
+    client width. Not the caveat layer: all 22 visible note elements were checked and none
+    contributes. It is the tab `<nav>` at 469px and the two `.sens-table` grids at 373 and
+    385. The page also runs 2125px wide-screen against 4127px at 390px.
+  - "Inputs used" is one 327-character sentence carrying eight middle-dot separators, at
+    127 characters per line -- the longest line left in the app, and unreachable by the
+    typography pass because the row's content is an inline `<span>`, where `max-width` is
+    inert.
+
+Measurements that live only in a conversation are measurements that get taken twice.
+
 ## 2026-08-26 - The volume pane asked for 110px and got 27
 
 Raised as a preference ("make the indicator panes taller"). Measured, it was a
