@@ -77,6 +77,46 @@ function fitDisplay(chart, warmup, total) {
 }
 
 /**
+ * Pane heights in pixels, which double as the stretch factors that produce
+ * them.
+ *
+ * `setHeight()` does not do what its name says. Measured 2026-08-26 against
+ * lightweight-charts 5.2: it is converted immediately into a stretch factor
+ * against the panes existing *at that moment*, so calling it while panes are
+ * still being added leaves each call diluted by every later one. Volume asked
+ * for 110px and rendered at **27**; RSI asked for 95px, rendered at 84.5, and
+ * fell to 27 as soon as MACD came on. The comment that used to sit above the
+ * volume call said 110 was picked so the axis could fit intermediate ticks
+ * rather than only the last-value badge. It never got them, and nothing failed.
+ *
+ * `setStretchFactor`, applied once after the last pane exists, is immune to
+ * that ordering and is scale-invariant: measured on the live chart, `440/110/
+ * 120` and `4/1/1.09` produce byte-identical rows (364/91/99 in a 584px box),
+ * because only the ratio is read. Using the pixel figures directly therefore
+ * costs nothing and keeps one set of numbers instead of two.
+ *
+ * Because the container below is exactly their sum plus the axis and the
+ * separators, one stretch unit is one pixel there, so these are simultaneously
+ * a ratio and a height. Full screen the container is the screen instead and the
+ * same ratio still holds.
+ *
+ * `price` is 440 because that is what it measured at before this change. The
+ * bug made the price pane *larger* than nominal by handing it the space it took
+ * from volume, and dropping it back to the old nominal 370 would have been a
+ * regression nobody asked for.
+ *
+ * `rsi` and `macd` are 120 rather than the old nominal 95 on one ground: RSI is
+ * a fixed 0-100 oscillator, so under 100px a one-point move is less than a
+ * pixel and cannot be drawn at all. 120 gives it 1.2px per point. MACD follows
+ * for consistency, having no fixed scale of its own to argue from.
+ */
+const PANE = { price: 440, volume: 110, rsi: 120, macd: 120 };
+/** The time axis is its own row, outside every pane, inside the container. */
+const AXIS_H = 28;
+/** Measured: one 1px row between each adjacent pair of panes. */
+const SEP_H = 1;
+
+/**
  * Marker categories, most-significant first. When several events land on one
  * bar the dot takes the colour of the highest-priority one, so an earnings
  * release is never hidden behind an insider filing.
@@ -128,6 +168,31 @@ export default function PriceChart({
   // The element that goes fullscreen: toolbars and chart together, because a
   // chart you cannot change the interval of is not much use full screen.
   const panelRef = useRef(null);
+
+  /**
+   * The pane proportions and time-scale margins the reader set by hand, carried
+   * across the rebuilds that a ticker, period or indicator change forces.
+   *
+   * All three tear the chart down, because the construction effect depends on
+   * `bars` and `show`, and every rebuild re-applied the constants. So dragging
+   * a pane separator or picking a zoom lasted exactly until the next stock.
+   * Measured 2026-08-26: a period change rebuilds in ~1.3s, a ticker change
+   * ~1.6s, an indicator toggle ~24ms, and all three reset the panes to
+   * identical fresh-construction values.
+   *
+   * Stretch factors, never heights. `getHeight()` returns `[556, 0, 0]` on this
+   * build while the panes visibly render 442.5/27/84.5, and an earlier attempt
+   * at this feature captured that figure and fed it back in as a stretch
+   * factor. Pixels in, ratio out: the price pane grew every rebuild — 1130,
+   * 1360, 1710, 1940, 2290 — while the other three collapsed to zero.
+   * `getStretchFactor()` reads back exactly what was written, so it round-trips.
+   *
+   * A ref rather than state, because reading it must not re-run the effect that
+   * reads it. Not localStorage either: it is asked to survive a rebuild, not a
+   * reload, and a stored layout would silently outlive any later change to the
+   * defaults above.
+   */
+  const layoutRef = useRef({ stretch: {}, barSpacing: null, rightOffset: null });
 
   const [chartEpoch, setChartEpoch] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -255,9 +320,37 @@ export default function PriceChart({
      * dependencies — and this effect *recreates the chart*, which would throw
      * away the reader's pan and zoom on any state change at all.
      */
+    /*
+     * Which panes this build will have, in order. Also the height, and it is
+     * computed from `PANE` alone and never from anything captured.
+     *
+     * That is the whole guard against the runaway described on `layoutRef`: if
+     * the container is a pure function of which indicators are switched on,
+     * then no measurement of a previous build can feed into the next one, and a
+     * drag can only redistribute the box rather than grow it.
+     */
+    const activeRoles = ['price',
+      ...(show.volume ? ['volume'] : []),
+      ...(show.rsi ? ['rsi'] : []),
+      ...(show.macd ? ['macd'] : [])];
+
+    /*
+     * Both captured once: the cleanup at the bottom reads them, and reading
+     * `ref.current` there is a lint error because for a ref pointing at a DOM
+     * node it may have changed by then. Neither of these can. `layoutRef` holds
+     * one object for the life of the component, and the panel outlives this
+     * effect, which re-runs on data rather than on unmount.
+     */
+    const layout = layoutRef.current;
+    const panel = panelRef.current;
+
+    /** The reader's proportion for this pane, else its default. */
+    const paneW = (role) => layout.stretch[role] ?? PANE[role];
+
     const chartHeight = () => {
       const stacked =
-        370 + (show.volume ? 115 : 0) + (show.rsi ? 100 : 0) + (show.macd ? 100 : 0);
+        activeRoles.reduce((a, r) => a + PANE[r], 0)
+        + AXIS_H + SEP_H * (activeRoles.length - 1);
       // This panel specifically, not "something on the page is fullscreen": the
       // flex height below only exists under `.chart-panel:fullscreen`, so if a
       // different element went fullscreen the parent would still be auto-height
@@ -356,6 +449,13 @@ export default function PriceChart({
     }
 
     let paneIdx = 1;
+    /*
+     * Which indicator each pane index actually holds. `activeRoles` above is
+     * what `show` asks for; this is what got built, and they differ when MACD
+     * is switched on for a window too short to produce a value. Restoring by
+     * index would then hand one indicator's proportion to another.
+     */
+    const paneRoles = ['price'];
     // Volume gets its own pane and its own visible axis. Overlaid on the price
     // pane it shared the frame with the price scale, so 53M volume bars sat
     // beside axis labels reading ~310 and were read against the wrong scale.
@@ -373,11 +473,7 @@ export default function PriceChart({
           color: b.close >= b.open ? 'rgba(46,189,133,0.55)' : 'rgba(246,70,93,0.55)',
         })),
       );
-      try {
-        // tall enough for the axis to render intermediate ticks — at ~85px
-        // only the last-value badge fits, which is what made volume unreadable
-        chart.panes()[paneIdx].setHeight(110);
-      } catch { /* pane API optional */ }
+      paneRoles.push('volume');
       paneIdx += 1;
     }
     if (show.rsi) {
@@ -390,9 +486,7 @@ export default function PriceChart({
       for (const [price, color] of [[70, 'rgba(246,70,93,0.45)'], [30, 'rgba(46,189,133,0.45)']]) {
         rsi.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
       }
-      try {
-        chart.panes()[paneIdx].setHeight(95);
-      } catch { /* pane API optional */ }
+      paneRoles.push('rsi');
       paneIdx += 1;
     }
     if (show.macd) {
@@ -405,14 +499,39 @@ export default function PriceChart({
         chart
           .addSeries(LineSeries, { color: '#f0b90b', lineWidth: 1, ...OVERLAY_OPTS }, paneIdx)
           .setData(signal);
-        try {
-          chart.panes()[paneIdx].setHeight(95);
-        } catch { /* pane API optional */ }
+        paneRoles.push('macd');
         paneIdx += 1;
       }
     }
 
     fitDisplay(chart, warmupBars, bars.length);
+
+    // Once, after the last pane. See PANE for why this is not setHeight, and
+    // why the raw pixel figures are a valid ratio to pass here.
+    try {
+      const panes = chart.panes();
+      paneRoles.forEach((role, i) => panes[i]?.setStretchFactor(paneW(role)));
+    } catch { /* pane API optional */ }
+
+    /*
+     * Zoom and right margin are restored. Scroll position deliberately is not.
+     *
+     * `barSpacing` is pixels per bar and `rightOffset` is bars of blank space
+     * past the newest one; both mean the same thing on any dataset. "Bars 120
+     * to 180" does not — after a change of ticker or period those indices point
+     * at different dates, and carrying them over would open a new stock parked
+     * somewhere arbitrary. Restoring only these two lands the reader on the
+     * newest bars at the zoom and margin they chose, which is what not having
+     * to set it up again actually means. `fitDisplay` above still owns the
+     * first view of the session, when there is nothing yet to restore.
+     */
+    const { barSpacing, rightOffset } = layoutRef.current;
+    if (barSpacing != null || rightOffset != null) {
+      chart.timeScale().applyOptions({
+        ...(barSpacing != null && { barSpacing }),
+        ...(rightOffset != null && { rightOffset }),
+      });
+    }
 
     const volByTime = new Map(bars.map((b) => [String(b.time), b.volume]));
     const onMove = (param) => {
@@ -525,6 +644,38 @@ export default function PriceChart({
 
     setChartEpoch((e) => e + 1);
     return () => {
+      /*
+       * Read the layout back before the chart goes: the next build is
+       * milliseconds away and these are the reader's own adjustments.
+       *
+       * Rescaled onto `PANE`'s scale rather than stored raw, so that a pane
+       * switched on later can take its default from the same number line as
+       * the ones already carrying a dragged value. Untouched panes come back
+       * through this arithmetic as exactly their `PANE` figure, which is what
+       * keeps repeated rebuilds from drifting.
+       *
+       * Skipped while this panel is fullscreen: the container is the screen
+       * there, so the proportions belong to a box the reader is about to leave.
+       */
+      if (document.fullscreenElement !== panel) {
+        try {
+          const panes = chart.panes();
+          const got = paneRoles.map((_, i) => panes[i]?.getStretchFactor());
+          const sum = got.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+          const nominal = paneRoles.reduce((a, r) => a + PANE[r], 0);
+          if (sum > 0) {
+            paneRoles.forEach((role, i) => {
+              if (got[i] > 0) layout.stretch[role] = (got[i] / sum) * nominal;
+            });
+          }
+        } catch { /* pane API optional */ }
+      }
+      try {
+        const ts = chart.timeScale().options();
+        layout.barSpacing = ts.barSpacing;
+        layout.rightOffset = ts.rightOffset;
+      } catch { /* time scale options optional under the test double */ }
+
       window.removeEventListener('resize', resize);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
       observer?.disconnect();

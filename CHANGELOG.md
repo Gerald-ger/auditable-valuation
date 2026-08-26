@@ -2,6 +2,82 @@
 
 Notable changes to the Stock Analysis Platform. Newest first.
 
+## 2026-08-26 - The volume pane asked for 110px and got 27
+
+Raised as a preference ("make the indicator panes taller"). Measured, it was a
+bug, and the pane the author had already tried to fix was the one still broken.
+
+**What was wrong.** `chart.panes()[i].setHeight(n)` is converted immediately
+into a stretch factor against the panes that exist *at that moment*, so calls
+made while panes are still being added are each diluted by every later one.
+Measured on the live chart, AAPL 6mo:
+
+| pane | code asked for | rendered |
+|---|---|---|
+| volume | `setHeight(110)` | **27px** |
+| rsi | `setHeight(95)` | 84.5px |
+| rsi, once MACD is also on | `setHeight(95)` | **27px** |
+
+The comment above the volume call said 110 was chosen so the axis could fit
+intermediate ticks rather than only the last-value badge. It never got them, and
+nothing anywhere failed.
+
+**Changed.**
+- `setStretchFactor`, applied once after the last pane exists, replaces all
+  three `setHeight` calls. Measured: `440/110/120` and `4/1/1.09` render
+  byte-identically, so the call is scale-invariant and the pixel figures are a
+  valid ratio to pass. The container is their sum plus the axis and the 1px
+  separators, which makes one stretch unit one pixel and keeps a single set of
+  numbers rather than two lists to hold in step.
+- `PANE = { price: 440, volume: 110, rsi: 120, macd: 120 }`. `price` is 440
+  because that is what it already measured at: the bug made the price pane
+  *larger* than nominal by giving it what it took from volume, and returning it
+  to the old nominal 370 would have been a regression nobody asked for. `rsi`
+  and `macd` are 120 on one ground: RSI is a fixed 0-100 oscillator, so below
+  100px a one-point move is under a pixel and cannot be drawn.
+- `layoutRef` carries pane proportions, `barSpacing` and `rightOffset` across
+  the rebuilds a ticker, period or indicator change forces. Scroll position is
+  deliberately not carried: bar spacing and right offset mean the same thing on
+  any dataset, while "bars 120 to 180" points at different dates once the data
+  changes.
+
+**A wrong version shipped into the working tree first and was reverted.** It
+captured `getHeight()` and fed that back in as a stretch factor. Pixels in,
+ratio out: the price pane grew every rebuild (1130, 1360, 1710, 1940, 2290px)
+while the other three collapsed to zero. Two things caused it, both now written
+into the code as comments: `getHeight()` returns `[556, 0, 0]` on this build
+while the panes visibly render 442.5/27/84.5, and the container height was
+derived from captured values, which closed a feedback loop. The container is now
+a pure function of `PANE` and which indicators are on, so nothing measured can
+feed the next build.
+
+**Measured after**, DOM row heights, AAPL, 1440x900:
+
+| state | price / volume / rsi / macd | container |
+|---|---|---|
+| default | **440 / 110 / 120** | 700 |
+| +MACD | 439.5 / 110 / 120 / 119.5 | 820 |
+| RSI off | 440 / 110 / 120 | 700 |
+| back to default | 440 / 110 / 120 | 700 (no drift) |
+
+Volume 27 -> 110px, **+307%**, and the axis now draws 150M/200M/250M/300M
+instead of a lone badge. Persistence: a separator dragged to 350/200/120 came
+back identically after a period change, a ticker change, and an indicator
+toggle; `barSpacing` 14 and `rightOffset` 19 survived a ticker change. The
+fullscreen guard was exercised rather than reasoned about: panes grew to
+446.5/111.5/122 fullscreen, a rebuild was forced while fullscreen, and the
+windowed layout came back at exactly 440/110/120.
+
+Rebuild cost unchanged (~1.3-1.6s a ticker change, ~24-300ms a toggle; both are
+dominated by the `/history` fetch and the recompute, neither of which moved).
+Bundle +0.72 kB raw, +0.30 kB gzip. Console clean across every state. Gate: ruff
+0, pytest 553 passed, oxlint 0 (and zero new warnings on this file), vitest 157
+passed, build 0.
+
+**Cost, stated plainly.** All three indicators on is now 820px rather than 684.
+On a 900px viewport that is most of the screen. That is the direct price of
+indicator panes that can be read, and it is one constant if it proves too much.
+
 ## 2026-08-26 — 180 characters per line
 
 The same day's second finding, from the user looking at a screenshot and saying
