@@ -3,6 +3,18 @@
 **Version:** 1.0 | **Date:** 2026-07-31 | **Author:** Morgan (Financial Analyst Agent)
 **Depends on:** `docs/financial-models-reference.md` (§4 ratios, §5 past/present/future, §7.1 model-priority matrix), `backend/financial_models.py` (ratio + DCF engine), yfinance fundamentals dict from `data_provider.get_fundamentals`.
 
+> ### ⛔ This is a specification, not a description. Do not edit it to match the code.
+>
+> Where this document and `backend/scoring.py` or `backend/sector_weights.py` disagree, the
+> disagreement is a **finding**. §5.2's acceptance criteria are load-bearing in exactly this
+> way: `backend/tests/test_plausibility.py` encodes them, and RIVN scoring 74/Tier A against
+> a written spec of Tier 3–5 was caught here and nowhere else — the golden snapshot had been
+> recording 74/A as *expected* since the day it was written.
+>
+> **If the code has moved,** update the table and add a dated note saying what changed and
+> why, as the `pre_profit_growth` row does. Do not quietly restate the code's numbers as
+> though they had always been the design.
+
 ---
 
 ## 1. Feasibility Verdict
@@ -87,7 +99,15 @@ Five core pillars, plus one optional AI-assisted pillar. All core metrics are co
 | Price vs 200-day MA = price/twoHundredDayAverage − 1 | `info` | higher = better (capped) | Anchor caps the top: +40% above 200d scores no higher than +25% (overextension isn't extra merit) |
 | 52-week range position = (price − 52wLow)/(52wHigh − 52wLow) | `info` | higher = better | |
 | Relative 52w change = 52WeekChange − SandP52WeekChange | `info` | higher = better | Sector ETF-relative ⬆ with OpenBB |
-| Analyst signal = (targetMeanPrice/price − 1), gated by numberOfAnalystOpinions ≥ 4 | `info` | higher = better | Use as range/direction only per ref §5.6 — low anchor weight within pillar |
+| ~~Analyst signal = (targetMeanPrice/price − 1), gated by numberOfAnalystOpinions ≥ 4~~ | `info` | — | **Removed — superseded by the note below.** |
+
+**`analyst_upside` is computed but scored in no pillar** (`backend/scoring.py`); it is
+surfaced only as `analyst_context`. A target price is a twelve-month forecast of where a
+stock will trade, not an estimate of what the business is worth, and published targets sit
+above price on average. It also double-counted sell-side opinion: the DCF's growth input is
+already analyst consensus, so one source was moving two of five metrics with correlated
+errors of the same sign. Removing it moved the composite −3 to +1 and no fixture changed
+tier.
 
 #### Pillar S — News Sentiment (OPTIONAL, AI-assisted, weight-capped)
 
@@ -204,11 +224,19 @@ SECTOR_WEIGHTS = {
                          "notes": "DROP EV/EBITDA, EV/Sales, FCF yield, current ratio, ND/EBITDA, DCF upside (all invalid, ref §7.1). V = P/B + earnings yield + dividend yield. Q = ROE (justified-P/B pairing) + ROA (>1% good). H = equity/assets"},
   "financials_insurance":{"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10,
                          "notes": "Same drops as banks; P/B vs ROE is the axis (ref §7.1)"},
-  "pre_profit_growth":  {"V": 0.15, "Q": 0.15, "H": 0.25, "G": 0.35, "M": 0.10,
+  "pre_profit_growth":  {"V": 0.15, "Q": 0.25, "H": 0.25, "G": 0.25, "M": 0.10,
                          "notes": "V = EV/Sales ONLY; Q = gross margin + margin trend (path to profit); H = cash runway + debt/equity (survival, ref §7.1: runway = cash/quarterly burn); conviction hard-capped at MEDIUM"},
 }
 DEFAULT_WEIGHTS = {"V": 0.25, "Q": 0.25, "H": 0.15, "G": 0.20, "M": 0.15}  # unclassified fallback
 ```
+
+**Rebalanced 2026-08-10 — superseded from the table above.** Q was 0.15 and G was 0.35,
+which weighted the pillar these companies fail at a quarter of the pillar they ace: RIVN
+scored quality 10, growth 98, and came out 74/Tier A — above AAPL's 67, and two tiers
+above the "Tier 3-5" §5.2 of this document specifies for this path. Rebalanced to
+0.25/0.25, which with the `cash_runway_q` fix lands RIVN at 60/Tier B. Recorded honestly:
+these curves are still not validated against forward returns, so this enforced a written
+expectation rather than adding evidence.
 
 Every row sums to 1.00. Substitutions are implemented as per-sector `include`/`exclude` metric lists plus optional `anchor_overrides` — three dicts total, not a framework.
 

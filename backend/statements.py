@@ -246,3 +246,39 @@ def fcff_interest_addback(cash_flow: dict, period: str | None,
         # Disclosed as an outflow; sign convention varies, magnitude does not.
         return abs(cash_interest) * (1 - tax_rate), "cash_interest_paid"
     return 0.0, "unverified_interest_classification"
+
+
+def sbc_expense(cash_flow: dict, period: str | None) -> tuple[float, str]:
+    """(stock-based compensation for the period, basis) — a cost, not spare cash.
+
+    `statement_fcf` starts from operating cash flow, where SBC has already been
+    added back as a non-cash charge. Discounting that figure while holding the
+    share count fixed values the same equity twice: once as cash the company did
+    not have to spend, and again as shares it did in fact issue. The reference
+    doc states it as an absolute — *"Never add back with static share count —
+    that double-counts value"* — and allows two ways out: subtract it as a cash
+    expense, or add it back and grow the diluted share count.
+
+    This returns the figure for the first, which is the one this platform takes.
+    The second was considered and declined: yfinance's `sharesOutstanding` is a
+    point-in-time count that reproduces `marketCap / price`, while the statements
+    carry a *period-average* diluted count, so adopting it would divide a
+    point-in-time equity value by an averaged denominator and leave fair value
+    per share on a different basis from the traded price it is compared against.
+    Measured across the fixtures, dilution is also far smaller than the SBC
+    charge itself, so (b) corrects a fraction of what (a) corrects.
+
+    Read from the statement, never assumed. An issuer reporting no SBC row gets
+    0.0 and a basis that says so, rather than having a figure estimated for it —
+    the same discipline `fcff_interest_addback` applies to interest.
+    """
+    if period is None:
+        return 0.0, "no_statement_fcf"
+    rows = cash_flow.get(period) or {}
+    sbc = rows.get("Stock Based Compensation")
+    if sbc is None:
+        return 0.0, "not_reported"
+    # Disclosed as a positive add-back within operating activities. Magnitude is
+    # what the adjustment needs; the sign convention is not worth trusting, for
+    # the same reason `fcff_interest_addback` takes abs() of interest paid.
+    return abs(sbc), "statement_sbc"

@@ -242,7 +242,7 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
     local AI, grounded in the financial-models reference document, live data for the
     loaded ticker, and any lines you have drawn. Note the grounding is partial: the
     reference document is truncated to the first 16,000 characters to fit a 7–8B model's
-    context ([backend/ai_client.py](backend/ai_client.py)), so roughly its opening 40%
+    context ([backend/ai_client.py](backend/ai_client.py)), so roughly its opening 21.4%
     reaches the model and the later sections never do.
 - **Tab 2 — Financial Models**: pulls the company's financial reports automatically and runs
   a two-stage FCFF DCF — **1 explicit year at the forecast rate, then a 9-year fade** to
@@ -326,17 +326,19 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 503 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 559 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 100 tests
+cd frontend; npm test                                   # 157 tests
 ```
 
-Of the 521 collected, 18 are `network`-marked and deselected by default.
+Of the 586 collected, 27 are `network`-marked and deselected by default.
 
-The frontend suite runs in vitest's default `node` environment; the three component
-suites opt into a DOM per file with a `@vitest-environment jsdom` docblock. Rendering is
-`createRoot` + React 19's own `act` ([frontend/src/test-utils.js](frontend/src/test-utils.js),
-30 lines) rather than a testing library.
+The frontend suite runs in vitest's default `node` environment; four component
+suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
+`ErrorBoundary.test.jsx`, `PortfolioTab.test.jsx`, `PriceChart.test.jsx`,
+`TrackerTab.test.jsx`. Rendering is `createRoot` + React 19's own `act`
+([frontend/src/test-utils.js](frontend/src/test-utils.js), 53 lines) rather than a
+testing library.
 
 CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and gates more
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
@@ -353,11 +355,13 @@ one being parametrised) shipped `xfail(strict=True)` on 2026-08-10 and were unma
 same day when the calibration landed — a strict xfail reports the breach every run and
 errors the moment it is fixed.
 
-The suite runs entirely against seven real `get_fundamentals` payloads committed under
-`backend/tests/fixtures/` (280 KB), covering the technology, bank, REIT, energy,
-pre-profit and HK classification paths. Golden snapshots of every scorecard are checked
-in; after a deliberate methodology change regenerate them and **review the diff — that
-diff is the record of what your change did to every score**:
+The suite runs entirely against eight real `get_fundamentals` payloads committed under
+`backend/tests/fixtures/` (297 KB — the fixtures directory as a whole is 18 files /
+421 KiB), covering the technology, bank, REIT, energy, pre-profit and HK classification
+paths — two HK fixtures now, `0700_HK` reporting CNY and `0002_HK` reporting HKD. Golden
+snapshots of every scorecard are checked in; after a deliberate methodology change
+regenerate them and **review the diff — that diff is the record of what your change did
+to every score**:
 
 ```powershell
 $env:UPDATE_GOLDEN=1; backend\.venv\Scripts\python.exe -m pytest; $env:UPDATE_GOLDEN=''
@@ -543,7 +547,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 503-test suite runs entirely offline against them. Provenance and capture dates in
+  the 559-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
@@ -583,6 +587,24 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   interest recovered from the statements, not required (IFRS filers such as 0700.HK put
   interest in financing already), or an unverified classification where no adjustment is
   made.
+- **Stock compensation is subtracted, not added back.** Operating cash flow carries it
+  back as a non-cash charge, and the share count is `sharesOutstanding`, which does not
+  move — so keeping the add-back valued the same equity twice, once as cash the company
+  did not spend and once as shares it did issue. The reference doc forbids exactly that
+  combination, and the engine was doing it until 2026-08-26. The charge is now read off
+  the statement for the base period and subtracted from the figure that gets discounted:
+  **AAPL −12.7%, MSFT −18.7%, 0700.HK −12.5%** on the committed fixtures. XOM, 0002.HK and
+  JPM report no such row and are untouched; `assumptions.sbc_basis` says which case
+  applied, and `not_reported` is deliberately distinct from a reported zero.
+
+  The **scoring** FCF metrics keep the gross figure, for the same reason they keep the
+  levered one — they divide by market cap and net income, both already after compensation,
+  so netting it again would double-correct them. The denominator stays basic rather than
+  diluted: `sharesOutstanding` is the count that reproduces `marketCap / price`, so fair
+  value per share and the traded price stay on one basis, where the statements' diluted
+  figure is a *period average*. The cost of that choice is not argued away — fair value per
+  share is still overstated by roughly the dilution rate, which is the smaller of the two
+  effects by an order of magnitude.
 - **The price is delayed, and says so.** Yahoo's free feed runs ~15 minutes behind the
   exchange — `exchangeDataDelayedBy: 15`, `quoteSourceName: "Delayed Quote"` — and that floor
   cannot be removed without a paid feed. The app used to add its own 15 on top, because the
@@ -715,12 +737,14 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   effective, and that residual is its taxable subsidiaries rather than the trust. Charging
   it 21% overstated the shield and understated its WACC (6.05% against 6.58%, a fair value
   of 36.00 against 27.04). The rule keys on the same classification `dcf_applies` uses.
-- Terminal value is 50–73% of enterprise value on the sample fixtures. Above 75% the UI
-  flags it: at that point the perpetuity assumption, not the explicit forecast, is
-  producing the answer. Cross-check with the implied exit multiple — a DCF that only works
-  by exiting far below today's trading multiple is assuming compression, which is a stance
-  to agree with rather than inherit. Always sanity-check with the sensitivity grid and the
-  editable assumptions.
+- Terminal value is 55–77% of enterprise value on the sample fixtures — measured
+  2026-08-26, and the figure is unmoved by the stock-compensation change above, since it is
+  a ratio the whole valuation scales with. Above 75% the UI flags it, which **`0002.HK` at
+  77.3% does**, so this is a live check rather than a theoretical one: at that point the
+  perpetuity assumption, not the explicit forecast, is producing the answer. Cross-check
+  with the implied exit multiple — a DCF that only works by exiting far below today's
+  trading multiple is assuming compression, which is a stance to agree with rather than
+  inherit. Always sanity-check with the sensitivity grid and the editable assumptions.
 - The Scorecard is a deterministic snapshot of fundamentals, valuation and momentum
   against heuristic healthy ranges. It is not a prediction; validation covers
   consistency and plausibility, not forward returns (see docs/scoring-system-design.md §5).

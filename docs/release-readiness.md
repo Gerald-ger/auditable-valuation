@@ -157,7 +157,7 @@ Each carries the condition that would reopen it.
 | Relaxing Python below 3.14 | The floor is `requires-python = ">=3.14"` in `pyproject.toml`, chosen to match the only tested configuration (3.14.6 locally, 3.14 in CI) — **not** a dependency constraint. Checked against PyPI: `pandas==3.0.5` ships wheels back to cp311 and declares `>=3.11`; `numpy==2.5.1` ships back to cp312 and declares `>=3.12`. So 3.12/3.13 would plausibly work; lowering the floor honestly means running the suite there first, which is a task, not a config edit | Someone is actually blocked — then test on 3.12 and 3.13 and lower the floor to what passes |
 | CI OS / version matrix | One Linux runner already catches import and logic regressions | The Windows-only launchers break, or a platform bug ships |
 | Backend `.env` / env-var config | Local single-user tool; module constants are legible and the real defect was the same literal repeated in six files, which the proxy change removed | The app needs to run anywhere other than localhost |
-| `index.css` split (2,033 lines), `ModelsTab.jsx` (1,033) / `ScorecardTab.jsx` (761) decomposition | Real single-contributor risks, but there are no component tests, so the diff would be unverifiable | A second contributor joins, or component tests exist |
+| `index.css` split (2,033 lines), `ModelsTab.jsx` (1185) / `ScorecardTab.jsx` (787) decomposition — re-measured 2026-08-26 | Real single-contributor risks, but there are no component tests, so the diff would be unverifiable | A second contributor joins, or component tests exist |
 
 ---
 

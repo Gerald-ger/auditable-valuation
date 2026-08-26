@@ -3,6 +3,25 @@
 **Version:** 1.0 | **Date:** 2026-07-31 | **Author:** Morgan (Financial Analyst Agent)
 **Purpose:** Canonical reference for a local AI agent that pulls live data from the OpenBB Platform (v4, Python API) and must decide WHICH financial model to apply, HOW to apply it, and how to interpret results across past, present, and future stock-value analysis.
 
+> ### ⛔ This is a specification, not a description. Do not edit it to match the code.
+>
+> Where this document and the engine disagree, the disagreement is a **finding**. Four were
+> found on 2026-08-26; one of them — stock compensation added back against a static share
+> count, which the SBC row below forbids in as many words — was a real defect worth 12–19%
+> of fair value, and it had been in the code since the first DCF. Editing the spec to match
+> whatever the engine happens to do would have erased the only thing that caught it.
+>
+> **The two legitimate moves:** change the code, or leave the rule standing and add an
+> `> **As implemented** (module.function, DATE)` note recording what the engine does and
+> why it differs. Four such notes already sit below — follow them rather than inventing a
+> third option.
+>
+> **Also: the first 16,000 characters of this file are pasted verbatim into the local AI's
+> system prompt** (`backend/ai_client.py`, `REFERENCE_CHAR_BUDGET`) — 21.4% of it as of
+> 2026-08-26, and the share falls every time the file grows. Anything inserted near the top
+> pushes the tail out of the model's view entirely. A correction beside its own rule earns
+> that space; a preamble does not.
+
 ---
 
 ## 0. How To Use This Document (Agent Protocol)
@@ -40,6 +59,18 @@ Equity Value     = EV - Net Debt - Minority Interest - Preferred Equity + Non-op
 Fair Value/Share = Equity Value / Diluted Shares Outstanding
 ```
 
+> **As implemented** (`financial_models.dcf_valuation`, recorded 2026-08-26): the
+> denominator is yfinance's `sharesOutstanding`, a **basic** point-in-time count, not a
+> diluted one. Deliberate, and a real divergence from the line above rather than an
+> oversight. `sharesOutstanding` is the count that reproduces `marketCap / price`, so fair
+> value per share and the traded price it is compared against stay on one basis; the
+> statements' `Diluted Average Shares` is a *period average*, and dividing a point-in-time
+> equity value by it would mix the two. The cost is stated plainly: dilution is not
+> counted, so fair value per share is overstated by roughly the dilution rate — low single
+> digits for the large caps in the fixture set, more for a stock-compensation-heavy issuer.
+> The larger of the two effects, the compensation charge itself, **is** now counted; see the
+> SBC note below.
+
 ### 1.1.1 Unlevered Free Cash Flow (FCFF) projection
 
 ```
@@ -61,7 +92,28 @@ Build the forecast from revenue down:
 | ΔNWC | NWC as % of revenue held constant, times revenue change | Negative-working-capital businesses (subscriptions, retail) generate cash on growth |
 | SBC treatment | Either (a) treat as cash expense (subtract, do NOT add back), or (b) add back but increase diluted share count with future dilution | Never add back with static share count — that double-counts value |
 
+> **As implemented** (`statements.sbc_expense`, 2026-08-26): route (a). The charge is read
+> off the cash-flow statement for the base period and subtracted from the figure that gets
+> discounted. Route (b) was declined for the reason in the share-denominator note above —
+> the diluted count is a period average and the equity value is not — and because dilution
+> is the smaller of the two effects, so (b) would correct a fraction of what (a) corrects.
+> **This rule was breached from the platform's first DCF until this date**, and the breach
+> was the combination the right-hand column forbids exactly: `CFO − CapEx` carries the
+> non-cash add-back, and `sharesOutstanding` never moves. Measured on the committed
+> fixtures, correcting it moves fair value **AAPL −12.7%, MSFT −18.7%, 0700.HK −12.5%**;
+> XOM, 0002.HK and JPM report no such row and are untouched. An issuer that reports none
+> gets `sbc_basis: "not_reported"` rather than an estimated figure.
+
 **Forecast horizon:** 5 years standard; 10 years for high-growth companies still converging to steady state. Explicit period must end when the company plausibly reaches sustainable margins and reinvestment rates.
+
+> **As implemented** (`financial_models.STAGE1_YEARS` / `STAGE2_YEARS`, recorded 2026-08-26):
+> **one** explicit year, then a nine-year linear fade to terminal growth — ten years in
+> total, for every company rather than only the fast-growing ones. The explicit stage is one
+> year because that is the horizon the analyst consensus feeding it actually forecasts;
+> holding a one-year figure flat across five years compounds it into a claim nobody made.
+> Measured on AMD, a consensus held flat for five years compounds free cash flow 15.1x
+> against 7.2x under the fade. The fade is what replaced the old `[0%, 25%]` growth clamp:
+> the ceiling existed to survive a five-year plateau, not to express a view about growth.
 
 ### 1.1.2 WACC derivation
 
@@ -126,7 +178,7 @@ TV_n = Exit Multiple * EBITDA_n   (or EBIT_n / Revenue_n)
 
 **Rule:** compute BOTH, present the range. If they disagree by >30%, flag which assumption drives the gap.
 
-**Warning:** if terminal value > 80% of total EV, the model is essentially a multiple bet dressed as a DCF — lengthen the explicit period or flag low conviction.
+**Warning:** if terminal value > **75%** of total EV, the model is essentially a multiple bet dressed as a DCF — lengthen the explicit period or flag low conviction. *(This read 80% until 2026-08-26. The engine has flagged at 75% — the conventional line — since the check was written, so the figure here was the one that was wrong, and the correction moves the threshold in the stricter direction. `financial_models` raises `terminal_value_high` at that boundary; the fixtures run 55.2–77.3%, and `0002_HK` at 77.3% is the one that trips it.)*
 
 ### 1.1.4 Sensitivity tables (mandatory output)
 

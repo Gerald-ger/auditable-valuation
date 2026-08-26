@@ -709,8 +709,14 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     # discounted; a company only positive before the add-back is still a DCF.
     interest_addback, fcff_basis = statements.fcff_interest_addback(
         f["cash_flow"], statement[0] if statement else None, tax_rate)
+    # SBC is a real cost that the cash-flow statement adds back as non-cash.
+    # Subtracted here rather than inside `statement_fcf`, because that function's
+    # other three callers score a levered figure against market cap and net
+    # income — both already after SBC — and would be double-corrected by it.
+    sbc, sbc_basis = statements.sbc_expense(
+        f["cash_flow"], statement[0] if statement else None)
     if fcf is not None:
-        fcf += interest_addback
+        fcf += interest_addback - sbc
     if not fcf or fcf <= 0:
         return {"error": "No positive free cash flow available — DCF not applicable "
                          "(see reference doc: use relative valuation instead)."}
@@ -964,6 +970,11 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             # figure above is still levered — see statements.fcff_interest_addback.
             "fcf_interest_addback": round(interest_addback),
             "fcff_basis": fcff_basis,
+            # Subtracted from the figure above, not added. A basis of
+            # "not_reported" means the issuer disclosed no SBC row, which is
+            # different from disclosing zero — see statements.sbc_expense.
+            "fcf_sbc": round(sbc),
+            "sbc_basis": sbc_basis,
             "growth_rate_year1": round(growth_rate, 4),
             # None when the caller supplied the rate; differs from the above only
             # when the published figure was rejected as implausible
@@ -1227,6 +1238,7 @@ def base_year_context(f: dict, period: str | None) -> dict:
     """
     out = {"history": [], "periods": 0, "latest_fcf_margin": None,
            "mean_fcf_margin": None, "ratio_to_mean": None,
+           "latest_sbc_margin": None, "mean_sbc_margin": None,
            "normalised_statement_fcf": None, "latest_revenue": None,
            "driver": None, "driver_note": None,
            "capex_delta": None, "operating_delta": None}
@@ -1237,7 +1249,7 @@ def base_year_context(f: dict, period: str | None) -> dict:
     # Held unrounded, and rounded once on the way out. Every statistic below is
     # a mean over these, so rounding first would let a display artefact compound
     # across periods and then show up as a panel whose columns do not add up.
-    raw = []   # (period, fcf margin, operating cash margin, capex intensity)
+    raw = []   # (period, fcf margin, operating cash margin, capex intensity, sbc)
     for p in sorted(cf):
         revenue = statements.value_at(inc, p, "Total Revenue", "Operating Revenue")
         ocf = statements.value_at(cf, p, "Operating Cash Flow",
@@ -1245,9 +1257,17 @@ def base_year_context(f: dict, period: str | None) -> dict:
         capex = statements.value_at(cf, p, "Capital Expenditure")
         if not revenue or ocf is None or capex is None:
             continue
+        # SBC is carried as its own leg rather than netted into `fcf_margin`.
+        # That margin is pinned to the identity `CFO/rev - capex/rev` with no
+        # residual, which is what lets the panel say "spending more" rather than
+        # "earning less" without assuming anything; folding a third term into it
+        # would turn the attribution back into a guess. A period that reports no
+        # SBC row contributes 0.0, the same as statements.sbc_expense.
+        sbc_p = statements.value_at(cf, p, "Stock Based Compensation")
         # capex is reported negative; carried as the positive intensity a reader
         # expects, which is why the identity below subtracts it
-        raw.append((p, (ocf + capex) / revenue, ocf / revenue, -capex / revenue))
+        raw.append((p, (ocf + capex) / revenue, ocf / revenue, -capex / revenue,
+                    abs(sbc_p) / revenue if sbc_p else 0.0))
 
     # Two periods cannot establish what is normal, so no band is offered rather
     # than one built on a single comparison.
@@ -1256,14 +1276,19 @@ def base_year_context(f: dict, period: str | None) -> dict:
 
     out["history"] = [{"period": p, "fcf_margin": round(fcf_m, 4),
                        "operating_margin_cash": round(ocf_m, 4),
-                       "capex_to_revenue": round(capex_i, 4)}
-                      for p, fcf_m, ocf_m, capex_i in raw]
+                       "capex_to_revenue": round(capex_i, 4),
+                       "sbc_to_revenue": round(sbc_m, 4)}
+                      for p, fcf_m, ocf_m, capex_i, sbc_m in raw]
 
     margins = [r[1] for r in raw]
+    sbc_margins = [r[4] for r in raw]
     latest, mean_margin = margins[-1], sum(margins) / len(margins)
+    mean_sbc = sum(sbc_margins) / len(sbc_margins)
     out.update(periods=len(margins),
                latest_fcf_margin=round(latest, 4),
                mean_fcf_margin=round(mean_margin, 4),
+               latest_sbc_margin=round(sbc_margins[-1], 4),
+               mean_sbc_margin=round(mean_sbc, 4),
                ratio_to_mean=round(latest / mean_margin, 3) if mean_margin else None)
 
     # Scale by the latest revenue, not by an averaged one. Revenue is the least
@@ -1275,7 +1300,13 @@ def base_year_context(f: dict, period: str | None) -> dict:
     revenue = statements.value_at(inc, period, "Total Revenue", "Operating Revenue")
     out["latest_revenue"] = revenue
     if revenue:
-        out["normalised_statement_fcf"] = round(mean_margin * revenue)
+        # Net of the *mean* SBC margin, not the newest one. The question this
+        # figure answers is "what if this year were the company's own normal
+        # year", and a normal year carries a normal SBC charge. Netting the
+        # latest instead would normalise one leg and hold the other at whatever
+        # the base year happened to do, which is the inconsistency the whole
+        # panel exists to expose.
+        out["normalised_statement_fcf"] = round((mean_margin - mean_sbc) * revenue)
 
     # Which leg moved, measured against **the same average the band uses**.
     #

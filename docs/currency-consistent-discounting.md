@@ -1,5 +1,18 @@
 # Currency-consistent discounting — 2026-08-17
 
+> ### ⛔ The analysis below is knowingly wrong in places, and stays that way.
+>
+> This file's convention is a stack of dated notes at the top over a body preserved exactly
+> as written. The 2026-08-26 note says outright that every table below showing `usd_proxy`
+> for an HKD issuer, and every sentence defending the currency peg, is wrong as of that
+> date. They are kept because the superseded reasoning **is** the record of how the
+> decision was reached, and a document that only ever shows its latest conclusion cannot
+> show anyone how it got there.
+>
+> **Do not "fix" the body, and do not delete a superseded argument.** Add another dated
+> note above it. An AI assistant reading this file will find contradictions between the top
+> and the bottom; those are the point, not defects to reconcile.
+
 **Status: ~~analysis only. No code was changed.~~ Implemented 2026-08-19.**
 
 `risk_free_rate` now reads ChinaBond's CGB 10-year for a CNY-reporting issuer, net of the

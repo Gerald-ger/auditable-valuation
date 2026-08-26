@@ -1,5 +1,15 @@
 # Fixture provenance
 
+> ### ⛔ Do not edit this to agree with the fixtures. Check the fixtures.
+>
+> This file is the only record of what was captured, when, and what was altered by hand
+> afterwards — nothing in the repository can reconstruct those facts from the data. So a
+> figure here that disagrees with the files is a **finding**, not a typo: read the files
+> first, and if they moved without a dated line here saying why, that is the bug.
+>
+> Adding a fixture means adding a dated line. Re-capturing means recording that it was
+> re-captured, because every pinned figure and golden score moves with it.
+
 These files are **captured third-party data, not authored content**, and are therefore not
 covered by the repository's AGPL-3.0 licence.
 

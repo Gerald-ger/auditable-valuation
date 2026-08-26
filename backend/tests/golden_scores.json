@@ -110,12 +110,12 @@
    "valuation": {
     "insufficient": false,
     "metrics": {
-     "dcf_upside_pct": 80,
+     "dcf_upside_pct": 66,
      "earnings_yield_fwd": 84,
      "ev_ebitda": 49,
      "fcf_yield": 68
     },
-    "score": 70
+    "score": 67
    }
   },
   "tier": "A"

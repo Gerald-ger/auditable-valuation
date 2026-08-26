@@ -2,6 +2,147 @@
 
 Notable changes to the Stock Analysis Platform. Newest first.
 
+> ### ⛔ Do not edit past entries. Append.
+>
+> Every entry below states what was true on **its own date**, and a number of them are
+> deliberately wrong about today. "Seven fixtures" inside an entry dated 2026-08-14 is
+> correct; changing it to eight falsifies the record instead of updating it. The measured
+> before/after figures are the same: they are readings, not current values.
+>
+> **An entry that has gone out of date is this file working, not failing.** Add a new dated
+> entry at the top. Correct an old one only where it was wrong *when it was written*, and
+> say so in place rather than silently.
+>
+> This binds people and AI assistants equally. An assistant told to "update the docs" or
+> "fix the stale numbers" should skip this file and say that it did.
+
+## 2026-08-26 - Stock compensation was added back against a share count that never moves
+
+An audit of all eleven markdown files against the code they describe: data collection,
+financial calculation, software structure. The headline is that **the code had not drifted
+from the specification — the specification had drifted from the code**, in eleven places.
+One exception, and it was worth 12-19% of fair value.
+
+**The one real defect.** `docs/financial-models-reference.md` states the rule as an
+absolute: *"Never add back with static share count — that double-counts value."* The
+engine did exactly that, and had since its first DCF. `statement_fcf` is `CFO - CapEx`,
+and under both GAAP and IFRS operating cash flow carries stock compensation back as a
+non-cash charge; the denominator is `sharesOutstanding`, which does not move. So the same
+equity was valued twice — once as cash the company did not spend, once as shares it did
+issue. Route (a) of the two the doc permits: the charge is now read off the statement for
+the base period and subtracted from the figure that gets discounted.
+
+Measured on the committed fixtures, risk-free rate pinned:
+
+| | fair value | | normalised base | | SBC |
+|---|---|---|---|---|---|
+| AAPL | 146.49 → **127.91** | −12.7% | 162.83 → 146.00 | −10.3% | 12.9bn |
+| MSFT | 277.80 → **225.96** | −18.7% | 358.03 → 299.43 | −16.4% | 12.4bn |
+| 0700.HK | 1043.30 → **912.47** | −12.5% | 991.12 → 852.09 | −14.0% | 25.7bn |
+| XOM · 0002.HK · JPM | unchanged | | unchanged | | no row in any period |
+| RIVN | unchanged | | unchanged | | reports it; no positive FCF, so no DCF |
+| O | unchanged | | unchanged | | reports it; FCF came from `info` |
+
+`O` is the one issuer that reports the charge and does not get it netted: its cash-flow
+statement carries no `Capital Expenditure` row, so free cash flow falls back to
+`info["freeCashflow"]`, whose period the vendor does not state. Subtracting a named
+period's charge from an unnamed period's cash flow is the period-mixing `statement_fcf`
+refuses to do elsewhere, so the adjustment is skipped and `sbc_basis` says
+`no_statement_fcf` on screen. The reachable error is 1.7% of its base figure, on the one
+classification where `dcf_applies` is already `False`. Recorded in TODOLIST rather than
+patched around.
+
+**Deliberately not applied in `statements.statement_fcf`**, whose docstring names three of
+its four callers as wanting the levered figure. `scoring.fcf_yield` divides by market cap
+and `fcf_conversion` by net income, both already after compensation, so netting it there
+would double-correct them. Pinned by a test, because that function is the tempting place
+to make this change. Measured: `fcf_yield` holds at 68 on 0700.HK across the change.
+
+**What moved on screen is not what moved in the model.** Only one golden score changes —
+0700.HK's `dcf_upside_pct` 80 → 66, its valuation pillar 70 → 67 — and its composite and
+tier do not move at all. AAPL and MSFT were already **at the floor** of that anchor curve
+(score 0, fair value more than 40% below price), so a further 12.7% and 18.7% cannot move
+a score that is already clamped. The Models tab moves for three names; the Scorecard moves
+for one. Worth stating because a reader who checked only the Scorecard would conclude
+nothing had happened.
+
+**Route (b) was declined, and not on grounds of effort.** yfinance's `sharesOutstanding` is
+a point-in-time count that reproduces `marketCap / price`, so fair value per share and the
+traded price stay on one basis; the statements carry a *period-average* diluted count, and
+dividing a point-in-time equity value by it mixes the two. Dilution is also the smaller
+effect by an order of magnitude. The cost of that choice is recorded rather than argued
+away: fair value per share is still overstated by roughly the dilution rate.
+
+The normalised base year nets the **mean** SBC margin, not the newest. MSFT's runs 4.54% →
+3.74% across the captured periods, so netting the latest would normalise one leg and hold
+the other at whatever the base year happened to do — the exact inconsistency that panel
+exists to expose. `sbc_to_revenue` is carried as its own column rather than folded into
+`fcf_margin`, which stays pinned to `CFO/rev − capex/rev` with no residual; a third term
+inside that sum would turn the panel's "spending more" attribution back into a guess.
+
+**Ten documentation claims that had gone false.** `financial-models-reference.md` said the
+explicit forecast is five years (the engine runs 1 + a 9-year fade), that the terminal-value
+warning fires above 80% (75%), and that the denominator is a diluted share count. Each is
+now an `As implemented` note beside the rule it qualifies rather than a rewrite of it —
+the convention this file already used for beta. All four such notes sit inside the first
+16,000 characters, which matters because that prefix is pasted verbatim into the local AI's
+system prompt: the model was being taught a methodology the engine does not run.
+`README.md` claimed that prefix was 40% of the file; measured, it is **21.4%**.
+
+`data-sources-review.md` was asserting both halves of a contradiction — §1's source table
+carried HKGB from the day it landed while §4's gap row still read *"⚠️ HKD still open"* and
+all of §7 was titled *"The one thing deliberately left undone"* about work finished on
+08-19 and 08-26. Amended, not deleted; the superseded argument is the record of how the
+decision was reached. `scoring-system-design.md`'s `pre_profit_growth` weights still read
+Q0.15/G0.35 against the code's 0.25/0.25 — a divergence whose own code comment cites §5.2
+of that document. Its Pillar M table still listed an analyst signal that is scored in no
+pillar. README's test counts were stale in eight places at once, against a `PROVENANCE.md`
+that was accurate in every one of its own.
+
+**Twenty stale line references** in TODOLIST and release-readiness, of which five were
+known and fifteen were not. `data_provider.py` grew ~500 lines for the CGB and HKGB
+sourcing and `PriceChart.jsx` nearly doubled in the tracker rewrite, so entries were
+pointing at a median calculation, a background-colour setting and an event-marker colour
+array. One reference is left unresolved and marked as needing re-verification rather than
+guessed.
+
+**Notice blocks on five files whose value depends on not being edited** — CHANGELOG and
+PROVENANCE (a record of what was true on a date, appended to rather than corrected),
+`currency-consistent-discounting.md` (a body knowingly preserved wrong under a stack of
+dated notes), and the two specification documents (where a disagreement with the code is a
+finding, and editing the spec to match the engine erases the only thing that catches the
+next one). Three notices rather than one boilerplate, because the reasons differ and an
+editor who reads the same paragraph five times stops reading it.
+
+**A pre-commit review caught the half of this that was still hidden.** The base-year
+panel's table printed MSFT's four-year average margin as **25.97%**, and directly beneath
+it the normalised fair value — which is now driven by that average **net of the mean
+stock-compensation charge, 21.74%**. Multiplying the number on screen by revenue no longer
+reproduced the number under it, in the one panel whose own note says *"the two legs sum
+exactly to the change; nothing is assumed"*. The row label was worse than silent: it read
+*"on this company's 4-year average margin"*, naming a margin the row had stopped using.
+`sbc_to_revenue` and `mean_sbc_margin` were being computed and never rendered.
+
+Fixed with a `Stock comp / revenue` column, placed **after** `FCF / revenue` so the first
+three still read left to right as the identity `CFO/rev − capex/rev` and the charge is
+visibly a further deduction rather than a term inside it; plus the corrected label and the
+subtraction spelled out. That subtraction prints at **two** decimals where the table uses
+one, and the reason is not cosmetic: at one decimal MSFT read `26.0% − 4.2% = 21.7%`,
+wrong by inspection, because each term rounds on its own and 0.1pp goes missing. The stored
+margins carry four places, so two decimals makes the equation exact rather than merely
+closer — and a test now pins the rounding those two decimals rest on.
+
+Suite 553 → 559. The six new tests pin the adjustment, the untouched scoring path, the
+mean-not-latest choice, the surviving margin identity, the two issuers that report no row
+and are left alone, and that on-screen subtraction. One of them corrects a reconstruction
+that had been absorbing a 1.66% residual inside a 2% tolerance since it was written —
+adding back net debt where the bridge deducts marked securities too; now 0.04%. Bundle
+471.13 → 472.00 kB, gzip 147.23 → 147.49. ruff, oxlint, vitest and vite build all clean.
+
+**Found and deliberately not closed**, recorded in TODOLIST rather than left in a
+transcript: no size premium, an auto peer cap of 4 against a documented target of 5-10,
+and five sector rules in `scoring-system-design.md` that never reached code.
+
 ## 2026-08-26 - The README went stale the same day
 
 A documentation pass over the eleven markdown files, after the three commits above.

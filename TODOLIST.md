@@ -251,19 +251,19 @@ same two fail identically at `bc597ff`, before any of that change.
 that fires is the price refresh, not the bars:
 
 ```
-main.py:351  comps_endpoint -> _guard(_fundamentals, ticker)
+main.py:451  comps_endpoint -> _guard(_fundamentals, ticker)
 main.py:107  _fundamentals  -> with_fresh_price(f)
-data_provider.py:248         -> live_price(ticker)
-data_provider.py:219         -> yf.Ticker(ticker).info
+data_provider.py:757         -> live_price(ticker)
+data_provider.py:783         -> yf.Ticker(ticker).info
 ```
 
-`_market_bars` → `provider.get_history` leaks too (`data_provider.py:324`), but it is the
+`_market_bars` → `provider.get_history` leaks too (`data_provider.py:883`), but it is the
 *second* site, not the one that fires first. `wired_endpoint` patches `get_fundamentals`,
 `_peer_beta_inputs` and `get_peer_snapshot` — not the refresh.
 
 **🟡 rather than 🔴, and the downgrade is the interesting part.** A first draft of this entry
 said an outage "turns two green tests red". It does not. Both leak sites swallow ordinary
-exceptions (`data_provider.py:222`, `main.py:126`), and the suite was re-run with
+exceptions (`data_provider.py:786`, `main.py:126`), and the suite was re-run with
 `yf.Ticker`/`download`/`screen` all raising a plain `Exception` — the shape a real outage takes
 — and reported **467 passed**. So the cost is wasted latency and a hidden dependency on a
 vendor being up, not a CI failure. Recording the wrong severity would have sent whoever picked
@@ -492,7 +492,7 @@ the JS/JSX sources:
 - **All but one are dynamically composed or compound** — `` `ff-tag disp-${r.dispersion_band}` ``
   ([ScorecardTab.jsx:312](frontend/src/components/ScorecardTab.jsx#L312)),
   `` `chart-note ff-divergence ff-recon-${...}` `` ([:451](frontend/src/components/ScorecardTab.jsx#L451)),
-  `` `src-tag ${a.beta_source}` `` ([ModelsTab.jsx:180](frontend/src/components/ModelsTab.jsx#L180))
+  `` `src-tag ${a.beta_source}` `` ([ModelsTab.jsx:204](frontend/src/components/ModelsTab.jsx#L204))
   feeding `.src-tag.peer_median` / `.src-tag.peer_median_relevered`, and
   `` `ff-conviction ${t.conviction.toLowerCase()}` `` ([:424](frontend/src/components/ScorecardTab.jsx#L424))
   feeding `.ff-conviction.medium`
@@ -514,6 +514,57 @@ component to fix it.
 
 **Trigger:** the stylesheet passing ~3,000 lines, or the first component deletion — whichever
 comes first, since either turns the structural risk into a live one.
+
+### 🟡 Three specification items that never reached code *(found 2026-08-26)*
+
+Found by auditing `docs/financial-models-reference.md` and
+`docs/scoring-system-design.md` against the engine. None is a defect in what the code
+computes; each is a rule the documents state and the code does not implement. Recorded
+here because the alternative is finding them a second time.
+
+- **No size premium.** `financial-models-reference.md` §1.1.2 gives cost of equity as
+  `Rf + Beta*ERP [+ size premium + country risk premium if applicable]`. The country half
+  is implemented, through Damodaran's additive total ERP. The size half does not exist —
+  `grep size_premium backend/` returns nothing — so every micro- and small-cap is
+  discounted at a premium calibrated on mature-market equity. The spec marks it
+  conditional and judgmental, which is why this is a gap rather than a bug, and why
+  closing it needs a rule for *when* it applies before it needs an arithmetic change.
+- **`MAX_AUTO_PEERS = 4` against a documented target of 5-10.** `financial-models-reference.md`
+  §5 says *"Target 5–10 peers. Fewer than 4 → widen criteria and flag low confidence."*
+  The automatic cap is 4 — the spec's floor, never its target — and no low-confidence flag
+  fires below it; only the raw `peers_used` count reaches the screen. A user can widen the
+  set by hand, so the number shown is never wrong, only thinner than the document asks for.
+- **Five sector rules in `scoring-system-design.md`'s notes column are unimplemented**:
+  asset turnover added to Q for industrials, asset turnover and FCF conversion weighted up
+  for logistics, a telecom/internet split inside `communication_svcs`, and payout gates for
+  utilities and REITs. The second of those cannot be implemented as written at all — a
+  pillar score is `sum(scores)/len(scores)`, with no per-metric weighting mechanism
+  anywhere, while the document's own §4.1 formula assumes one exists.
+
+**Trigger:** none of these changes a number that is currently wrong, so none is urgent.
+The peer cap is the cheapest and the only one whose fix is unambiguous.
+
+### ⚪ Stock compensation is not netted where free cash flow came from `info` *(recorded 2026-08-26)*
+
+Not a defect — recorded so the next reader does not rediscover it. `sbc_expense` is called
+with the period `statement_fcf` resolved, and returns `0.0` with the basis
+`no_statement_fcf` when there is none. That happens whenever the cash-flow statement is
+missing a leg and the valuation falls back to `info["freeCashflow"]`, whose period the
+vendor does not state. Subtracting a named period's charge from an unnamed period's cash
+flow would be exactly the period-mixing `statement_fcf` refuses to do elsewhere, so the
+adjustment is skipped and the basis says so on screen.
+
+In the fixture set this is `O` alone: it reports stock compensation in all five periods but
+carries no `Capital Expenditure` row, so its free cash flow comes from `info`. The charge is
+**1.7% of the base figure**, and `dcf_applies` is `False` for a REIT — the model already
+refuses to present that valuation as an answer — so the reachable error is small and sits
+on the one classification where nothing reads it.
+
+**Trigger:** an issuer where `dcf_applies` is true, `info["freeCashflow"]` is the source,
+and the charge is material. None exists in the fixtures. Closing it needs a period for the
+`info` figure, which the vendor does not publish — the honest fix is a fixture that proves
+the case exists before code is written for it.
+
 
 ### 🟡 The chart panel overflows horizontally on a phone *(found 2026-08-26)*
 
@@ -560,12 +611,12 @@ Line references re-verified 2026-08-09.
   `useCallback` keyed on `ticker`, so the effect can list it honestly; `npm run lint` is
   clean. The line number this item carried (`:225`) had drifted and pointed at chart
   scaling. Separately,
-  [PriceChart.jsx:366](frontend/src/components/PriceChart.jsx#L366) *disables* the same
+  [PriceChart.jsx:716](frontend/src/components/PriceChart.jsx#L716) *disables* the same
   rule on `visibleGroups` deliberately, and that remains the right call — the **pinned-panel**
   effect reads `pinned` and calls `setPinned`, so it sets the very state it would have to
   depend on. **The justification this entry used to give — "rebuilding the chart on a
   marker-filter change would discard the user's zoom" — belongs to a different effect**: that
-  is the *markers* effect at `:345`, whose own comment at `:342-344` says exactly that, and
+  is the *markers* effect at `:695`, whose own comment at `:693-694` says exactly that, and
   which carries no disable at all. Right rule, right verdict, wrong effect. (An earlier revision of this list
   called the ScorecardTab warning miscatalogued; the linter did emit it — that claim was
   wrong. It also cited `PriceChart.jsx:398`, then corrected that to `:344`. **Re-verified
@@ -585,7 +636,7 @@ Line references re-verified 2026-08-09.
 
 **Done since:** `assumptions.fcf_source` and `assumptions.risk_free_rate` are now
 surfaced in the DCF panel alongside `beta_source`
-([ModelsTab.jsx:164-178](frontend/src/components/ModelsTab.jsx#L164-L178)). The
+([ModelsTab.jsx:204-296](frontend/src/components/ModelsTab.jsx#L204-L296)). The
 null-renders-green upside chip and the dead `equity_multiplier = None` line were fixed
 2026-08-09 (c).
 
@@ -1256,7 +1307,12 @@ Backend **389 → 399 passing**, frontend 46.
 implemented **one** term — `dcf_valuation` never read the balance sheet at all — and said so
 nowhere: a grep of `frontend/src/` for `totalDebt`, `balance_sheet`, `minority`, `associate`
 or `invest` returned **zero hits**, and none of the 27 caveat strings the UI already shows
-mentioned it. The omission was deliberate (`comps.py:545`) and completely silent.
+mentioned it. The omission was deliberate (`comps.py:545` at the time) and completely silent.
+*(Line reference needs re-verification: `comps.py:545` no longer holds this comment, and
+`dcf_valuation` now lives in `financial_models.py`, not `comps.py`. The nearest surviving
+"deliberately absent" comment, `financial_models.py:819`, documents only the narrower
+associates-at-cost omission recorded below and is not a faithful stand-in for the original
+citation, so no replacement line number is given here.)*
 
 Three terms are now read from the newest balance sheet; the fourth is reported and excluded.
 
@@ -2027,7 +2083,7 @@ The conclusion is unaffected: 1 of 12 is worse than 1 of 11.)*
 
 **The divergences are the feature, not the duplication:**
 
-- `ModelsTab.jsx:703-706` deliberately swallows its error — *"the quality bars are an
+- `ModelsTab.jsx:831-834` deliberately swallows its error — *"the quality bars are an
   enhancement — a failure here must not blank the tab."* A hook that surfaced `error` would
   blank the entire valuation tab because a score bar failed.
 - `SearchBar.jsx:38-51` — a 220 ms debounce **plus** a sequence-number race guard, because
@@ -2035,15 +2091,15 @@ The conclusion is unaffected: 1 of 12 is worse than 1 of 11.)*
   per keystroke with no ordering guarantee.
 - `PortfolioTab.jsx:60` gates on `if (loading && !data)` to keep stale rows visible during a
   refetch instead of flashing a loader; its error renders as a banner *above* the table.
-- `TrackerTab.jsx:31-46` — three URLs behind one loading flag and one fatal error. Three hook
+- `TrackerTab.jsx:31-55` — three URLs behind one loading flag and one fatal error. Three hook
   calls would let the chart render with bars but no event markers: a behaviour change.
 - [ScorecardTab.jsx:616](frontend/src/components/ScorecardTab.jsx#L616) — the comps URL is
   derived from a *prior* response (`loadComps(peerSuggest.suggested.join(','))`), so it cannot
   be expressed as `deps` at all.
-- `ModelsTab.jsx:694-699` and
+- `ModelsTab.jsx:824-827` and
   [ScorecardTab.jsx:611](frontend/src/components/ScorecardTab.jsx#L611) seed **controlled form
   inputs** from the response (`setPeerInput(peerSuggest.suggested.join(', '))`);
-  `PriceChart.jsx:126` seeds state then mutates it locally on drag/append/delete. Read-only
+  `PriceChart.jsx:237` seeds state then mutates it locally on drag/append/delete. Read-only
   `data` is incompatible with both.
 
 Only 2 of 12 sites have any cancellation today — `PriceChart.jsx`'s `let live` guard and
@@ -2101,8 +2157,8 @@ and `yfinance` from CI."* **Wrong on cost and wrong on benefit.**
   (the single `rf = risk_free_rate(RISK_FREE_RATE)` inside `_wacc`, cited by symbol because a
   line number here has already drifted twice — `:503` → `:515` → `:523` — each time from an edit
   to the comment block sitting directly above it), but `statement_to_market_fx`
-  has **6 production call sites across 4 modules** — `financial_models.py` ×3 (`:258`, `:284`,
-  `:382`), plus `comps.py:241`, `forensics.py:108`, `scoring.py:129` — so threading a rate
+  has **6 production call sites across 4 modules** — `financial_models.py` ×3 (`:276`, `:302`,
+  `:423`), plus `comps.py:376`, `forensics.py:108`, `scoring.py:129` — so threading a rate
   lookup is still a viral parameter through a chain of signatures rather than a local change.
 
   *(The source audit said "7 call sites across 4 modules, `financial_models` ×5". Re-counted
@@ -2111,8 +2167,8 @@ and `yfinance` from CI."* **Wrong on cost and wrong on benefit.**
   the conclusion is unaffected**: 6 sites across 4 modules is still viral, just less so than
   claimed. Recorded rather than quietly corrected, because a cost argument that was inflated is
   worth knowing about.)*
-- **"Removes yfinance from CI" is false.** [data_provider.py:16](backend/data_provider.py#L16)
-  imports `yfinance` at module scope, and [comps.py:15](backend/comps.py#L15) imports the
+- **"Removes yfinance from CI" is false.** [data_provider.py:21](backend/data_provider.py#L21)
+  imports `yfinance` at module scope, and [comps.py:24](backend/comps.py#L24) imports the
   `provider` singleton. Any test importing `main` or `comps` pulls it regardless.
 - **The impurity is already contained.** Both functions are day-cached in module globals, fail
   soft (`risk_free_rate` returns its fallback *uncached*; `fx_rate` returns `None` and callers
@@ -2159,8 +2215,8 @@ table above is what the AST actually says, which also vindicates the audit's ori
 clean layers" — the one part of that sentence that had been right.)*
 
 **The comment density is an audit trail, not documentation.** It carries measured values, often
-dated — `financial_models.py:109` records *"yfinance returned 0.173 for XOM"*, `:544` records
-*"XOM regresses at 0.2888 and is used at 0.30"*, and `:713-714` carries *"moved fair value
+dated — `financial_models.py:109` records *"yfinance returned 0.173 for XOM"*, `:623-624` records
+*"XOM regresses at 0.2888 and is used at 0.30"*, and `:799-800` carries *"moved fair value
 143.99 → 147.41"* with its date. That is what lets this list say *"declined again, this time on
 measurement rather than principle"* instead of re-arguing a decision from scratch. A refactor
 that normalises it to conventional docstrings would delete the least reproducible asset in the

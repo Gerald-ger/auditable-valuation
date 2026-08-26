@@ -295,6 +295,19 @@ function DcfAudit({ dcf }) {
             {' '}
             ({a.fcf_source === 'cash_flow_statement' ? a.fcf_period : 'info, period unverified'})
           </span>
+          {/* The figure above is no longer the statement's own: operating cash
+              flow adds stock compensation back as non-cash, and the reference
+              doc forbids keeping that add-back while the share count stays put
+              — it values the same equity twice. Worth 12-19% of fair value on
+              the fixtures that report the row, which is far too large to leave
+              as an unexplained gap between this number and the filing. Absent
+              for an issuer that reports no such row, where the basis says
+              `not_reported` rather than zero. */}
+          {a.sbc_basis === 'statement_sbc' && (
+            <span className="muted-note">
+              {' '}less <b>{big(a.fcf_sbc)}</b> stock comp
+            </span>
+          )}
           {' · '}forecast <b>{a.stage1_years}+{a.stage2_years}y</b>
           {/* Only shown when the two currencies actually differ, which is the
               China-domiciled HK listings: 0700.HK reports CNY and trades HKD.
@@ -654,6 +667,10 @@ function BaseYearPanel({ dcf }) {
   // about representativeness — which is not the same as "it is representative",
   // so neither branch of the sentence below may run.
   const known = b.ratio_to_mean !== null && b.ratio_to_mean !== undefined;
+  // Only shown where the issuer reports the row. An all-zero column on XOM or
+  // 0002.HK would be four more numbers that say nothing, on a table already
+  // wide enough to overflow a phone.
+  const hasSbc = b.history.some((h) => h.sbc_to_revenue > 0);
   const off = known && Math.abs(b.ratio_to_mean - 1) > 0.05;
   const ccy = dcf.assumptions?.currency;
 
@@ -669,6 +686,7 @@ function BaseYearPanel({ dcf }) {
             <th>Operating cash / revenue</th>
             <th>Capex / revenue</th>
             <th>FCF / revenue</th>
+            {hasSbc && <th>Stock comp / revenue</th>}
           </tr>
         </thead>
         <tbody>
@@ -678,6 +696,7 @@ function BaseYearPanel({ dcf }) {
               <td>{pct(h.operating_margin_cash)}</td>
               <td>{pct(h.capex_to_revenue)}</td>
               <td><b>{pct(h.fcf_margin)}</b></td>
+              {hasSbc && <td>{pct(h.sbc_to_revenue)}</td>}
             </tr>
           ))}
           <tr className="base-year-mean">
@@ -685,6 +704,7 @@ function BaseYearPanel({ dcf }) {
             <td />
             <td />
             <td><b>{pct(b.mean_fcf_margin)}</b></td>
+            {hasSbc && <td>{pct(b.mean_sbc_margin)}</td>}
           </tr>
         </tbody>
       </table>
@@ -711,6 +731,21 @@ function BaseYearPanel({ dcf }) {
         ) : (
           known && 'It is close to its own average, so this choice moves the valuation little.'
         )}
+        {hasSbc && (
+          <>
+            {' '}The figure below discounts that average <b>net of the average
+            stock-compensation charge</b> — {pct(b.mean_fcf_margin, 2)} −{' '}
+            {pct(b.mean_sbc_margin, 2)} ={' '}
+            <b>{pct(b.mean_fcf_margin - b.mean_sbc_margin, 2)}</b> of revenue — because a
+            normal year carries a normal charge. The headline instead nets the base
+            year&rsquo;s own charge, which is the one it actually reported.
+            {/* Two decimals, where the table above uses one: these three numbers are
+                a subtraction the reader can check, and at one decimal MSFT printed
+                26.0 − 4.2 = 21.7 because each term rounded on its own. The stored
+                margins carry four places, so two makes it exact rather than merely
+                closer. */}
+          </>
+        )}
       </div>
 
       {b.fair_value_normalised !== null && (
@@ -726,7 +761,8 @@ function BaseYearPanel({ dcf }) {
               </tr>
               <tr>
                 <td style={{ textAlign: 'left' }}>
-                  On this company&rsquo;s {b.periods}-year average margin, at today&rsquo;s revenue
+                  On this company&rsquo;s {b.periods}-year average margin
+                  {hasSbc && <>, net of stock comp</>}, at today&rsquo;s revenue
                 </td>
                 <td><b>{num(b.fair_value_normalised)}</b> {ccy}</td>
                 <td>

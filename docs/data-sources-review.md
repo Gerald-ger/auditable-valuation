@@ -125,7 +125,7 @@ eventual swap a bounded job rather than a rewrite — it is worth keeping clean.
 | Gap | Data actually needed | Free source? |
 |---|---|---|
 | ERP flat 5% for every market | per-market equity risk premium | ✅ **done 2026-08-14** — Damodaran, vendored |
-| HK/CNY discounted at the US 10Y | per-currency sovereign yield | ✅ **CNY done 2026-08-19** — ChinaBond's CGB 10Y, keyless, net of the vendored default spread. ⚠️ **HKD still open**: HKMA has not answered on three attempts across six days, and it was never able to serve the CNY case anyway. See §7 *(this row pointed at §6 until 2026-08-18 — §6 is the beta/momentum section; the risk-free gating has always been §7)* |
+| HK/CNY discounted at the US 10Y | per-currency sovereign yield | ✅ **CNY done 2026-08-19** — ChinaBond's CGB 10Y, keyless, net of the vendored default spread. ✅ **HKD done 2026-08-26** — the HKSAR Government's daily workbook at `hkgb.gov.hk`, same shape, net of the HKD default spread. *(This row read "⚠️ HKD still open: HKMA has not answered on three attempts across six days" until 2026-08-26, and §1's source table had already carried HKGB for part of that time — the file contradicted itself. The blocker was also the wrong diagnosis rather than a stale one: HKMA answers in 2.6 s and returns 12 of 13 fields null, and the ten-year was published somewhere nobody had looked. See §5.)* *(This row pointed at §6 until 2026-08-18 — §6 is the beta/momentum section; the risk-free gating has always been §7)* |
 | Interest income not netted from FCFF | cash interest *received*, per period | ✅ likely — SEC XBRL `CompanyFacts` (US only) |
 | AAPL/MSFT get no FCFF add-back | interest paid, every period | ✅ likely — same source |
 | Interest coverage mixing FY2025 and FY2023 | statements with explicit period labels | ✅ same source |
@@ -377,7 +377,20 @@ committed fixtures and are reproducible.)*
 
 ---
 
-## 7. The one thing deliberately left undone
+## 7. ~~The one thing deliberately left undone~~ — discharged 2026-08-19 and 2026-08-26
+
+> **This section is kept for its reasoning, not its status.** What it calls undone was built:
+> CNY on 2026-08-19 (ChinaBond's CGB 10Y) and HKD on 2026-08-26 (`hkgb.gov.hk`), both net of
+> the vendored sovereign default spread, both keyed on `financialCurrency` so an issuer is
+> discounted in the currency it reports in. The numbers below are the case that was made for
+> doing it, and they are the case that was acted on — **read them as the argument, not as the
+> state of the code.** The terminal-growth objection the last paragraphs raise was *not*
+> resolved by building this; it was accepted. A CNY risk-free rate does assert CNY perpetual
+> growth through `min(TERMINAL_GROWTH, rf)`, and that consequence is live today.
+>
+> This banner exists because §1's source table and §5 recorded the work on the day it
+> landed while §4's gap row and this heading did not, leaving one document asserting both
+> that the rate was sourced and that it was not.
 
 Per-market **risk-free rates** — the other half of the cost-of-capital pair, and the half
 that would fix 0700.HK discounting CNY cash flows at a US rate. Not done, and not because it

@@ -377,8 +377,10 @@ def test_a_single_currency_issuer_is_untouched_by_any_of_this(monkeypatch):
     # 143.99 under the old 5-year growth plateau; 129.29 once the explicit stage
     # matched the one-year horizon of the consensus that feeds it; 141.17 once
     # the US premium was Damodaran's published 4.46% rather than a flat 5%;
-    # 146.49 now that the equity bridge adds AAPL's marked investment securities
-    assert dcf["fair_value_per_share"] == pytest.approx(146.49, rel=1e-3)
+    # 146.49 once the equity bridge added AAPL's marked investment securities;
+    # 127.91 now that stock compensation is subtracted as the cash expense it is
+    # rather than added back against a share count that never moves
+    assert dcf["fair_value_per_share"] == pytest.approx(127.91, rel=1e-3)
 
 
 def test_peer_leverage_is_put_on_one_basis_before_unlevering():
@@ -738,8 +740,14 @@ def test_a_normalised_base_never_replaces_the_reported_one(monkeypatch):
     q = d["diagnostics"]["base_fcf_quality"]
 
     assert q["normalised_fcf"] != reported          # an alternative exists
-    assert d["assumptions"]["base_fcf"] >= reported  # ...and the DCF did not use it
-    assert d["assumptions"]["base_fcf"] - reported == d["assumptions"]["fcf_interest_addback"]
+    # ...and the DCF used the reported year, moved only by legs it names on
+    # screen. The `>=` this line used to assert stopped holding on 2026-08-26:
+    # subtracting stock compensation makes the discounted figure *smaller* than
+    # the statement one, which is the point of it. The equality is the stronger
+    # claim anyway — it pins the whole composition, not just its direction.
+    assert d["assumptions"]["base_fcf"] == (reported
+                                            + d["assumptions"]["fcf_interest_addback"]
+                                            - d["assumptions"]["fcf_sbc"])
 
 
 def test_growth_alone_does_not_trip_the_base_anomaly_detector(monkeypatch):
@@ -1061,13 +1069,21 @@ def test_the_band_is_linear_in_the_base_year():
     f = load_fundamentals("MSFT")
     d = fm.dcf_valuation(f)
     b = d["diagnostics"]["base_year"]
-    scale = b["mean_fcf_margin"] / b["latest_fcf_margin"]
+    # Net of stock compensation on both legs since 2026-08-26. That is the
+    # quantity the model discounts, so it is the quantity fair value is
+    # homogeneous in; the gross statement margin stopped being either.
+    scale = ((b["mean_fcf_margin"] - b["mean_sbc_margin"])
+             / (b["latest_fcf_margin"] - b["latest_sbc_margin"]))
 
-    # equity value, not fair value: the net-debt bridge is a constant, so only
-    # the enterprise leg scales
+    # equity value, not fair value: the bridge is a constant, so only the
+    # enterprise leg scales. The **whole** deduction, not net debt on its own —
+    # MSFT's marked investment securities are 36bn of it, and adding back net
+    # debt alone left a 1.66% residual that the 2% tolerance had been absorbing
+    # since this test was written. Corrected here because the SBC change shrank
+    # the denominator and pushed that residual to the edge of passing.
     ev_reported = d["enterprise_value"]
     ev_normalised = (b["fair_value_normalised"] * f["info"]["sharesOutstanding"]
-                     + d["net_debt"])
+                     + d["diagnostics"]["equity_bridge"]["deduction"])
     assert ev_normalised / ev_reported == pytest.approx(scale, rel=0.02)
 
 
@@ -1115,8 +1131,115 @@ def test_the_reported_year_stays_the_headline():
     f = load_fundamentals("MSFT")
     d = fm.dcf_valuation(f)
     statement_fcf = statements.statement_fcf(f["cash_flow"])[1]
-    assert d["assumptions"]["base_fcf"] == statement_fcf + d["assumptions"]["fcf_interest_addback"]
+    assert d["assumptions"]["base_fcf"] == (statement_fcf
+                                            + d["assumptions"]["fcf_interest_addback"]
+                                            - d["assumptions"]["fcf_sbc"])
     assert d["diagnostics"]["base_year"]["fair_value_normalised"] != d["fair_value_per_share"]
+
+
+def test_stock_compensation_is_subtracted_rather_than_added_back():
+    """The reference doc states it as an absolute, and the engine used to breach it.
+
+    `docs/financial-models-reference.md` permits two treatments and forbids
+    their combination: *"Never add back with static share count — that
+    double-counts value"*. Operating cash flow adds stock compensation back as a
+    non-cash charge and the share count is `sharesOutstanding`, which never
+    moves, so until 2026-08-26 the platform was doing precisely the forbidden
+    thing on every issuer that reports the row.
+    """
+    f = load_fundamentals("MSFT")
+    d = fm.dcf_valuation(f)
+    a = d["assumptions"]
+    reported = f["cash_flow"][a["fcf_period"]]["Stock Based Compensation"]
+
+    assert a["sbc_basis"] == "statement_sbc"
+    assert a["fcf_sbc"] == round(abs(reported))
+    assert a["base_fcf"] == (statements.statement_fcf(f["cash_flow"])[1]
+                             + a["fcf_interest_addback"] - a["fcf_sbc"])
+
+
+def test_an_issuer_reporting_no_stock_compensation_is_left_alone():
+    """0.0 with a basis that says why, never a figure estimated for it.
+
+    XOM and 0002.HK carry no SBC row in any captured period. Inferring one from
+    a peer or a margin would be exactly the assumption this platform declines to
+    make when the statements do not support it — the same discipline
+    `fcff_interest_addback` applies to an unverifiable interest classification.
+    """
+    for stem in ("XOM", "0002_HK"):
+        a = fm.dcf_valuation(load_fundamentals(stem))["assumptions"]
+        assert a["sbc_basis"] == "not_reported", stem
+        assert a["fcf_sbc"] == 0, stem
+
+
+def test_the_scoring_cash_flow_metrics_are_not_touched_by_the_adjustment():
+    """The correction belongs to the DCF and must not leak into the scorer.
+
+    `scoring.fcf_yield` divides by market cap and `fcf_conversion` by net
+    income; both are already after stock compensation, so netting it a second
+    time inside `statements.statement_fcf` would double-correct them. Pinned
+    because that function is the tempting place to make this change, and its own
+    docstring says three of its four callers want the figure left alone.
+    """
+    f = load_fundamentals("MSFT")
+    period, fcf = statements.statement_fcf(f["cash_flow"])
+    rows = f["cash_flow"][period]
+    assert fcf == rows["Operating Cash Flow"] + rows["Capital Expenditure"]
+    assert rows["Stock Based Compensation"]        # the row exists...
+    assert fcf != rows["Operating Cash Flow"] + rows["Capital Expenditure"] \
+        - rows["Stock Based Compensation"]         # ...and was not applied here
+
+
+def test_the_normalised_base_nets_a_normal_year_of_stock_compensation():
+    """Both legs normalised, or the panel sets one normal year against one
+    reported one.
+
+    MSFT's SBC margin runs 4.54% -> 3.74% across the captured periods, so
+    netting the newest figure rather than the mean would flatter the alternative
+    by the whole of that drift while claiming to describe a normal year.
+    """
+    f = load_fundamentals("MSFT")
+    b = fm.dcf_valuation(f)["diagnostics"]["base_year"]
+
+    # the two differ, which is what makes the choice between them load-bearing
+    assert b["mean_sbc_margin"] > b["latest_sbc_margin"]
+    assert b["normalised_statement_fcf"] == pytest.approx(
+        (b["mean_fcf_margin"] - b["mean_sbc_margin"]) * b["latest_revenue"],
+        rel=1e-3)
+
+
+def test_the_two_mean_margins_subtract_exactly_at_two_decimals():
+    """The base-year panel prints `mean − mean sbc = net` for the reader to check,
+    and an equation on screen has to hold on screen.
+
+    Both means are rounded to four places on the way out, so a difference shown at
+    two is exact by construction. At **one** place it was not: MSFT rendered
+    26.0% − 4.2% = 21.7%, wrong by inspection, because each term rounded on its own
+    and 0.1pp went missing. This pins the four-place rounding those two decimals
+    depend on — drop it to three and the panel starts lying again, quietly.
+    """
+    for stem in ("MSFT", "AAPL", "0700_HK"):
+        b = fm.dcf_valuation(load_fundamentals(stem))["diagnostics"]["base_year"]
+        gross, sbc = b["mean_fcf_margin"], b["mean_sbc_margin"]
+        shown = lambda x: round(x * 100, 2)   # noqa: E731 - mirrors pct(v, 2)
+        assert shown(gross) - shown(sbc) == pytest.approx(
+            shown(gross - sbc), abs=1e-9), stem
+
+
+def test_the_fcf_margin_identity_survives_the_stock_compensation_leg():
+    """`sbc_to_revenue` is carried beside the identity, never folded into it.
+
+    The panel's attribution rests on `fcf_margin == CFO/rev - capex/rev` with no
+    residual. A third term inside that sum would turn "spending more" back into
+    a guess, which is why the adjustment is a separate column.
+    """
+    for stem in ("MSFT", "AAPL", "0700_HK"):
+        f = load_fundamentals(stem)
+        ctx = fm.base_year_context(f, statements.statement_fcf(f["cash_flow"])[0])
+        for h in ctx["history"]:
+            assert h["fcf_margin"] == pytest.approx(
+                h["operating_margin_cash"] - h["capex_to_revenue"], abs=2e-4)
+            assert h["sbc_to_revenue"] >= 0
 
 
 def test_the_decomposition_reconciles_against_the_average_on_screen():
