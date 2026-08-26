@@ -17,18 +17,31 @@
  * than inventing shapes: price 250 / shares 10 / cost 0 is the same input the
  * backend test uses for the crash case.
  */
+import { act } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import PortfolioTab from './PortfolioTab';
 import { render, flush } from '../test-utils';
 
-const { get } = vi.hoisted(() => ({ get: vi.fn() }));
-
-vi.mock('../api', () => ({
-  get,
-  post: vi.fn(),
-  del: vi.fn(),
-  patch: vi.fn(),
+/**
+ * All three return promises in `../api`, and so do these.
+ *
+ * `patch` used to be here too and is gone: this component imports only
+ * `del, get, post`, so it was mock surface for a function that is never called.
+ *
+ * The promise floor is not what the CI failures of 2026-08-20 were about — those
+ * were `patch(...).catch()` on an undefined in PriceChart, and this component
+ * `await`s instead, which tolerates undefined perfectly well. Measured: the
+ * write-flow tests below pass against bare `vi.fn()` doubles. It is here so that
+ * a switch to `.then()` chaining fails for the product's reasons rather than the
+ * double's — see the mutation note in CHANGELOG 2026-08-20 (e).
+ */
+const { get, post, del } = vi.hoisted(() => ({
+  get: vi.fn(() => Promise.resolve({})),
+  post: vi.fn(() => Promise.resolve({})),
+  del: vi.fn(() => Promise.resolve({})),
 }));
+
+vi.mock('../api', () => ({ get, post, del }));
 
 /** One row, defaulted to an ordinary priced holding. */
 const row = (over = {}) => ({
@@ -77,6 +90,8 @@ const pnlCell = (container) => container.querySelector('tbody tr')?.children[6];
 
 beforeEach(() => {
   get.mockReset();
+  post.mockReset();
+  del.mockReset();
 });
 
 describe('the P&L pair', () => {
@@ -174,6 +189,84 @@ describe('the mixed-currency warning', () => {
     ]));
     expect(container.textContent).toContain('totals add face values');
     expect(container.textContent).toContain('USD, HKD');
+    unmount();
+  });
+});
+
+describe('the write flows', () => {
+  /**
+   * `save` and `remove` had no test at all, so `post` and `del` were mocked and
+   * never called. That is what let their doubles sit at a bare `vi.fn()`
+   * unnoticed; a double nothing invokes cannot be wrong in a way anything sees.
+   */
+  const setValue = (input, value) => {
+    // React tracks the last value it wrote on the DOM node and skips onChange
+    // when they match, so assigning `.value` directly is swallowed. Going
+    // through the prototype setter is what makes a controlled input see it.
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value').set;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+
+  it('posts the position the form describes, then reloads', async () => {
+    const { container, unmount } = await mount(payload([row()]));
+    get.mockClear();
+
+    setValue(container.querySelector('.position-form input'), 'msft');
+    await act(async () => {
+      container.querySelector('.position-form')
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(post).toHaveBeenCalledWith('/portfolio/position', {
+      ticker: 'MSFT', shares: 0, cost_basis: null, note: null,
+    });
+    expect(get).toHaveBeenCalledWith('/portfolio'); // the reload after the write
+    unmount();
+  });
+
+  it('refuses to post an empty ticker', async () => {
+    const { container, unmount } = await mount(payload([row()]));
+
+    await act(async () => {
+      container.querySelector('.position-form')
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(post).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('deletes the row that was clicked, then reloads', async () => {
+    const { container, unmount } = await mount(payload([row()]));
+    get.mockClear();
+
+    await act(async () => {
+      container.querySelector('.row-remove')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(del).toHaveBeenCalledWith('/portfolio/position/AAPL');
+    expect(get).toHaveBeenCalledWith('/portfolio');
+    unmount();
+  });
+
+  it('shows a failed write instead of swallowing it', async () => {
+    // Both handlers catch and set `error`; without this nothing pinned that a
+    // rejected write reaches the reader at all.
+    const { container, unmount } = await mount(payload([row()]));
+    post.mockRejectedValueOnce(new Error('ticker not found'));
+
+    setValue(container.querySelector('.position-form input'), 'NOPE');
+    await act(async () => {
+      container.querySelector('.position-form')
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('ticker not found');
     unmount();
   });
 });

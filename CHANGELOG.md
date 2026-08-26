@@ -7,6 +7,34 @@ before/after where a change moved numbers the UI displays.
 
 ---
 
+## 2026-08-20 (e) — the PortfolioTab mock, and a correction to what (d) said about it
+
+Frontend **153 → 157**. Entry (d) flagged `PortfolioTab.test.jsx` as having the same latent gap
+"the same way". **That was wrong, and measuring it is what showed so.**
+
+PortfolioTab writes with `await post(...)` and `await del(...)`, never `.then()`/`.catch()`. `await
+undefined` resolves perfectly well, so a double returning `undefined` cannot throw here — this
+could never have produced the CI failure that (d) is about. Measured rather than argued: the four
+write-flow tests added below **pass against bare `vi.fn()` doubles**, with no error.
+
+What was actually wrong was smaller and more boring:
+
+- **`patch` was mocked and is never imported.** The component takes `del, get, post` only. Removed.
+- **`save` and `remove` had no test at all**, which is the reason the doubles could drift unnoticed:
+  a mock nothing calls cannot be observed to be wrong. Four tests now cover posting a position,
+  refusing an empty ticker, deleting a row, and surfacing a rejected write — the first coverage
+  those two flows have had. All six mutations of them are caught.
+- **The doubles now return promises**, and the justification is measured rather than assumed. Under
+  a plausible future rewrite of `save` to `.then()` chaining: faithful doubles → 11 pass, bare
+  doubles → 1 fails. The failure would be the *mock's*, not the product's, and the test would be
+  reporting on the wrong thing. That is what the floor buys; it buys nothing today.
+
+Verified by exit code this time, not by a summary line: `npm test` ×3, `npm run lint`,
+`npm run build`, `ruff check backend/`, `python -m pytest -q` — all **exit 0**. Frontend 157
+passed, 0 errors; backend 532.
+
+---
+
 ## 2026-08-20 (d) — CI had been red for two commits and the local summary said green
 
 **CI #38 and #39 both failed**, on `5520aac` and on `bab4296`. The backend job passed both times;
@@ -45,6 +73,11 @@ unhandled rather than failures, and why the tests that triggered them still pass
 
 Not touched: `PortfolioTab.test.jsx` stubs `post`/`del`/`patch` as bare `vi.fn()` the same way. No
 test reaches them today, so it is latent rather than broken, and it is left alone deliberately.
+
+> **Correction (2026-08-20 (e)).** "The same way" is wrong. That component `await`s its writes
+> rather than chaining, and `await undefined` resolves — so its doubles could not have thrown at
+> all, and measuring confirmed it. The real faults there were a `patch` mock for a function the
+> component never imports, and two write flows with no test. Both fixed; see the entry above.
 
 ---
 
