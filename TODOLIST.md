@@ -169,15 +169,19 @@ deliberately rather than letting the old scope carry by default.
 - **`PriceChart.jsx` is 1,262 lines with 19 `useState` and 14 `useRef`.** The count is higher
   than first cited because it was recounted, not because it grew. *Trigger: the CSS-Modules
   entry's trigger, or the first bug needing two of those refs read together.*
-- **`ModelsTab` and `ScorecardTab` have no tests.** Four component test files exist —
-  `ErrorBoundary`, `PortfolioTab`, `PriceChart`, `TrackerTab` — and neither of these is among
-  them. `App.test.jsx` **stubs both out** rather than testing them. *Trigger: any change to
-  either component's rendering logic.*
-- **Drawings PATCH and DELETE ignore `ticker`, and report success for an id that does not
-  exist.** [main.py:694](backend/main.py#L694) and [:700](backend/main.py#L700) pass only
-  `drawing_id`, and `store.py`'s `UPDATE`/`DELETE ... WHERE id = ?` never checks rowcount — so
-  both return `{"ok": true}` unconditionally, and any ticker's URL can edit any drawing.
-  *Trigger: a second client, or multi-user. Neither exists today, which is why this is 🟡.*
+- ~~**`ModelsTab` and `ScorecardTab` have no tests.**~~ **Closed 2026-08-27.** Eight tests
+  across two new files, pinning the blast radius of a missing number rather than the
+  arithmetic: a refused DCF costs its own panel and not the tab, a null upside stays
+  uncoloured, an all-insufficient card does not throw past `verdict()`'s guard, and a
+  scored-but-excluded pillar reads as excluded. Every mock shape was read out of the running
+  engine rather than written from the component's side. `App.test.jsx` still stubs both,
+  which is correct — it tests the shell.
+- ~~**Drawings PATCH and DELETE ignore `ticker`, and report success for an id that does not
+  exist.**~~ **Closed 2026-08-27.** Both store functions now scope on `id AND ticker` and
+  return `cur.rowcount == 1`; both endpoints 404 on a miss. Six tests where there were none,
+  and the empty-patch branch — every `DrawingPatch` field is optional, so no UPDATE runs and
+  no rowcount can answer — checks the id explicitly rather than falling back to claiming
+  success. Safe to change the signature because `main.py` was the only caller.
 - **`aria-*` appears in exactly one file**, `SearchBar.jsx`. The two `.notice-banner` divs added
   today carry none either. *Trigger: any accessibility claim, or a screen-reader user.*
 - **CI runs one OS and one version.** [ci.yml](.github/workflows/ci.yml): both jobs
@@ -185,7 +189,7 @@ deliberately rather than letting the old scope carry by default.
   Windows, the platform this is developed on, is the one never tested. *Trigger: the first
   macOS or Windows contributor.*
 - **No coverage measurement anywhere.** No `pytest-cov`, no `--cov`, no `@vitest/coverage-*`, no
-  `--coverage`. *Trigger: wanting to know which of the 797 tests overlap.*
+  `--coverage`. *Trigger: wanting to know which of the 811 tests overlap.*
 - **Streaming errors arrive as in-body events under HTTP 200.**
   [main.py:132](backend/main.py#L132)'s `_ndjson` turns `AIUnavailable` and generic exceptions
   into a final NDJSON event rather than a non-200 status. *Trigger: a second consumer of those

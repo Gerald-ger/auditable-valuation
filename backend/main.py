@@ -692,13 +692,24 @@ def create_drawing(ticker: str, req: DrawingRequest):
 
 @app.patch("/api/stock/{ticker}/drawings/{drawing_id}")
 def patch_drawing(ticker: str, drawing_id: int, req: DrawingPatch):
-    store.update_drawing(drawing_id, **req.model_dump(exclude_none=True))
+    """404 when the drawing is not this ticker's, rather than a silent success.
+
+    `ticker` was in the path and never used, so any ticker's URL could move any
+    drawing. The frontend cannot notice either way — all three call sites in
+    PriceChart.jsx catch and discard, deliberately, so that a failed save does
+    not break the gesture that caused it. That is what made this quiet.
+    """
+    if not store.update_drawing(drawing_id, ticker, **req.model_dump(exclude_none=True)):
+        raise HTTPException(status_code=404,
+                            detail=f"No drawing {drawing_id} on '{ticker.upper()}'")
     return {"ok": True}
 
 
 @app.delete("/api/stock/{ticker}/drawings/{drawing_id}")
 def remove_drawing(ticker: str, drawing_id: int):
-    store.delete_drawing(drawing_id)
+    if not store.delete_drawing(drawing_id, ticker):
+        raise HTTPException(status_code=404,
+                            detail=f"No drawing {drawing_id} on '{ticker.upper()}'")
     return {"ok": True}
 
 

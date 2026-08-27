@@ -6,6 +6,8 @@ wrong and there is no way to tell after the fact.
 """
 from __future__ import annotations
 
+import pytest
+
 from conftest import load_fundamentals
 
 from backend import scoring
@@ -162,3 +164,100 @@ def test_migrations_resume_from_the_recorded_version(temp_db, monkeypatch):
     columns = _columns(temp_db, "positions")
     assert "broker" in columns and "account" in columns
     assert _version(temp_db) == 2
+
+
+# ── chart drawings ───────────────────────────────────────────────────
+#
+# This table had no test at all until 2026-08-27, and it was carrying two
+# defects that no test would have needed to be clever to catch: the endpoints
+# take a ticker in their path and did not pass it down, and neither store
+# function looked at rowcount. So any ticker's URL could move or delete any
+# drawing, and both reported `{"ok": true}` for an id that does not exist.
+#
+# Nothing noticed because the only client cannot notice: all three call sites in
+# PriceChart.jsx discard the result, one of them saying why -- "a failed save
+# must not break the gesture". A silent wrong answer and a silent right one look
+# identical from there.
+
+def _two_tickers(store):
+    """One drawing on each of two tickers, to make cross-ticker reach visible."""
+    return (store.add_drawing("AAPL", "hline", 100.0),
+            store.add_drawing("MSFT", "hline", 200.0))
+
+
+def test_a_drawing_moves_only_through_its_own_tickers_url(temp_db):
+    aapl, _ = _two_tickers(temp_db)
+
+    assert temp_db.update_drawing(aapl, "MSFT", p1=999.0) is False
+    assert temp_db.list_drawings("AAPL")[0]["p1"] == 100.0, "moved through the wrong ticker"
+
+    assert temp_db.update_drawing(aapl, "AAPL", p1=111.0) is True
+    assert temp_db.list_drawings("AAPL")[0]["p1"] == 111.0
+
+
+def test_a_drawing_is_deleted_only_through_its_own_tickers_url(temp_db):
+    aapl, msft = _two_tickers(temp_db)
+
+    assert temp_db.delete_drawing(aapl, "MSFT") is False
+    assert len(temp_db.list_drawings("AAPL")) == 1, "deleted through the wrong ticker"
+    assert len(temp_db.list_drawings("MSFT")) == 1, "deleted the wrong ticker's drawing"
+
+    assert temp_db.delete_drawing(aapl, "AAPL") is True
+    assert temp_db.list_drawings("AAPL") == []
+
+
+def test_an_id_that_does_not_exist_is_reported_rather_than_reported_ok(temp_db):
+    """The half that had already shipped: success for work never done."""
+    assert temp_db.update_drawing(9999, "AAPL", p1=1.0) is False
+    assert temp_db.delete_drawing(9999, "AAPL") is False
+
+
+def test_a_patch_carrying_nothing_mutable_still_answers_about_the_id(temp_db):
+    """Nothing to change is not the same as nothing to change it on.
+
+    `DrawingPatch` has every field optional, so an empty body reaches the store
+    with no mutable keys and never runs an UPDATE whose rowcount could answer
+    the question. The id still has to be checked, or this one path goes back to
+    reporting success for a drawing that does not exist.
+    """
+    aapl, _ = _two_tickers(temp_db)
+    assert temp_db.update_drawing(aapl, "AAPL") is True
+    assert temp_db.update_drawing(aapl, "MSFT") is False
+    assert temp_db.update_drawing(9999, "AAPL") is False
+
+
+def test_the_ticker_is_matched_case_insensitively(temp_db):
+    """`add_drawing` upper-cases on the way in, so the lookups must too.
+
+    Otherwise a lowercase URL -- which FastAPI passes through verbatim -- would
+    404 against a drawing that is plainly there.
+    """
+    aapl, _ = _two_tickers(temp_db)
+    assert temp_db.update_drawing(aapl, "aapl", p1=1.0) is True
+    assert temp_db.delete_drawing(aapl, "aapl") is True
+
+
+def test_the_endpoints_turn_a_miss_into_a_404(temp_db):
+    """What the store's new boolean is for.
+
+    Imported inside the test because `backend.main` pulls in the whole
+    application; the rest of this module needs none of it.
+    """
+    from fastapi import HTTPException
+
+    from backend import main
+
+    aapl, _ = _two_tickers(temp_db)
+    patch = main.DrawingPatch(p1=42.0)
+
+    assert main.patch_drawing("AAPL", aapl, patch) == {"ok": True}
+
+    for call in (lambda: main.patch_drawing("MSFT", aapl, patch),
+                 lambda: main.patch_drawing("AAPL", 9999, patch),
+                 lambda: main.remove_drawing("MSFT", aapl),
+                 lambda: main.remove_drawing("AAPL", 9999)):
+        with pytest.raises(HTTPException) as excinfo:
+            call()
+        assert excinfo.value.status_code == 404
+
+    assert main.remove_drawing("AAPL", aapl) == {"ok": True}

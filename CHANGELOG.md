@@ -16,6 +16,68 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-27 - The two tabs a demo visitor sees, and a pair of endpoints that always said yes
+
+Two of the eight standing software findings, chosen because one is the only real
+correctness bug among them and the other guards the only two tabs demo mode leaves fully
+enabled.
+
+### Drawings PATCH and DELETE honour the ticker, and stop claiming success
+
+Both endpoints take a ticker in their path and neither passed it down, so
+`/api/stock/TSLA/drawings/17` could move or delete a line belonging to `AAPL`. Neither store
+function looked at `rowcount`, so both returned `{"ok": true}` for an id that does not exist.
+
+`store.update_drawing` and `delete_drawing` now scope on `id AND ticker` and return whether
+anything matched; the endpoints raise 404 on a miss. **Safe to change their signatures because
+`main.py` was the only caller of either** — and safe to start failing because all three
+frontend call sites already discard the result, one of them saying why: *"a failed save must
+not break the gesture"*. That is exactly what kept this quiet — the only client is structurally
+unable to notice either answer.
+
+**One branch is not obvious.** Every `DrawingPatch` field is optional, so an empty body reaches
+the store with nothing mutable and never runs an UPDATE whose rowcount could answer the
+question. That path checks the id explicitly instead. Nothing to change is not the same as
+nothing to change it *on*.
+
+Six tests where the drawings table had **none**. Mutation-proved: removing the ticker scoping
+fails three, removing the rowcount check fails five, and both restored pass nineteen.
+
+### `ModelsTab` and `ScorecardTab` get their first tests
+
+`App.test.jsx` mocks both out, so the two tabs that answer in full in demo mode — half of
+everything a visitor sees — were exercised by nothing. Eight tests, pinning the **blast radius
+of a missing number** rather than the arithmetic, which the golden suite already owns:
+
+- A DCF the model refused costs its own panel and not the tab. `dcf_valuation` returns
+  `{"error": ...}` and nothing else for three real conditions, and `RIVN.json` and `O.json` are
+  committed because they hit two of them.
+- A null `upside_pct` stays uncoloured. `null >= 0` is true in JS, and the field is genuinely
+  null whenever `fx_basis` is `rate_unavailable`.
+- A card with every pillar `insufficient` renders instead of throwing past `verdict()`'s
+  `if (!scored.length) return null` — a shape `scoring.py` produces deliberately for thin
+  coverage.
+- A pillar that is scored but excluded reads as excluded rather than drawing a full bar.
+
+**Every mock was read out of the running engine** — `full_analysis`, `_score_and_record`,
+`comps_endpoint`, `score_history` in demo mode — rather than written from the component's side.
+That mattered three times: the first draft invented `sensitivity: null`, a partial `ratios`
+without `dupont`, and a factory whose trailing spread replaced the merged `assumptions`. All
+three crashed the render, and **all three were the mock being wrong rather than the component**.
+A test built from the consumer's imagination tests a payload the backend cannot send.
+
+**Two assertions were dropped for being unfalsifiable, which is the part worth recording.** A
+NaN check on the football field passed even with the scale forced to return `NaN` outright:
+when nothing is drawable every consumer of that scale is separately guarded, so the case the
+analysis predicted cannot be reached. And both "a failed enhancement fetch does not blank the
+tab" tests turn out to be caught by the **run's exit code, not by their assertions** —
+measured, deleting either `.catch` leaves the summary reading "passed" while vitest exits 1
+with "caught 1 unhandled error". Both comments now say so.
+
+Backend 632 -> 638 (665 collected, 27 network-deselected); frontend 165 -> 173 across 12 files.
+Bundle **unchanged** at 473.59 kB / 26.57 kB — no frontend source was touched. No engine code
+changed and no computed number moved.
+
 ## 2026-08-27 - One process, one port, one origin
 
 Demo mode built the data path a hosted demo would need and stopped there, deliberately. This

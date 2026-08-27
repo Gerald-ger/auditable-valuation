@@ -269,19 +269,37 @@ def list_drawings(ticker: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def update_drawing(drawing_id: int, **fields) -> None:
-    """Move an endpoint. Only geometry and the label are mutable."""
+def update_drawing(drawing_id: int, ticker: str, **fields) -> bool:
+    """Move an endpoint. Only geometry and the label are mutable.
+
+    Returns whether a drawing with that id, *on that ticker*, was there to move.
+    Both halves of that sentence were missing until 2026-08-27: the id was not
+    scoped, so any ticker's URL could edit any drawing, and nothing checked
+    rowcount, so the endpoint reported success for an id that does not exist.
+    """
     allowed = {k: v for k, v in fields.items() if k in ("t1", "p1", "t2", "p2", "label")}
-    if not allowed:
-        return
-    sets = ", ".join(f"{k} = :{k}" for k in allowed)
     with _conn() as c:
-        c.execute(f"UPDATE drawings SET {sets} WHERE id = :id", {**allowed, "id": drawing_id})
+        if not allowed:
+            # Nothing to change is not the same as nothing to change it *on*: a
+            # caller patching a bogus id still has to be told, so this branch
+            # asks the question the UPDATE would otherwise have answered.
+            return c.execute(
+                "SELECT 1 FROM drawings WHERE id = ? AND ticker = ?",
+                (drawing_id, ticker.upper()),
+            ).fetchone() is not None
+        sets = ", ".join(f"{k} = :{k}" for k in allowed)
+        cur = c.execute(
+            f"UPDATE drawings SET {sets} WHERE id = :id AND ticker = :ticker",
+            {**allowed, "id": drawing_id, "ticker": ticker.upper()})
+        return cur.rowcount == 1
 
 
-def delete_drawing(drawing_id: int) -> None:
+def delete_drawing(drawing_id: int, ticker: str) -> bool:
+    """Delete one drawing, and report whether it was there to delete."""
     with _conn() as c:
-        c.execute("DELETE FROM drawings WHERE id = ?", (drawing_id,))
+        cur = c.execute("DELETE FROM drawings WHERE id = ? AND ticker = ?",
+                        (drawing_id, ticker.upper()))
+        return cur.rowcount == 1
 
 
 def clear_drawings(ticker: str) -> None:
