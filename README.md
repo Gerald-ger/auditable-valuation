@@ -911,7 +911,7 @@ why no free redistribution-clean alternative covers Hong Kong, is in
   gives the same commentary.
 - The bull/bear debate and token streaming have **never been run against a live model** —
   Ollama is not installed here, so only the offline degradation path is verified. See
-  TODOLIST.md.
+  [TODOLIST.md](TODOLIST.md).
 - Portfolio totals sum mixed currencies at face value; there is no FX conversion. The UI
   warns when holdings span more than one currency.
 - Everything runs locally; nothing is sent to any cloud service.
