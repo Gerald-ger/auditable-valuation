@@ -167,6 +167,22 @@ decision, and one this file's own note on yfinance's terms bears on.
 
 ---
 
+### First tagged release — done 2026-08-27
+
+`v0.1.0`, tagging the commit that added the README badges. Cut for the repository page
+rather than for consumers: a repo with no release reads as unfinished to a visitor deciding
+whether to look further, which is the audience the 2026-08-27 review put first.
+
+`0.1.0` matches `pyproject.toml`'s own `version` field, so the tag introduces no second
+source of truth. The 0.x band is the honest one: there is still no stability promise, no
+packaging anyone can install from, and the limitations at the end of this file are unchanged by tagging.
+
+This reverses the *Deliberately not done* row below, whose reasoning — "there are no
+consumers pinning a version" — is still true. What changed is that a release is also a
+signal to a reader, and that reason was never weighed against the first.
+
+---
+
 ## Deliberately not done
 
 Each carries the condition that would reopen it.
@@ -174,7 +190,7 @@ Each carries the condition that would reopen it.
 | Item | Why not | Reopen when |
 |---|---|---|
 | Docker / docker-compose | The install is four commands; a container mainly hides the Python 3.14 requirement rather than solving it | Someone asks for a reproducible environment, or CI needs to test the runtime set |
-| Git tags, semver, GitHub Releases | There are no consumers pinning a version | Someone depends on a specific version |
+| ~~Git tags, semver, GitHub Releases~~ | ~~There are no consumers pinning a version~~ | **Reopened and done 2026-08-27** — see below |
 | `CONTRIBUTING.md`, `SECURITY.md`, issue/PR templates | Single author, no inbound contributions | A first external issue or PR arrives |
 | Relaxing Python below 3.14 | The floor is `requires-python = ">=3.14"` in `pyproject.toml`, chosen to match the only tested configuration (3.14.6 locally, 3.14 in CI) — **not** a dependency constraint. Checked against PyPI: `pandas==3.0.5` ships wheels back to cp311 and declares `>=3.11`; `numpy==2.5.1` ships back to cp312 and declares `>=3.12`. So 3.12/3.13 would plausibly work; lowering the floor honestly means running the suite there first, which is a task, not a config edit | Someone is actually blocked — then test on 3.12 and 3.13 and lower the floor to what passes |
 | CI OS / version matrix | One Linux runner already catches import and logic regressions | The Windows-only launchers break, or a platform bug ships |
@@ -188,7 +204,7 @@ Each carries the condition that would reopen it.
 - **CI never installs `backend/requirements.txt`.** It installs the smaller
   `requirements-test.txt`. A broken runtime pin — or a missing runtime dependency such as
   `openbb` — passes CI green. The runtime set is only exercised by hand.
-- **The 16 `network`-marked tests do not run in CI.** They are deselected by `pytest.ini` so the
+- **The 27 `network`-marked tests do not run in CI.** They are deselected by `pytest.ini` so the
   suite is offline and deterministic; they exist to detect yfinance changing shape, which means
   that detection only happens when someone runs them deliberately.
 - **No HTTP-layer tests.** Endpoints are thin wrappers over tested functions and were smoke-
