@@ -71,6 +71,144 @@ commit. These are the remainder, none of them load-bearing.
   it. **It goes stale again on the next commit that adds a test.** *Trigger: any change to
   the suite size.*
 
+### 🔵 The review's 32 standing findings, none of them written down until now *(2026-08-27)*
+
+The same four-agent review ran twice today — once before demo mode, once after — and produced
+**32 findings about the repo as a stranger meets it**. That is a different axis from the rest of
+this file: everything else here asks whether a number is right; these ask whether anyone gets
+far enough to see the number.
+
+They lived only in a conversation, which is why the second run could report *0 fixed, 0 worse,
+32 unchanged* with nothing having gone wrong in between — there was nothing recorded to act on.
+**That is the defect this entry fixes first.** Re-verified against `6a8dd5a` after today's two
+commits, so the evidence below is today's rather than the review's. Two are now closed.
+
+**The one thing, if only one gets done.** Stand up a hosted, zero-install instance of demo mode,
+and put the link in the three places a visitor looks: the GitHub *Website* field (empty today),
+the first lines of the README, and the CV. It is the only item that reaches all three audiences
+at once, and the expensive half is already built and measured — a data path with no credentials,
+no vendor rate limits, and no drift between visitors or across days. What remains is API-base
+and CORS configuration for a non-localhost origin, plus a host; the simplest shape serves
+`frontend/dist` from the same FastAPI process, which avoids a second origin entirely.
+
+**Two things to settle before that link goes anywhere.** Free tiers spin down when idle, and a
+recruiter's one click landing on a thirty-second cold start is worse than no link at all — so
+measure wake latency first. And serving *frozen committed fixtures* is a materially smaller act
+than the live-yfinance redistribution the licensing entry under **Decisions needed** calls a
+blocker. Smaller, but a different question, and not an answered one.
+
+**A scoping assumption that no longer holds, and would otherwise be inherited in silence.**
+`NEXT-STEPS.md` — a local, untracked planning file, so it is not in this repo — deferred the
+Dockerfile, the desktop installer and GitHub Releases, and
+`.env.example` plus env-var config for API base and CORS — whose trigger is written as *"Any
+deployment that is not localhost"* — on 2026-08-14, **"because the audience is portfolio piece
+only"**: read, not run. The goal stated on 2026-08-27 is three-part: people using it, stars, and
+a CV a banking recruiter may open. That third audience is arguably the *"Non-technical users"*
+trigger already written beside "Desktop installer, GitHub Releases". Re-check the decision
+deliberately rather than letting the old scope carry by default.
+
+**Promotional — what a visitor sees before deciding to spend any time (8, plus one new).**
+
+- **The differentiator is buried.** [README.md:3-5](README.md) is still plain prose, and the
+  sharpest line in the document — *"7.3% here, against an economy that grows 4%"* — is still
+  inside the `models.png` caption paragraph at `:32-36`. *Trigger: any rewrite of the first screen.*
+- **Zero badges.** `grep -i "badge\|shields.io" README.md` finds nothing. Three of them — CI,
+  licence, Python — is about ten minutes. *Trigger: none. It is simply absent.*
+- **No release, no custom social preview, no issue templates.** `gh release list` is empty,
+  [.github/](.github/) holds only `workflows/ci.yml`, and the `og:image` is still GitHub's
+  auto-generated card. *Trigger: the first outside visitor, or the link being posted anywhere.*
+- ~~**The About description said "409 offline tests".**~~ Closed 2026-08-27 → 793. The *class*
+  of defect recurs, and is recorded in the entry above.
+- **14 topics** — unchanged, and the one promotional thing already done right.
+- **Five plain screenshots, no hero image and no GIF.** [docs/images/](docs/images/) holds
+  exactly five PNGs, and `models.png` — the one showing the actual engine — is **second in the
+  README and the smallest file of the five**, 107,407 bytes against tracker's 202,769.
+  *Trigger: a hosted demo would make a GIF redundant; rejecting hosting would make one the
+  fallback.*
+- **Python 3.14 filters out most visitors, and demo mode sits behind that wall.**
+  `requires-python = ">=3.14"`, and `start-demo.bat` delegates to `start.bat`, which hard-fails
+  without an existing venv. *Trigger: a decision to widen the floor, or to host.*
+- **The ceiling stands at low double digits, 50-100 stars.** 2 stars, 0 forks, 0 watchers.
+- **New: the GitHub *Website* field is empty.** `homepage: ""` — the slot directly under the
+  repo name, in search results, and on the profile. *Trigger: the moment any link exists.*
+
+**Software — what a reader of the code finds (8).**
+
+- **`dcf_valuation` is one 447-line function**, [financial_models.py:701-1147](backend/financial_models.py#L701-L1147).
+  *Trigger: a change that has to be made in two places inside it.*
+- **`PriceChart.jsx` is 1,262 lines with 19 `useState` and 14 `useRef`.** The count is higher
+  than first cited because it was recounted, not because it grew. *Trigger: the CSS-Modules
+  entry's trigger, or the first bug needing two of those refs read together.*
+- **`ModelsTab` and `ScorecardTab` have no tests.** Four component test files exist —
+  `ErrorBoundary`, `PortfolioTab`, `PriceChart`, `TrackerTab` — and neither of these is among
+  them. `App.test.jsx` **stubs both out** rather than testing them. *Trigger: any change to
+  either component's rendering logic.*
+- **Drawings PATCH and DELETE ignore `ticker`, and report success for an id that does not
+  exist.** [main.py:694](backend/main.py#L694) and [:700](backend/main.py#L700) pass only
+  `drawing_id`, and `store.py`'s `UPDATE`/`DELETE ... WHERE id = ?` never checks rowcount — so
+  both return `{"ok": true}` unconditionally, and any ticker's URL can edit any drawing.
+  *Trigger: a second client, or multi-user. Neither exists today, which is why this is 🟡.*
+- **`aria-*` appears in exactly one file**, `SearchBar.jsx`. The two `.notice-banner` divs added
+  today carry none either. *Trigger: any accessibility claim, or a screen-reader user.*
+- **CI runs one OS and one version.** [ci.yml](.github/workflows/ci.yml): both jobs
+  `ubuntu-latest`, Python pinned `3.14`, Node `22`, no `matrix:` anywhere — and note that
+  Windows, the platform this is developed on, is the one never tested. *Trigger: the first
+  macOS or Windows contributor.*
+- **No coverage measurement anywhere.** No `pytest-cov`, no `--cov`, no `@vitest/coverage-*`, no
+  `--coverage`. *Trigger: wanting to know which of the 793 tests overlap.*
+- **Streaming errors arrive as in-body events under HTTP 200.**
+  [main.py:132](backend/main.py#L132)'s `_ndjson` turns `AIUnavailable` and generic exceptions
+  into a final NDJSON event rather than a non-200 status. *Trigger: a second consumer of those
+  endpoints that is not the app's own chat box.*
+
+**Structural — how the repo reads as a set of files (9; four actionable).**
+
+- **Four of seven `docs/*.md` are unreachable from the README.**
+  `currency-consistent-discounting.md` and `valuation-triangulation-review.md` are mentioned
+  **zero** times; `release-readiness.md` and `quant-review-2026-08-06.md` appear only as plain
+  text inside the project-structure tree, not as links. *Trigger: the next doc added, or a
+  reader asking why the FX argument is not linked from anywhere.*
+- **`docs/quant-review-2026-08-06.md` is entirely Traditional Chinese with no language notice.**
+  *Trigger: an English-only reader opening it from the tree.*
+- **No `docs/README.md` index** — seven `.md` files and `images/`, nothing to enter by.
+  *Trigger: doc number eight.*
+- **WORSE: root clutter grew.** 13 tracked root files, **five of them start scripts**.
+  Case-insensitively `CHANGELOG.md` still sorts above `LICENSE` and `README.md`, and
+  `TODOLIST.md` sorts last — with two more files now sitting between the two. *Trigger: moving
+  `CHANGELOG.md` and `TODOLIST.md` into `docs/` was already proposed in that same local file.*
+- **Five confirmed fine, recorded so they are not re-proposed:** flat `backend/` (13 modules)
+  and flat `frontend/src/` are **correct at this size**; naming is internally consistent;
+  missing CONTRIBUTING / CODE_OF_CONDUCT / SECURITY was **re-confirmed as cargo cult** for the
+  recruiter audience, credentials already being spelled out in README prose; 10,166 tracked Markdown
+  lines against 12,676 lines of non-test `.py`/`.jsx`/`.js` — measured before this entry,
+  which itself adds 136; and **zero broken relative links across 70
+  checked**, README and all seven docs.
+
+*The review's two structural **new** findings — the demo section swallowing the both-mode
+dev-server prose, and demo mode being announced only after the install wall — were both fixed
+today in `f492687`.*
+
+**First run — what someone who actually tries it hits (7).**
+
+- **The Python 3.14 hard gate**, as above.
+- ~~**No offline or demo mode.**~~ Closed 2026-08-27 in `f492687`, and driven end-to-end against
+  a live server: all eight tickers return complete Scorecard and Financial Models data, and
+  unsupported paths degrade rather than 500.
+- **Neither start script checks for `node_modules`.** `start.bat` checks only for the venv, and
+  `start-demo.bat`/`start-demo.sh` are pure delegators, so they inherit the gap. *Trigger: the
+  first run on a clone where `npm install` was skipped.*
+- **OpenBB's 4-5 s cold start is invisible** — no spinner. **Moot in demo mode**, which never
+  imports OpenBB at all: every demo request measured 12-20 ms. *Trigger: live mode only.*
+- **`start.sh`'s Ctrl-C trap is documented as unverified**, and `start-demo.sh` reuses it
+  without verifying it. *Trigger: the same macOS or Linux user as the CI finding above.*
+- **Time to first value is 5-8 minutes on Windows, 15-25 on macOS.** Demo mode does not touch
+  the install phase, so this floor is unchanged. *Trigger: a decision to host removes it.*
+- **The first screen still defaults to Tracker/AAPL.**
+  [App.jsx:41-42](frontend/src/App.jsx#L41-L42). Demo mode flips to Scorecard only *after*
+  `/health` resolves, so the first render still mounts Tracker and swaps it out; normal mode is
+  completely unchanged. *Trigger: a judgement about which tab should greet a first-time visitor
+  in normal mode.*
+
 ### 🔵 The pre-profit calibration is now enforced, but still unvalidated
 
 Resolved 2026-08-10 (b) below: RIVN moved 74/A → 60/B and `tests/test_plausibility.py`
