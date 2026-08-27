@@ -4,9 +4,21 @@
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](#prerequisites)
 
-A local website for tracking stocks, explaining price moves with news, chatting with a
-local AI financial expert, and running investment-banking financial models — powered by
-the methodology in [docs/financial-models-reference.md](docs/financial-models-reference.md).
+**Investment-banking valuation models as auditable code.** A two-stage FCFF DCF, trading
+comps and a deterministic 0–100 scorecard, for US and Hong Kong listings. Everything runs on
+your own machine; an optional local LLM explains the numbers without sending them anywhere.
+
+**The interesting part is where the model disagrees with the market.** In the Financial Models
+screenshot below, AAPL's own price implies a **7.3% perpetual growth rate, against an economy
+that grows 4%**. Nothing here closes that gap. The app reports its size, names what you would
+have to believe to pay today's price anyway, and leaves the disagreement on screen — because a
+model tuned until it agreed with the price would only be telling you the price.
+
+Every assumption carries the source it came from, down to the vintage of the equity risk
+premium. The suite runs entirely offline against committed fixtures, so the numbers here are
+reproducible rather than asserted. The method is in
+[docs/financial-models-reference.md](docs/financial-models-reference.md); every correction
+since, with its measured before and after, is in [CHANGELOG.md](CHANGELOG.md).
 
 > ### Decision support only — not certified financial advice.
 >
@@ -36,8 +48,8 @@ The football field underneath places today's price against DCF, comps and analys
 **Financial Models** — a two-stage FCFF DCF you can audit rather than trust. Every assumption
 carries the source it came from, down to the vintage of the equity risk premium. The trust
 checks then turn the model on itself: how much of the value sits in the terminal year, what
-exit multiple that implies, and what perpetual growth rate today's price would require —
-7.3% here, against an economy that grows 4%.
+exit multiple that implies, and what perpetual growth rate today's price would require — the
+7.3% above, highlighted in the trust-checks row.
 
 ![Tracker tab: price chart with indicators, SEC filing markers and news](docs/images/tracker.png)
 
@@ -57,7 +69,7 @@ shown are fabricated for the screenshot.
 > ### Want to see it work before setting any of this up?
 >
 > **`start-demo.bat`** (Windows) or **`./start-demo.sh`** runs the Scorecard and Financial
-> Models engine against eight companies' real, committed filings — **no API key, no
+> Models engine against eight companies' real, committed financial statements — **no API key, no
 > network, no Ollama, and nothing to configure**. The numbers are reproducible because the
 > data is frozen: they are the same bytes the test suite pins its golden scores to.
 >
@@ -148,12 +160,12 @@ Then open http://localhost:5173.
 
 **What it is, before how to run it.** Demo mode serves the eight companies committed under
 [backend/tests/fixtures/](backend/tests/fixtures/) instead of calling a live vendor. Their
-filings and prices are real, captured between **2026-08-10** and **2026-08-19** and recorded in
+financial statements and prices are real, captured between **2026-08-10** and **2026-08-19**, recorded in
 [PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md) — nothing is fabricated, and nothing is
 live. They are also the *same bytes the test suite pins its golden scores to*, so a green suite
 is evidence that the demo is showing the right numbers.
 
-**Two of the five tabs work; three do not, and it says so on screen.**
+**Three of the five tabs work; two are withheld, and it says so on screen.**
 
 | tab | in demo mode |
 |---|---|
