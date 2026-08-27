@@ -18,7 +18,10 @@ Every assumption carries the source it came from, down to the vintage of the equ
 premium. The suite runs entirely offline against committed fixtures, so the numbers here are
 reproducible rather than asserted. The method is in
 [docs/financial-models-reference.md](docs/financial-models-reference.md); every correction
-since, with its measured before and after, is in [CHANGELOG.md](CHANGELOG.md).
+since, with its measured before and after, is in [CHANGELOG.md](CHANGELOG.md). What is
+still open — ranked, each with the trigger that would make it worth doing — is in
+[TODOLIST.md](TODOLIST.md), and what is done against what is deliberately *not*, for running
+this yourself, is in [docs/release-readiness.md](docs/release-readiness.md).
 
 > ### Decision support only — not certified financial advice.
 >
@@ -449,10 +452,11 @@ cd frontend; npm test                                   # 173 tests
 
 Of the 665 collected, 27 are `network`-marked and deselected by default.
 
-The frontend suite runs in vitest's default `node` environment; four component
+The frontend suite runs in vitest's default `node` environment; six component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
-`ErrorBoundary.test.jsx`, `PortfolioTab.test.jsx`, `PriceChart.test.jsx`,
-`TrackerTab.test.jsx`. Rendering is `createRoot` + React 19's own `act`
+`ErrorBoundary.test.jsx`, `ModelsTab.test.jsx`, `PortfolioTab.test.jsx`,
+`PriceChart.test.jsx`, `ScorecardTab.test.jsx`, `TrackerTab.test.jsx`. Rendering is
+`createRoot` + React 19's own `act`
 ([frontend/src/test-utils.js](frontend/src/test-utils.js), 53 lines) rather than a
 testing library.
 
@@ -629,6 +633,7 @@ backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models
             search.py                 ticker search: local fuzzy index + Yahoo fallback
             drawings.py               geometry of user-drawn lines, for the AI context
             data/app.db               your data — gitignored
+            data/demo.db              where DEMO_MODE=1 writes instead — gitignored
             data/ticker_index.json    cached SEC symbol list — gitignored
             tests/                    pytest suite + committed fixtures + goldens
             requirements.txt          runtime set
@@ -652,6 +657,18 @@ Dockerfile     one process serving API + built UI on one port, DEMO_MODE=1 baked
 deploy/huggingface/     README.md + Dockerfile for a Hugging Face Space, which needs its own
 LICENSE        GNU AGPL-3.0
 ```
+
+## Who wrote this
+
+**Gerald** — Chemical & Environmental Engineering at HKUST, extended major in Artificial
+Intelligence.
+
+I build tools that sit where process engineering, finance and software overlap: models you
+can audit, with the assumptions written down and the limitations stated out loud. If a number
+in one of my projects can't be traced back to a source, it's a bug.
+
+[gerald.tsunholai@gmail.com](mailto:gerald.tsunholai@gmail.com) ·
+[github.com/Gerald-ger](https://github.com/Gerald-ger)
 
 ## Licence and data provenance
 
