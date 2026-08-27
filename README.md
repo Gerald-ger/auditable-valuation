@@ -221,7 +221,9 @@ so the mount is simply absent.
 **One caveat if you put it on the public internet.** This app is local-first and has no notion
 of a session, so every visitor shares one database — anything saved in **Portfolio** is visible
 to everyone on that instance until it restarts. `deploy/huggingface/` carries the two files a
-Hugging Face Space needs, and says so on the page itself.
+Hugging Face Space needs, and says so on the page itself — **note that Hugging Face gated
+Docker Spaces behind PRO in 2026**, so those two files are for a paid account. The `Dockerfile`
+at the root needs no particular host; anything that builds a container will run it.
 
 *The container has not been built on this machine, which has no Docker installed. Every step in
 it either produces its artifact or fails at build time; none of them can fail quietly at run

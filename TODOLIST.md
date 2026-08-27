@@ -95,9 +95,31 @@ origin, zero console errors. The API-base and CORS work this entry predicted tur
 **already done** — `api.js` has requested a relative `/api` for months — so nothing was needed
 there at all.
 
-**What is left is not code.** Someone has to create the Space and push those two files; the
-container has never been built, because this machine has no Docker, so its first build is its
-first test. Then the URL goes in the three places above. *Trigger: an afternoon.*
+**What is left is not code — but the host is now an open question.** Walking through Space
+creation on 2026-08-27 turned up the thing that decides it: **Hugging Face gated Docker Spaces
+behind PRO** ($9/month) some time in 2026. Gradio too. Only Static Spaces remain free, and a
+Static Space cannot run FastAPI. The `deploy/huggingface/` files are therefore for a paid
+account, and the free-tier reasoning that picked Hugging Face is dead.
+
+Three replacements, all verified against current terms rather than remembered:
+
+- **Render free tier + a keep-alive.** No credit card, Docker supported, and the `Dockerfile`
+  at the root works unchanged. It sleeps after 15 minutes idle and takes 30-50 s to wake — the
+  exact failure this entry warns about two paragraphs down. But the free allowance is **750
+  hours a month against the 744 a month has**, so a GitHub Actions cron pinging it every ten
+  minutes keeps it awake and still inside the free tier. Public-repo Actions are free.
+- **Render free tier, plain.** Nothing extra to build; accept the cold start. Fine for an
+  engineer who will wait, poor for a recruiter with one click.
+- **Hugging Face PRO, $9/month.** Everything already written applies unchanged, and Hugging
+  Face is somewhere engineers and AI recruiters already browse — which no generic host is.
+
+*A fourth shape exists and is worth naming: the demo's responses are deterministic, so all
+eight tickers could be snapshotted to static JSON and served from GitHub Pages — free, and
+with no cold start at all, ever. It costs a snapshot generator, and search and Portfolio writes
+would have to degrade, because a static host cannot answer a query string or a POST.*
+
+*Trigger: picking one. The container has still never been built — this machine has no Docker —
+so whichever host is chosen, its first build is that Dockerfile's first test.*
 
 **Two things to settle before that link goes anywhere.** Free tiers spin down when idle, and a
 recruiter's one click landing on a thirty-second cold start is worse than no link at all — so
