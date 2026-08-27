@@ -63,11 +63,13 @@ commit. These are the remainder, none of them load-bearing.
   one-line function checked against its own body. Fold it into
   `test_the_demo_mode_rate_readings_carry_labels_that_are_true`. *Trigger: the next pass
   over that file.*
-- **The GitHub *About* description still says "409 offline tests".** It is 628 backend plus
-  165 frontend. That line is the most-read text in the repo — it appears in search results,
-  in the sidebar and in every link preview — and it is stale on a project whose brand is
-  being exact about its own numbers. Fixed with `gh repo edit --description`, no commit
-  needed. *Trigger: none — it is simply wrong today.*
+- ~~**The GitHub *About* description still says "409 offline tests".**~~ Corrected to 793
+  (628 backend + 165 frontend) on 2026-08-27, minutes after this entry was written. Kept
+  struck through rather than deleted because the *class* of defect recurs: that line is the
+  most-read text in the repo — search results, the sidebar, every link preview — it is
+  edited outside git, so no commit ever forces a second look at it, and nothing in CI checks
+  it. **It goes stale again on the next commit that adds a test.** *Trigger: any change to
+  the suite size.*
 
 ### 🔵 The pre-profit calibration is now enforced, but still unvalidated
 
