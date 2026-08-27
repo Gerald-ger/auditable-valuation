@@ -21,7 +21,7 @@ from yfinance.const import EQUITY_SCREENER_EQ_MAP
 
 from backend import financial_models as fm
 from backend import sector_weights
-from backend.data_provider import provider
+from backend.data_provider import DEMO_MODE, provider
 
 PEER_SUGGESTIONS = {
     # US mega-cap tech
@@ -253,6 +253,21 @@ def _screened_industry(region: str, industry: str) -> list[str]:
 
 def suggest_peers(ticker: str) -> list[str]:
     """Curated list when we have one, then FMP, then the keyless screener."""
+    if DEMO_MODE:
+        # The only guard that cannot live in `data_provider`, and the only one
+        # of the three tiers that is a *judgement* rather than a fetch: the
+        # curated dict is static, but `_fmp_peers` is an OpenBB call needing a
+        # credential and `_screener_peers` is a live yfinance screen, and three
+        # of the eight demo tickers (`O`, `RIVN`, `0002.HK`) carry no curated
+        # list, so both live tiers are reachable from an ordinary page load.
+        #
+        # Returns nothing rather than the curated names. Those are real peers
+        # but demo mode holds no data for them, and one resolvable peer out of
+        # four — AAPL's list contains MSFT — would draw a median over a single
+        # company, which looks like a comparison and is not one. A peer named
+        # explicitly through `peer_list` still resolves if it is one of the
+        # eight.
+        return []
     t = ticker.upper()
     return PEER_SUGGESTIONS.get(t) or _fmp_peers(t) or _screener_peers(t)
 

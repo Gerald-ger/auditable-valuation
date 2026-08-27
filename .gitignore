@@ -17,6 +17,7 @@ NEXT-STEPS.md
 # pattern stays so a re-run of that audit does not get staged by accident.
 ARCHITECTURE-REVIEW-VERIFIED.md
 WORKPLAN-DATA-SOURCES.md
+WORKPLAN-DEMO-MODE.md
 # local Claude Code tooling, not part of the platform. settings.local.json was previously
 # protected only by a machine-global ignore, so any other clone would have staged it.
 **/.claude/settings.local.json

@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from backend.data_provider import provider  # noqa: E402
+from backend.data_provider import DEMO_MODE, provider  # noqa: E402
 
 # ticker -> the classification branch it is here to cover
 TICKERS = {
@@ -83,6 +83,15 @@ def main(argv: list[str]) -> int:
         if only not in TICKERS:
             print(f"--only {only or '(missing)'}: expected one of {', '.join(TICKERS)}")
             return 1
+    if DEMO_MODE:
+        # `provider` is `FixtureProvider` under the flag, and its source directory
+        # is this script's own output directory. Left unguarded, every ticker
+        # would be read and written back byte-identical: no exception, nothing in
+        # `failed`, exit 0, and output indistinguishable from a real recapture —
+        # a silent no-op on the one dataset every golden test rests on.
+        print("DEMO_MODE=1 is set. This script would read the fixtures and write "
+              "them straight back. Unset it and re-run.")
+        return 1
     selected = {only: TICKERS[only]} if only else TICKERS
 
     FIXTURE_DIR.mkdir(exist_ok=True)

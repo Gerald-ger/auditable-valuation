@@ -23,6 +23,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from threading import Lock
 
+from backend.data_provider import DEMO_MODE
+
 INDEX_PATH = Path(__file__).resolve().parent / "data" / "ticker_index.json"
 INDEX_MAX_AGE_S = 30 * 24 * 3600  # symbols change slowly; a month is plenty
 
@@ -66,9 +68,41 @@ def _fetch_index() -> list[dict]:
     return out
 
 
+# What the local tier's rows are labelled with. `"sec"` is a provenance claim —
+# these came from SEC's symbol list — and in demo mode it would be false: they
+# come from the committed fixtures. Nothing renders it today (SearchBar uses it
+# only inside a React key), but a label that says where a row came from has to
+# be right whether or not anything is currently reading it.
+_INDEX_SOURCE = "demo" if DEMO_MODE else "sec"
+
+
+def _demo_index() -> list[dict]:
+    """The eight demo tickers, in the same `{symbol, name}` shape as the SEC list.
+
+    Read from the fixtures' own `ticker` and `longName` rather than derived from
+    the filenames, so `0700_HK.json` yields `0700.HK` without a reverse of
+    `_demo_stem`'s `.`→`_` — the fixture already carries the ticker as the app
+    spells it.
+    """
+    from backend.data_provider import DEMO_DIR
+    rows = []
+    for path in sorted(DEMO_DIR.glob("*.json")):
+        f = json.loads(path.read_text(encoding="utf-8"))
+        name = f["info"].get("longName")
+        if name:
+            rows.append({"symbol": f["ticker"], "name": name})
+    return rows
+
+
 def load_index(force: bool = False) -> list[dict]:
     """Cached symbol list. Empty list (not an exception) when unavailable."""
     global _index
+    if DEMO_MODE:
+        # Before the disk cache and before the fetch: `_fetch_index` imports
+        # OpenBB and calls the SEC, and the branch below *writes* INDEX_PATH.
+        # Neither belongs in a mode whose premise is that there are no external
+        # calls and nothing to configure.
+        return _demo_index()
     with _index_lock:
         if _index is not None and not force:
             return _index
@@ -162,7 +196,8 @@ def _local_matches(query: str, limit: int) -> list[tuple[float, dict]]:
             score = SCORE_NAME_CONTAINS - len(name) / 100
         else:
             continue
-        scored.append((score, {"symbol": symbol, "name": row["name"], "source": "sec"}))
+        scored.append((score, {"symbol": symbol, "name": row["name"],
+                               "source": _INDEX_SOURCE}))
 
     if len(scored) < FUZZY_TRIGGER:
         hit = {row["symbol"] for _, row in scored}
@@ -175,7 +210,7 @@ def _local_matches(query: str, limit: int) -> list[tuple[float, dict]]:
             if best >= FUZZY_FLOOR:
                 scored.append((SCORE_FUZZY_MAX * best,
                                {"symbol": row["symbol"], "name": row["name"],
-                                "source": "sec"}))
+                                "source": _INDEX_SOURCE}))
 
     return scored[:limit * 4]  # trimmed after merging with the remote tier
 
@@ -231,7 +266,14 @@ def search_tickers(query: str, limit: int = 8) -> list[dict]:
     query = (query or "").strip()
     if not query:
         return []
-    scored = _local_matches(query, limit) + _yahoo_matches(query, limit)
+    scored = _local_matches(query, limit)
+    if not DEMO_MODE:
+        # `_yahoo_matches` is a live lookup per keystroke. The local tier is
+        # kept rather than replaced with a bespoke demo matcher: the same
+        # exact/prefix/name/fuzzy ranking then runs, over eight rows instead of
+        # 10,398, so what a demo visitor sees ranked is what the real search
+        # would rank.
+        scored += _yahoo_matches(query, limit)
     scored.sort(key=lambda pair: -pair[0])
 
     results, seen = [], set()

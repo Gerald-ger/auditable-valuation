@@ -860,24 +860,92 @@ INFO_KEYS = (
 )
 
 
+def quote_fields(ticker: str, info: dict) -> dict:
+    """The quote payload, given a vendor `info` dict.
+
+    Module level, and shared by both providers, for the reason `INFO_KEYS` below
+    is: one mapping with one set of comments cannot disagree with itself. A
+    second hand-written copy for the fixture provider would drift in meaning
+    long before a key-set test noticed the shape had changed.
+    """
+    return {
+        "ticker": ticker.upper(),
+        "name": info.get("longName") or info.get("shortName"),
+        "currency": info.get("currency"),
+        "exchange": info.get("fullExchangeName") or info.get("exchange"),
+        "price": _clean(info.get("currentPrice") or info.get("regularMarketPrice")),
+        "previous_close": _clean(info.get("previousClose")),
+        "day_high": _clean(info.get("dayHigh")),
+        "day_low": _clean(info.get("dayLow")),
+        "market_cap": _clean(info.get("marketCap")),
+        "pe_trailing": _clean(info.get("trailingPE")),
+        "pe_forward": _clean(info.get("forwardPE")),
+        "fifty_two_week_high": _clean(info.get("fiftyTwoWeekHigh")),
+        "fifty_two_week_low": _clean(info.get("fiftyTwoWeekLow")),
+    }
+
+
+def peer_snapshot_fields(ticker: str, info: dict) -> dict:
+    """Just the multiples/metrics needed for a comps table row.
+
+    Module level for the same reason as `quote_fields` above.
+    """
+    return {
+        "ticker": ticker.upper(),
+        "name": info.get("longName") or info.get("shortName"),
+        "market_cap": _clean(info.get("marketCap")),
+        # market_cap is in the trading currency and total_debt in the
+        # reporting one, so resolve_beta needs both labels to put a peer's
+        # D/E on one basis. Free — same info call.
+        "currency": info.get("currency"),
+        "financial_currency": info.get("financialCurrency"),
+        # Yahoo's own classification, carried so peer *discovery* can filter
+        # on the same labels the target is classified by. Free — same info
+        # call, no extra request, exactly like the two fields above.
+        #
+        # `industry` here is Yahoo's display string ("REIT - Retail",
+        # hyphen-spaced) and is NOT interchangeable with the spelling
+        # yfinance's screener accepts ("REIT—Retail", em-dash):
+        # EquityQuery('eq', ['industry', 'REIT - Retail']) raises ValueError
+        # with the network unplugged, because the accepted spellings are a
+        # literal dict in the pinned yfinance — EQUITY_SCREENER_EQ_MAP
+        # ['industry'] in yfinance/const.py.
+        #
+        # `comps._SCREENER_INDUSTRY` translates between them, derived from
+        # that dict. This note used to say the translation "needs a mapping,
+        # not a character replace", which overstated the evidence: measured
+        # 2026-08-19, a plain replace round-trips all 145 industries. The
+        # derived lookup is used for a different reason — an industry the
+        # pinned build does not know misses it and yields no peers, where a
+        # replace would emit a spelling the screener rejects and look
+        # identical to an empty screen.
+        #
+        # `sector` needs no such treatment: its 11 values are the same
+        # display strings on both sides.
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        # beta rides along free on the same info call; financial_models uses
+        # the peer median when a company's own reported beta is not credible
+        "beta": _clean(info.get("beta")),
+        # with market cap, this gives each peer's D/E, which is what lets
+        # financial_models.resolve_beta unlever a peer beta before taking the
+        # median and re-lever it to the target's own capital structure
+        # (reference doc §1.1.2). Free — same info call, no extra request.
+        "total_debt": _clean(info.get("totalDebt")),
+        "pe_trailing": _clean(info.get("trailingPE")),
+        "pe_forward": _clean(info.get("forwardPE")),
+        "price_to_book": _clean(info.get("priceToBook")),
+        "ev_to_ebitda": _clean(info.get("enterpriseToEbitda")),
+        "ev_to_revenue": _clean(info.get("enterpriseToRevenue")),
+        "peg_ratio": _clean(info.get("pegRatio")),
+        "operating_margin": _clean(info.get("operatingMargins")),
+        "revenue_growth": _clean(info.get("revenueGrowth")),
+    }
+
+
 class YFinanceProvider:
     def get_quote(self, ticker: str) -> dict:
-        info = yf.Ticker(ticker).info or {}
-        return {
-            "ticker": ticker.upper(),
-            "name": info.get("longName") or info.get("shortName"),
-            "currency": info.get("currency"),
-            "exchange": info.get("fullExchangeName") or info.get("exchange"),
-            "price": _clean(info.get("currentPrice") or info.get("regularMarketPrice")),
-            "previous_close": _clean(info.get("previousClose")),
-            "day_high": _clean(info.get("dayHigh")),
-            "day_low": _clean(info.get("dayLow")),
-            "market_cap": _clean(info.get("marketCap")),
-            "pe_trailing": _clean(info.get("trailingPE")),
-            "pe_forward": _clean(info.get("forwardPE")),
-            "fifty_two_week_high": _clean(info.get("fiftyTwoWeekHigh")),
-            "fifty_two_week_low": _clean(info.get("fiftyTwoWeekLow")),
-        }
+        return quote_fields(ticker, yf.Ticker(ticker).info or {})
 
     @_ttl_cached
     def get_history(self, ticker: str, period: str = "1y", interval: str = "1d") -> list[dict]:
@@ -981,58 +1049,7 @@ class YFinanceProvider:
     @_ttl_cached
     def get_peer_snapshot(self, ticker: str) -> dict:
         """Just the multiples/metrics needed for a comps table row."""
-        info = yf.Ticker(ticker).info or {}
-        return {
-            "ticker": ticker.upper(),
-            "name": info.get("longName") or info.get("shortName"),
-            "market_cap": _clean(info.get("marketCap")),
-            # market_cap is in the trading currency and total_debt in the
-            # reporting one, so resolve_beta needs both labels to put a peer's
-            # D/E on one basis. Free — same info call.
-            "currency": info.get("currency"),
-            "financial_currency": info.get("financialCurrency"),
-            # Yahoo's own classification, carried so peer *discovery* can filter
-            # on the same labels the target is classified by. Free — same info
-            # call, no extra request, exactly like the two fields above.
-            #
-            # `industry` here is Yahoo's display string ("REIT - Retail",
-            # hyphen-spaced) and is NOT interchangeable with the spelling
-            # yfinance's screener accepts ("REIT—Retail", em-dash):
-            # EquityQuery('eq', ['industry', 'REIT - Retail']) raises ValueError
-            # with the network unplugged, because the accepted spellings are a
-            # literal dict in the pinned yfinance — EQUITY_SCREENER_EQ_MAP
-            # ['industry'] in yfinance/const.py.
-            #
-            # `comps._SCREENER_INDUSTRY` translates between them, derived from
-            # that dict. This note used to say the translation "needs a mapping,
-            # not a character replace", which overstated the evidence: measured
-            # 2026-08-19, a plain replace round-trips all 145 industries. The
-            # derived lookup is used for a different reason — an industry the
-            # pinned build does not know misses it and yields no peers, where a
-            # replace would emit a spelling the screener rejects and look
-            # identical to an empty screen.
-            #
-            # `sector` needs no such treatment: its 11 values are the same
-            # display strings on both sides.
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
-            # beta rides along free on the same info call; financial_models uses
-            # the peer median when a company's own reported beta is not credible
-            "beta": _clean(info.get("beta")),
-            # with market cap, this gives each peer's D/E, which is what lets
-            # financial_models.resolve_beta unlever a peer beta before taking the
-            # median and re-lever it to the target's own capital structure
-            # (reference doc §1.1.2). Free — same info call, no extra request.
-            "total_debt": _clean(info.get("totalDebt")),
-            "pe_trailing": _clean(info.get("trailingPE")),
-            "pe_forward": _clean(info.get("forwardPE")),
-            "price_to_book": _clean(info.get("priceToBook")),
-            "ev_to_ebitda": _clean(info.get("enterpriseToEbitda")),
-            "ev_to_revenue": _clean(info.get("enterpriseToRevenue")),
-            "peg_ratio": _clean(info.get("pegRatio")),
-            "operating_margin": _clean(info.get("operatingMargins")),
-            "revenue_growth": _clean(info.get("revenueGrowth")),
-        }
+        return peer_snapshot_fields(ticker, yf.Ticker(ticker).info or {})
 
     @_ttl_cached
     def get_filings(self, ticker: str) -> list[dict]:
@@ -1117,4 +1134,237 @@ class YFinanceProvider:
         }
 
 
-provider = YFinanceProvider()
+# ─────────────────────────── demo mode ───────────────────────────
+# One contiguous section, so what it costs to read — and to remove — is one
+# block rather than a conditional threaded through six functions.
+#
+# Why it exists: a reader deciding whether this engine is worth their time has
+# to install Python 3.14, 107 pinned packages and a Node toolchain *first*, on
+# the strength of the README's own claim that it is. Demo mode inverts that.
+
+DEMO_MODE = os.environ.get("DEMO_MODE") == "1"
+
+# The fixtures the offline suite already pins, read rather than copied. What a
+# demo visitor sees is then the same bytes `test_valuation.py` and the golden
+# scorecards assert on, which makes a green suite evidence that the demo is
+# showing the right numbers. A copy under `backend/demo_data/` would be 472 KB
+# that goes stale the first time `capture_fixtures.py` runs.
+DEMO_DIR = Path(__file__).resolve().parent / "tests" / "fixtures"
+
+
+# The oldest capture in each ticker's payload, from `PROVENANCE.md`: fundamentals
+# 2026-08-10 and weekly bars 2026-08-14, except `0002_HK` where both halves are
+# 2026-08-19.
+#
+# Oldest rather than newest, because a freshness claim should understate. Seven
+# of the eight carry bars four days newer than their statements, and naming the
+# newer date would say the statements are fresher than they are.
+# The one resolution the bars fixtures carry. Stated here rather than imported
+# because both other spellings of it are downstream: `capture_fixtures.py` sets
+# `BARS_PERIOD, BARS_INTERVAL` and imports `provider` from this module, and
+# `main.py` sets `BETA_PERIOD, BETA_INTERVAL` and imports `provider` too — either
+# import would be a cycle. A test asserts all three agree.
+DEMO_BARS = ("5y", "1wk")
+
+DEMO_DATA_AS_OF_DEFAULT = "2026-08-10"
+DEMO_DATA_AS_OF = {"0002.HK": "2026-08-19"}
+
+
+def demo_data_as_of(ticker: str) -> str | None:
+    """How old the data behind an answer is, or `None` when it is live.
+
+    Exists because `as_of` on a scorecard is the time the score was *computed*,
+    which is true in both modes and therefore says nothing about the data. In
+    demo mode that left the most prominent freshness signal in the payload
+    asserting today's date over statements from August. The banner covers the UI;
+    this covers the JSON — a screenshot, an API consumer, a scrolled-past banner.
+    """
+    if not DEMO_MODE:
+        return None
+    return DEMO_DATA_AS_OF.get(ticker.upper(), DEMO_DATA_AS_OF_DEFAULT)
+
+
+def _demo_stem(ticker: str) -> str:
+    """`capture_fixtures._stem`, which is what named the files this reads.
+
+    Mirrored rather than imported: `capture_fixtures` is a script that imports
+    `provider` at module scope, so importing it from here would be a cycle.
+    """
+    return ticker.upper().replace(".", "_").replace("^", "_")
+
+
+class FixtureProvider:
+    """The same six methods, served from the committed fixtures.
+
+    What it deliberately does **not** serve matters as much as what it does. The
+    bars carry `{time, close}` and no OHLCV; there are no news items and no
+    filings; and the eight fixtures are eight *sectors*, chosen to exercise edge
+    cases, not a comparable set — so no peer group resolves. Tracker and
+    Screener are therefore withheld in demo mode rather than drawn with holes in
+    them, because a visitor reads a stripped chart as a broken chart.
+
+    What survives is exact, not approximate: `market_series` reads only `close`
+    (`market_series.py:62-66`), and the bars were captured with the very
+    parameters the scoring path asks for — `BETA_PERIOD, BETA_INTERVAL = "5y",
+    "1wk"` in `main.py:46` against `BARS_PERIOD, BARS_INTERVAL` in
+    `capture_fixtures.py:48`. So beta, relative strength, every statement-derived
+    metric and the whole DCF are the same numbers live mode would produce from
+    this data.
+    """
+
+    def _read(self, ticker: str, sub: str = "") -> dict | list:
+        path = DEMO_DIR / sub / f"{_demo_stem(ticker)}.json"
+        if not path.exists():
+            # Raised rather than returned empty: `{}` would reach the model
+            # layer as a company that reports nothing, which is a different
+            # claim from one this demo does not carry. Callers that can degrade
+            # already catch — `_market_bars` (main.py) and `peer_beta_inputs`
+            # (comps.py) both do.
+            raise KeyError(f"{ticker} is not one of the demo tickers")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def get_fundamentals(self, ticker: str) -> dict:
+        """The fixture — which is exactly what this method captured to make it."""
+        return self._read(ticker)
+
+    def get_quote(self, ticker: str) -> dict:
+        """`quote_fields` over the fixture's `info`, the same mapping live uses.
+
+        Four fields come back `None` where live has values: `previous_close`,
+        `day_high`, `day_low` and `exchange` are not in the 51-key `INFO_KEYS`
+        whitelist, so the capture never carried them. Left as `None` rather than
+        filled from `currentPrice`, which would put a fabricated day's range on
+        screen. Only the Tracker reads them, and demo mode withholds it.
+        """
+        return quote_fields(ticker, self._read(ticker)["info"])
+
+    def get_history(self, ticker: str, period: str = "1y", interval: str = "1d") -> list[dict]:
+        """The captured 5y/1wk closes. Any other resolution is refused.
+
+        Ignoring `period` and `interval` was the original behaviour and it was
+        wrong in a way nothing would have shown: `/api/stock/{t}/history` echoes
+        the interval it was *asked* for, so a request for daily bars came back
+        labelled `"1d"` over weekly data, and `ai_predict` sliced `bars[-30:]`
+        meaning thirty trading days and received thirty **weeks**.
+
+        Refused rather than resampled, on the rule the rest of demo mode follows:
+        the capture carries one series, and inventing the others would put bars on
+        screen that were never observed. Every caller degrades correctly —
+        `_market_bars` asks for exactly this pair, `_lead_in` catches and returns
+        no lead-in, `/history` becomes a 502 naming the reason, and the AI context
+        falls back to no context.
+
+        The ticker is resolved first, so an unknown one still raises `KeyError`
+        rather than being masked by a resolution complaint.
+        """
+        bars = self._read(ticker, "bars")
+        if (period, interval) != DEMO_BARS:
+            raise ValueError(
+                f"demo mode carries one captured series per ticker "
+                f"({DEMO_BARS[0]}/{DEMO_BARS[1]}); {period}/{interval} was asked for")
+        return bars
+
+    def get_news(self, ticker: str, limit: int = 50) -> list[dict]:
+        return []
+
+    def get_filings(self, ticker: str) -> list[dict]:
+        return []
+
+    def get_peer_snapshot(self, ticker: str) -> dict:
+        """A snapshot for one of the eight; anything else raises.
+
+        Reachable only when a peer is named explicitly, since demo mode returns
+        no peer suggestions — see the guard in `comps.py`.
+        """
+        return peer_snapshot_fields(ticker, self._read(ticker)["info"])
+
+
+# The five module-level functions demo mode replaces, and the readings they
+# stand on. Rebound below rather than branched inside, so normal mode has no
+# demo conditional anywhere on a hot path.
+#
+# Latency, not accuracy: with no network all five already fail and degrade
+# correctly — but slowly. `CGB_TIMEOUT_S` is 10 s and `HKGB_TIMEOUT_S` is 8 s,
+# and OpenBB's first import costs another 4-5 s, so a demo visitor's first HKD
+# or CNY valuation would sit for 15+ seconds with nothing on screen to explain
+# it.
+
+# ChinaBond's published 10-year, 2026-08-19 — the reading `conftest.py:56-64`
+# records. Returned with `live=False`, which labels it
+# `cgb_10y_stored_less_spread`: "the last good reading rather than today's".
+# That is literally what it is.
+DEMO_CGB_10Y = 0.016864
+# Hong Kong's, from the HKGB workbook on 2026-08-26. Same labelling.
+DEMO_HKGB_10Y = 0.03495
+# Spot CNYHKD on 2026-08-10 — the day the fixtures themselves were captured, per
+# `conftest.py:130-134`. Deliberately *not* the suite's `TEST_CNY_HKD = 1.10`,
+# which its own comment calls "a round test constant, not a market quote": a
+# demo shows real analysis, and this is the rate that belongs with these
+# statements and this price.
+#
+# `fx_rate`'s docstring refuses to return a constant on principle, and that
+# principle holds — it is about substituting for an unavailable *live* rate. An
+# observation from the same day as the data it converts is a different thing.
+DEMO_CNY_HKD = 1.1627
+
+
+def _demo_us_treasury_10y() -> float | None:
+    """No feed in demo mode.
+
+    `risk_free_rate` then reports `platform_default` — "USD cash flows, no feed,
+    `fallback` stands in" — which is exactly the situation. Pinning a number
+    here instead would label it `us_treasury_10y` and claim a fetch that never
+    happened.
+    """
+    return None
+
+
+def _demo_cgb_10y() -> tuple[float, bool] | None:
+    return DEMO_CGB_10Y, False
+
+
+def _demo_hkgb_10y() -> tuple[float, bool] | None:
+    return DEMO_HKGB_10Y, False
+
+
+def _demo_live_price(ticker: str) -> tuple[float, float | None] | None:
+    """No fresher price exists than the one in the fixture.
+
+    `with_fresh_price` returns the payload untouched on None, so the demo price
+    is the captured price. Without this every `/score` and `/comps` request
+    would call `yf.Ticker().info` — `_fundamentals` refreshes by default.
+    """
+    return None
+
+
+def _demo_fx_rate(from_ccy: str | None, to_ccy: str | None) -> float | None:
+    """The one pair these fixtures need, and the identity.
+
+    Only `0700.HK` reports in a currency it does not trade in (CNY statements,
+    HKD listing); the other seven are single-currency. Anything else returns
+    None, which is the real function's own failure mode and is already handled
+    by every caller — the comparison is suppressed rather than guessed.
+    """
+    if not from_ccy or not to_ccy:
+        return None
+    if from_ccy == to_ccy:
+        return 1.0
+    return DEMO_CNY_HKD if (from_ccy, to_ccy) == ("CNY", "HKD") else None
+
+
+provider = FixtureProvider() if DEMO_MODE else YFinanceProvider()
+
+if DEMO_MODE:
+    # Rebinding works for both calling conventions in this codebase, which is
+    # why it is done here and not with a flag inside each function:
+    #   * `risk_free_rate` and `with_fresh_price` look these names up in module
+    #     globals at call time, so they see the new ones;
+    #   * `financial_models.py:24` does `from backend.data_provider import
+    #     fx_rate`, binding at import — and that statement executes this module
+    #     to completion first, this block included, so the name it binds is
+    #     already the demo one.
+    _us_treasury_10y = _demo_us_treasury_10y
+    _cgb_10y = _demo_cgb_10y
+    _hkgb_10y = _demo_hkgb_10y
+    live_price = _demo_live_price
+    fx_rate = _demo_fx_rate

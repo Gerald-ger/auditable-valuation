@@ -50,6 +50,17 @@ so like is compared with like.
 **Portfolio** — holdings and watchlist with position weights and concentration. The positions
 shown are fabricated for the screenshot.
 
+> ### Want to see it work before setting any of this up?
+>
+> **`start-demo.bat`** (Windows) or **`./start-demo.sh`** runs the Scorecard and Financial
+> Models engine against eight companies' real, committed filings — **no API key, no
+> network, no Ollama, and nothing to configure**. The numbers are reproducible because the
+> data is frozen: they are the same bytes the test suite pins its golden scores to.
+>
+> It does still need the install below — it removes the *configuration*, not the
+> toolchain. Two of the five tabs are withheld, and it says so on screen. Details:
+> [Demo mode](#demo-mode--no-api-key-no-network-no-ollama).
+
 ## Prerequisites
 
 | | |
@@ -128,6 +139,68 @@ cd frontend; npm run dev
 ```
 
 Then open http://localhost:5173.
+
+### Demo mode — no API key, no network, no Ollama
+
+**What it is, before how to run it.** Demo mode serves the eight companies committed under
+[backend/tests/fixtures/](backend/tests/fixtures/) instead of calling a live vendor. Their
+filings and prices are real, captured between **2026-08-10** and **2026-08-19** and recorded in
+[PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md) — nothing is fabricated, and nothing is
+live. They are also the *same bytes the test suite pins its golden scores to*, so a green suite
+is evidence that the demo is showing the right numbers.
+
+**Two of the five tabs work; three do not, and it says so on screen.**
+
+| tab | in demo mode |
+|---|---|
+| 🎯 **Scorecard** | Full. Composite, all five pillars, the football field (DCF + analyst-target rows) and the price-gap bridge. |
+| 🧮 **Financial Models** | Full. The whole two-stage DCF, every assumption with its source, the sensitivity grid and all three reverse checks. |
+| 💼 Portfolio | Works — it was never a vendor feature; holdings live in the local SQLite store. |
+| 📈 Tracker | **Withheld.** The captured bars are weekly *closes* — no OHLCV, so no candles and no volume — and there are no news items or SEC filings. |
+| 📊 Screener | **Withheld.** The eight fixtures are eight *sectors*, chosen to exercise edge cases, so no peer group exists to screen against. |
+
+Withheld rather than drawn with holes in it, on the same reasoning the rest of this project
+uses for a missing input: a stripped chart reads as a broken chart, not as a documented limit.
+
+Search offers only those eight, so nothing you can type 404s. Peer comparison suggests nothing,
+but a peer *named* explicitly still resolves if it is one of the eight — typing `MSFT` into the
+peer box on AAPL's scorecard works.
+
+**Run it:**
+
+| | |
+|---|---|
+| Windows | double-click **`start-demo.bat`** |
+| macOS / Linux | `./start-demo.sh` |
+
+Both set `DEMO_MODE=1` and hand off to the ordinary launcher, so the virtualenv check, the ports
+and the browser launch have one definition rather than two. Manually, it is the same env var:
+
+```powershell
+$env:DEMO_MODE = "1"; backend\.venv\Scripts\python.exe -m uvicorn backend.main:app --port 8000
+```
+
+**What the numbers do and do not carry.** The discount-rate sources stay honest rather than
+claiming a fetch that never happened: US names report `platform_default`, and the CNY and HKD
+names report `cgb_10y_stored_less_spread` / `hkgb_10y_stored_less_spread` — "the last good
+reading rather than today's", which is exactly what a pinned reading is. Prices are the captured
+ones, not refreshed. The one cross-currency pair these fixtures need, CNY→HKD for `0700.HK`, uses
+spot on the capture date. Measured against the same engine run given those same readings,
+**every number is identical on all eight** — every fair value, all 25 sensitivity cells, every
+diagnostic, the equity bridge, and every pillar and composite score. The only field that moves
+is the source label above, and it moves toward honesty: demo does not claim a fetch that never
+happened.
+
+**The peer-beta path does not diverge either, and it is worth saying why.** `XOM` reports a beta
+of 0.173, below the credibility floor, so live mode reaches for peer snapshots to build an
+unlevered peer median — and demo mode can resolve none. It makes no difference:
+[`resolve_beta`](backend/financial_models.py) puts the **regression** at the top of its ladder,
+and peers are consulted only when there is no series to regress. Every fixture carries its own
+5y/1wk bars, so all eight resolve `beta_source: "computed"` and the peer list is never reached.
+
+### Development server
+
+Both modes, not just the one above.
 
 **The dev server owns port 5173 and will not move.** Vite is configured with `strictPort`, so a
 port collision fails loudly at startup rather than sliding to 5174 — which used to leave the page
@@ -326,12 +399,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 566 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 628 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 157 tests
+cd frontend; npm test                                   # 165 tests
 ```
 
-Of the 593 collected, 27 are `network`-marked and deselected by default.
+Of the 655 collected, 27 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; four component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
@@ -530,6 +603,7 @@ pyproject.toml packaging metadata — what makes `backend` an importable package
 pytest.ini     test config; network tests deselected by default
 start.bat / start.ps1   one-click cold start on Windows (backend + frontend + browser)
 start.sh                the same on macOS/Linux
+start-demo.bat / .sh    the same with DEMO_MODE=1 — committed fixtures, no key, no network
 LICENSE        GNU AGPL-3.0
 ```
 
@@ -547,7 +621,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 566-test suite runs entirely offline against them. Provenance and capture dates in
+  the 628-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

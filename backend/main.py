@@ -32,7 +32,8 @@ from backend import search
 from backend import sector_weights
 from backend import statements
 from backend import store
-from backend.data_provider import home_index, provider, with_fresh_price
+from backend.data_provider import (DEMO_MODE, demo_data_as_of, home_index,
+                                   provider, with_fresh_price)
 
 # yfinance is IO-bound but throttles bursts, so batch work fans out narrowly
 # rather than one thread per ticker.
@@ -196,7 +197,12 @@ async def health():
     already tells the reader to suspect it; this lets the app say so first.
     """
     return {"status": "ok", "ai": await ai_client.status(),
-            "source_changed_since_start": _source_fingerprint() != SOURCE_AT_START}
+            "source_changed_since_start": _source_fingerprint() != SOURCE_AT_START,
+            # Rides this poll rather than adding an endpoint: the frontend
+            # already calls `/health` on mount and every 30 s, and a second
+            # timer for a value that cannot change within a process would be
+            # two requests answering one question.
+            "demo": DEMO_MODE}
 
 
 @app.get("/api/search")
@@ -518,6 +524,12 @@ def _score_and_record(ticker: str, fresh_price: bool = True) -> dict:
     # attached to the card, deliberately outside score_company: these are
     # reported beside the composite, never folded into it (see forensics.py)
     card["forensics"] = forensics.forensic_checks(f, card["classification"])
+    # `as_of` above is when this score was computed; both modes report it
+    # truthfully and neither says anything about the data underneath. `None`
+    # here means live. Set outside `score_company` for the same reason
+    # `forensics` is: the scorer is a pure function of its arguments and does
+    # not know which provider filled them.
+    card["data_as_of"] = demo_data_as_of(f["ticker"])
     store.record_score(card, f["info"])
     return card
 

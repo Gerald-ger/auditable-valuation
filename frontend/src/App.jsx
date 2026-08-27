@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { get } from './api';
 import TrackerTab from './components/TrackerTab';
 import ModelsTab from './components/ModelsTab';
@@ -21,6 +21,22 @@ const TABS = [
 // the header does not apply to them.
 const TICKER_TABS = new Set(['tracker', 'models', 'scorecard']);
 
+// Shown in place of Tracker and Screener under demo mode. Tracker needs daily
+// OHLCV, news and filings; Screener needs a peer group. The capture carries
+// weekly closes only, and the eight companies are eight *sectors* — chosen to
+// exercise edge cases, not to compare with one another.
+function DemoTabNotice() {
+  return (
+    <div className="notice-banner">
+      <b>Not available in demo mode.</b> This tab needs data the capture does not
+      carry: daily open/high/low/volume bars, news, SEC filings and a peer group.
+      Rather than draw a chart with holes in it, demo mode withholds the tab —
+      a stripped chart reads as a broken one. Open <b>Scorecard</b> or{' '}
+      <b>Financial Models</b> above, which the capture answers in full.
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState('tracker');
   const [ticker, setTicker] = useState('AAPL');
@@ -31,6 +47,15 @@ export default function App() {
   // feature never having been built. It cost three separate diagnoses on
   // 2026-08-14, one of them of a panel that was working perfectly.
   const [backendStale, setBackendStale] = useState(false);
+  // Serving the committed fixtures instead of a live vendor. Read off the same
+  // `/health` poll as the two flags above.
+  const [demo, setDemo] = useState(false);
+  // Demo mode lands on the Scorecard rather than the default Tracker, since the
+  // Tracker is one of the two tabs it cannot answer — a demo whose first screen
+  // is a notice explaining what it cannot do has wasted the only 30 seconds it
+  // gets. Once, via a ref: repeating it on the 30 s poll would bounce a visitor
+  // who deliberately opened the Tracker back out of it.
+  const demoLanded = useRef(false);
   // watchlist + holdings, surfaced as one-click chips under the search box
   const [saved, setSaved] = useState([]);
 
@@ -43,6 +68,11 @@ export default function App() {
         .then((s) => {
           setAiOnline(s.ai?.online ?? false);
           setBackendStale(s.source_changed_since_start === true);
+          setDemo(s.demo === true);
+          if (s.demo === true && !demoLanded.current) {
+            demoLanded.current = true;
+            setTab((t) => (t === 'tracker' ? 'scorecard' : t));
+          }
         })
         .catch(() => setAiOnline(false));
     check();
@@ -94,6 +124,20 @@ export default function App() {
             {' '}— then reload this page.
           </div>
         )}
+        {demo && (
+          <div className="notice-banner">
+            <b>Demo mode — real data, frozen.</b> Eight companies&rsquo; filings and
+            prices exactly as captured between <b>2026-08-10</b> and{' '}
+            <b>2026-08-19</b> (see{' '}
+            <code>backend/tests/fixtures/PROVENANCE.md</code>). Nothing here is
+            fabricated and nothing is live, so every number is reproducible — these
+            are the same bytes the test suite pins its golden scores to. No API key
+            and no network are used. <b>Scorecard</b> and <b>Financial Models</b>
+            answer in full; <b>Tracker</b> and <b>Screener</b> do not. Anything you
+            save in <b>Portfolio</b> is written to a separate demo database and never
+            reaches your own.
+          </div>
+        )}
         {/* `resetKey`, not `key`: navigating away from a failed render still
             clears the boundary, but a healthy subtree is left standing. As a
             `key` this rebuilt everything on every ticker change, which took the
@@ -106,17 +150,20 @@ export default function App() {
             tracker refetches everything it shows from `[ticker, period]`, so it
             has nothing to clear. */}
         <ErrorBoundary resetKey={`${tab}:${ticker}`}>
-          {tab === 'tracker' && (
+          {tab === 'tracker' && (demo ? (
+            <DemoTabNotice />
+          ) : (
             <TrackerTab
               ticker={ticker}
               aiOnline={aiOnline}
               saved={saved}
               onTicker={setTicker}
             />
-          )}
+          ))}
           {tab === 'models' && <ModelsTab key={ticker} ticker={ticker} />}
           {tab === 'scorecard' && <ScorecardTab key={ticker} ticker={ticker} aiOnline={aiOnline} />}
-          {tab === 'screener' && <ScreenerTab onPick={openScorecard} />}
+          {tab === 'screener' &&
+            (demo ? <DemoTabNotice /> : <ScreenerTab onPick={openScorecard} />)}
           {tab === 'portfolio' && <PortfolioTab onPick={openScorecard} />}
         </ErrorBoundary>
       </main>

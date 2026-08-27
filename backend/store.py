@@ -21,7 +21,24 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "data" / "app.db"
+from backend.data_provider import DEMO_MODE
+
+# Demo mode gets its own file. Every write in this module goes through DB_PATH,
+# so one line isolates all of them.
+#
+# Not a preference. `/api/score/{ticker}` calls `record_score` on every request
+# and keys the row on today's date, so **every demo scorecard view wrote a row
+# into the real database** carrying a frozen August price. Six such rows existed
+# when this was found. That is a fabricated observation inside the calibration
+# set — the one thing `record_score`'s own docstring says must not happen — and
+# `ON CONFLICT ... DO UPDATE` meant a real row written earlier the same day was
+# silently overwritten. Positions had the same exposure.
+#
+# A separate file rather than refusing to write: the Score History and Portfolio
+# panels then work in demo mode and demonstrate themselves truthfully, because
+# those scores really were computed on those days, from data of a stated vintage.
+DB_PATH = (Path(__file__).resolve().parent / "data"
+           / ("demo.db" if DEMO_MODE else "app.db"))
 
 PILLARS = ("valuation", "quality", "health", "growth", "momentum")
 

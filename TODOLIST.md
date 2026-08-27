@@ -38,6 +38,37 @@ against itself.
 
 ## Now
 
+### 🟡 Four things the demo-mode review left open *(2026-08-27)*
+
+The review that produced demo mode found six defects in it; four were fixed in the same
+commit. These are the remainder, none of them load-bearing.
+
+- **`backend/store.py` now costs ~1 s to import on its own.** It reads `DEMO_MODE` from
+  `data_provider`, which transitively imports `yfinance` — measured with `-X importtime`:
+  `store` itself is under 1 ms, `yfinance` is 94% of the ~1 s. **No effect on the running
+  app** (`main.py` already imports `data_provider`) or on CI. It would matter to a
+  standalone maintenance script that wanted a cheap sqlite wrapper. The alternative is
+  parsing `DEMO_MODE` a second time inside `store.py`, which trades one import for two
+  places that must agree about the same flag — the trade this project usually refuses.
+  *Trigger: a script or tool imports `backend.store` without `data_provider`.*
+- **`POST /api/portfolio/position` accepts any ticker with no provider check.** In demo mode
+  a visitor can add `TSLA` and get a permanent row whose quote reads
+  `"TSLA is not one of the demo tickers"`. That message is accurate and actionable, and the
+  row now lands in `demo.db` rather than the real store, which is why this was left: adding
+  a code path for a case that already explains itself. *Trigger: the same input reaches a
+  hosted demo, where a stranger cannot delete the row.*
+- **`test_the_demo_rates_are_the_published_readings_not_the_round_test_constants`** pins
+  `_demo_cgb_10y()` against the literal it returns. The assertion that earns its place in
+  that test is the one comparing the demo constants against `conftest`'s; the rest is a
+  one-line function checked against its own body. Fold it into
+  `test_the_demo_mode_rate_readings_carry_labels_that_are_true`. *Trigger: the next pass
+  over that file.*
+- **The GitHub *About* description still says "409 offline tests".** It is 628 backend plus
+  165 frontend. That line is the most-read text in the repo — it appears in search results,
+  in the sidebar and in every link preview — and it is stale on a project whose brand is
+  being exact about its own numbers. Fixed with `gh repo edit --description`, no commit
+  needed. *Trigger: none — it is simply wrong today.*
+
 ### 🔵 The pre-profit calibration is now enforced, but still unvalidated
 
 Resolved 2026-08-10 (b) below: RIVN moved 74/A → 60/B and `tests/test_plausibility.py`

@@ -145,6 +145,28 @@ Positions in the screenshot are fabricated, and the README says so beneath the i
 
 ---
 
+### Demo mode — done 2026-08-27
+
+`DEMO_MODE=1`, or `start-demo.bat` / `./start-demo.sh`. Serves the eight committed fixtures
+instead of yfinance: no API key, no network, no Ollama, nothing to configure.
+
+| | |
+|---|---|
+| Works in full | Scorecard, Financial Models, Portfolio |
+| Withheld, with an on-screen notice | Tracker, Screener |
+| Why withheld | the capture carries weekly closes with no OHLCV, no news items, no SEC filings, and eight *sectors* rather than a peer group. A stripped chart reads as a broken chart, so the tab is refused rather than drawn with holes in it |
+| Data vintage | `2026-08-10` to `2026-08-19`, per `backend/tests/fixtures/PROVENANCE.md`. Cards carry `data_as_of`; the banner names the dates |
+| Isolation | `store.DB_PATH` points at `backend/data/demo.db`, so scores, positions and drawings never reach `app.db` |
+| Accuracy | given the same rate readings, identical numbers to live on all eight fixtures. Only `risk_free_source` differs, reporting `platform_default` / `*_stored_less_spread` rather than claiming a fetch |
+
+**What it does not do is lower the barrier to *start*.** It still needs Python 3.14, the
+full dependency install and Node — it removes the configuration, not the toolchain. Its
+value is that it is the data path a hosted demo would need: no credentials, no vendor rate
+limits, deterministic across visitors and across days. Whether to host is a separate
+decision, and one this file's own note on yfinance's terms bears on.
+
+---
+
 ## Deliberately not done
 
 Each carries the condition that would reopen it.

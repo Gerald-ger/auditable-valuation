@@ -16,6 +16,94 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-27 - Demo mode: the committed fixtures served as a data vendor
+
+A four-agent review asked whether this repo is worth starring and using. Its sharpest
+finding was about order, not quality: **a stranger has to pay the whole install cost before
+learning whether the work is any good** — Python 3.14, 107 pinned packages, a Node
+toolchain, all spent on the strength of this README's own claim that the engine is worth
+reading.
+
+`DEMO_MODE=1` inverts that. `FixtureProvider` serves the eight committed fixtures instead of
+yfinance: no API key, no network, no Ollama, nothing to configure. Scorecard and Financial
+Models answer in full; Tracker and Screener are **withheld** rather than drawn with holes in
+them, because the capture carries weekly closes with no OHLCV, no news, no filings, and
+eight *sectors* rather than a peer group — and a stripped chart reads as a broken chart.
+
+**It is not a product in itself.** It still sits behind the same install, so on its own it
+serves people who have already cleared the largest barrier. Its purpose is to be the data
+path a hosted demo would need: no credentials, no vendor rate limits, deterministic across
+visitors and across days.
+
+**The seam is one rebinding block**, at the bottom of `data_provider.py`, replacing
+`provider`, `_us_treasury_10y`, `_cgb_10y`, `_hkgb_10y`, `live_price` and `fx_rate`. Nothing
+inside any existing function changed, so normal mode has no demo conditional on any hot
+path — it is unchanged *structurally*, not merely empirically. Two `info`→dict mappings were
+lifted to module level (`quote_fields`, `peer_snapshot_fields`) so both providers share one
+copy; verified as pure motion, 15/15 and 51/51 lines identical.
+
+**Measured.** Given the same rate readings, demo and live produce **identical numbers on all
+eight fixtures** — every fair value, all 25 sensitivity cells, every diagnostic, the equity
+bridge, every pillar and composite. The only field that moves is `risk_free_source`, and it
+moves toward honesty: `platform_default` and `*_stored_less_spread` rather than a claim of a
+fetch that never happened. Requests answer in ~120 ms against the 15+ s a network-less run
+would otherwise pay in `CGB_TIMEOUT_S` + `HKGB_TIMEOUT_S` + OpenBB's first import.
+
+**A prediction in the plan turned out wrong, and is recorded as wrong.** It expected `XOM` to
+diverge: its reported beta is 0.173, below `BETA_MIN`, so live mode fetches peer snapshots
+and demo mode can resolve none. It makes no difference — `resolve_beta` puts the regression
+at the top of its ladder, and peers are consulted only when there is no series to regress.
+All eight fixtures carry their bars, all eight resolve `beta_source: "computed"`. The plan
+reasoned from a call site being reached without checking whether its result was used.
+
+### Reviewed again, and six defects found in the feature itself
+
+The same four agents were re-run against the finished work. They found **zero** of the
+repo's standing findings fixed by demo mode — correct and expected, since the diff never
+touches the README's first 129 lines, the badge area, `.github/`, or the Python floor. What
+they found instead:
+
+**Demo mode was writing to the live database.** `/api/score/{ticker}` records every score,
+keyed on today's date, so each demo scorecard view wrote a row into `backend/data/app.db`
+carrying a frozen August price — a fabricated observation inside the calibration set, which
+`record_score`'s own docstring says must not happen, and `ON CONFLICT ... DO UPDATE` meant a
+genuine row for the same ticker and day was overwritten. Six such rows existed, written by
+this change's own verification runs, and were removed. `store.DB_PATH` now points at
+`demo.db` under the flag: one line, and every write in that module goes through it, so
+positions and drawings are isolated too.
+
+**`as_of` stamped today on frozen data.** It is the time the score was *computed*, which is
+true in both modes and therefore says nothing about the data. Cards now carry `data_as_of`
+alongside it — `null` when live, the oldest capture in that ticker's payload in demo. The
+banner covers the UI path; this covers the JSON one.
+
+**`capture_fixtures.py` would have rewritten the golden fixtures from themselves.** Under
+the flag its `provider` is `FixtureProvider` and its output directory is `DEMO_DIR`, so it
+read all eight and wrote them back byte-identical: no exception, nothing in `failed`,
+exit 0. Now refused. Reachable because `start-demo.bat` had no `setlocal` and batch `set`
+persists in the invoking shell — measured, including that `setlocal` placed *after* the
+`set` still leaks.
+
+**`get_history` ignored `period` and `interval`.** It served the 5y/1wk series for every
+request, and the endpoint echoes the interval it was asked for — so daily bars came back
+labelled `"1d"` over weekly data, and `ai_predict` sliced `bars[-30:]` meaning thirty trading
+days and received thirty **weeks**. Now refused rather than resampled, with the ticker
+resolved first so an unknown one still reports itself.
+
+**Two false claims in this README's own demo section**, written before the measurement that
+disproved them and corrected here rather than annotated: it had said six of eight fair
+values matched with the Hong Kong names moving −0.11%/+1.00% (those figures compared demo
+against `conftest`'s round test constants, not against live), and that XOM was the only
+divergence.
+
+**A search row labelled `"source": "sec"`** — a provenance claim, and false in demo mode.
+Nothing renders it today, which is why it was worth fixing.
+
+Suite 566 → 628; frontend 157 → 165, including a new `App.test.jsx` for the banner and tab
+gating. Normal mode is byte-identical to the previous commit across all eight fixtures.
+Bundle 472.01 → 473.58 kB, gzip 147.49 → 148.05; CSS unchanged, the banner reusing
+`.notice-banner`. `backend/data/` was already gitignored, so `demo.db` needs no new rule.
+
 ## 2026-08-27 - Three values that were legitimately zero, read as missing
 
 A correctness audit of the whole engine — four independent re-derivations from the raw
