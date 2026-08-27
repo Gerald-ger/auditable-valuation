@@ -1,5 +1,9 @@
 # Finance Analysis Platform
 
+[![CI](https://github.com/Gerald-ger/finance-analysis-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gerald-ger/finance-analysis-platform/actions/workflows/ci.yml)
+[![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
+[![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](#prerequisites)
+
 A local website for tracking stocks, explaining price moves with news, chatting with a
 local AI financial expert, and running investment-banking financial models — powered by
 the methodology in [docs/financial-models-reference.md](docs/financial-models-reference.md).
