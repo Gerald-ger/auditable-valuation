@@ -515,6 +515,31 @@ component to fix it.
 **Trigger:** the stylesheet passing ~3,000 lines, or the first component deletion — whichever
 comes first, since either turns the structural risk into a live one.
 
+### 🟡 Two remaining `or 0` coercions from the 2026-08-27 audit
+
+The audit found six `.get(...) or 0` sites on model inputs. Three were benign (a missing
+analyst count and a missing dividend yield mean the same thing as zero), one was the
+market-cap defect fixed on 2026-08-27, and one — `financial_models`' `totalDebt or 0` — is
+covered by the `net_debt_assumed_zero` flag that already fires beside it. These two are not.
+
+- **`comps.py`'s `net_debt = (totalDebt or 0) - (totalCash or 0)`.** A missing cash balance
+  overstates net debt and understates the peer-implied value. Measured on AAPL: net debt
+  21.9bn against 84.3bn, an overstatement of **1.37% of market cap**. It feeds the
+  peer-implied bar of the football field, not the DCF headline, which is why it ranks below
+  the three fixed that day. The fix is the same one-word change (`is not None`) plus a
+  decision about what to do when it *is* missing — the bar should probably not be drawn at
+  all, which is a different change from scoring it.
+- **`format.js`'s `num` / `big` / `pct` guard `null` and `undefined` but not `NaN`.**
+  Measured: `pct(NaN)` renders `"NaN%"`, and `num(NaN)` / `big(NaN)` fall through to
+  `toLocaleString()`, which is **locale-dependent** — on this machine it rendered a Chinese
+  not-a-number string. `big(Infinity)` renders `"InfinityT"`, the trillion suffix appended
+  to infinity. The 0-versus-null distinction is correctly preserved everywhere
+  (`num(0)` → `"0"`, `null` → `"—"`); only NaN and infinity are unguarded.
+
+**Trigger:** neither produces a *plausible* wrong number — the first is bounded and on a
+cross-check bar, the second renders visibly broken text. Both are worth folding into the
+next pass over their files rather than a commit of their own.
+
 ### 🟡 Three specification items that never reached code *(found 2026-08-26)*
 
 Found by auditing `docs/financial-models-reference.md` and

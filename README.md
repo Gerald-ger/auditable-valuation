@@ -242,7 +242,7 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
     local AI, grounded in the financial-models reference document, live data for the
     loaded ticker, and any lines you have drawn. Note the grounding is partial: the
     reference document is truncated to the first 16,000 characters to fit a 7–8B model's
-    context ([backend/ai_client.py](backend/ai_client.py)), so roughly its opening 21.4%
+    context ([backend/ai_client.py](backend/ai_client.py)), so roughly its opening 21.2%
     reaches the model and the later sections never do.
 - **Tab 2 — Financial Models**: pulls the company's financial reports automatically and runs
   a two-stage FCFF DCF — **1 explicit year at the forecast rate, then a 9-year fade** to
@@ -326,12 +326,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 559 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 566 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 157 tests
 ```
 
-Of the 586 collected, 27 are `network`-marked and deselected by default.
+Of the 593 collected, 27 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; four component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
@@ -547,7 +547,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 559-test suite runs entirely offline against them. Provenance and capture dates in
+  the 566-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

@@ -53,6 +53,79 @@ def _load_golden() -> dict:
 
 # ── 5.2 golden snapshots ─────────────────────────────────────────────
 
+def test_a_burning_company_with_no_cash_is_scored_worst_not_excluded():
+    """Zero cash is the worst reading this metric has, not a missing one.
+
+    `and total_cash` could not tell a reported zero from an unreported row, so
+    the company the metric exists to catch was dropped from coverage instead of
+    scored. Measured on RIVN before the fix: one dollar of cash scored the
+    Health pillar **32**, and zero dollars scored it **63** — the worst possible
+    input producing a better answer than an almost identical better one.
+    """
+    def health(cash):
+        f = load_fundamentals("RIVN")
+        f["info"]["totalCash"] = cash
+        card = scoring.score_company(f, market_bars=load_market_bars("RIVN"))
+        return card["pillars"]["health"]
+
+    zero, one = health(0), health(1)
+
+    assert zero["metrics"]["cash_runway_q"]["raw"] == 0
+    assert zero["metrics"]["cash_runway_q"]["score"] == 0
+    # the ordering is no longer inverted: nothing does not beat almost nothing
+    assert zero["score"] <= one["score"]
+    assert zero["available_fraction"] == one["available_fraction"] == 1.0
+
+
+def test_an_unreported_cash_balance_is_still_excluded():
+    """The other half of the same distinction. `None` is not zero."""
+    f = load_fundamentals("RIVN")
+    f["info"]["totalCash"] = None
+    card = scoring.score_company(f, market_bars=load_market_bars("RIVN"))
+
+    assert "cash_runway_q" not in card["pillars"]["health"]["metrics"]
+    assert "cash_runway_q" in card["missing_metrics"]
+
+
+def test_no_interest_expense_scores_top_without_inventing_a_ratio():
+    """EBIT over zero has no value; the company it describes has no burden.
+
+    Before the fix a debt-free issuer lost the metric altogether — AAPL's Health
+    pillar fell 78 to 71 and its composite 65 to 64 — while an issuer paying a
+    single dollar of interest scored 100. The raw stays `None` because the ratio
+    genuinely does not exist: printing the top anchor in its place would put a
+    multiple on screen that no statement supports.
+    """
+    f = load_fundamentals("AAPL")
+    reported = [p for p in f["income_statement"]
+                if f["income_statement"][p].get("Interest Expense") is not None]
+    assert reported, "fixture reports no interest expense to zero out"
+    for p in reported:
+        f["income_statement"][p]["Interest Expense"] = 0.0
+
+    card = scoring.score_company(f, market_bars=load_market_bars("AAPL"))
+    cell = card["pillars"]["health"]["metrics"]["interest_coverage"]
+
+    assert cell["raw"] is None
+    assert cell["note"] == "no interest expense"
+    assert cell["score"] == max(s for _, s in scoring.METRIC_ANCHORS["interest_coverage"])
+    assert "no_interest_expense" in card["flags"]
+    assert "interest_coverage" not in card["missing_metrics"]
+
+
+def test_an_unreported_interest_row_is_still_excluded():
+    """`(None, None)` is a company we cannot read, not one without debt."""
+    f = load_fundamentals("AAPL")
+    for p in list(f["income_statement"]):
+        f["income_statement"][p].pop("Interest Expense", None)
+
+    card = scoring.score_company(f, market_bars=load_market_bars("AAPL"))
+
+    assert "interest_coverage" not in card["pillars"]["health"]["metrics"]
+    assert "interest_coverage" in card["missing_metrics"]
+    assert "no_interest_expense" not in card["flags"]
+
+
 @pytest.mark.parametrize("stem", sorted(FIXTURES))
 def test_golden_score_snapshot(stem):
     # Bars injected, never fetched — the suite stays offline, and these now

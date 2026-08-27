@@ -16,6 +16,82 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-27 - Three values that were legitimately zero, read as missing
+
+A correctness audit of the whole engine — four independent re-derivations from the raw
+fixture JSON rather than a reading of the code against its own comments. **No arithmetic
+error was found anywhere.** The DCF's growth fade, discounting, terminal value, four-term
+equity bridge, currency boundary, sensitivity grid and all three reverse checks reproduced
+by hand to the dollar; beta agreed across `cov/var`, `polyfit` and a normal-equation OLS to
+1e-10; every peer multiple, median and conviction boundary matched; all nine Piotroski
+tests matched on all eight fixtures, 72 of 72; every balance sheet balances exactly.
+
+What it did find was three inputs read through a truthiness test that cannot tell a
+reported zero from an absent row. All three predate every change in this session; the
+first dates to `c9ada97 initial website setup`.
+
+**A missing market capitalisation discounted at the cost of debt.** `_wacc` read
+`info.get("marketCap") or 0`, which makes the equity weight zero and returns the after-tax
+cost of debt as the WACC. Measured:
+
+| | fair value | | WACC | composite |
+|---|---|---|---|---|
+| AAPL | 127.91 → **618.69** | +384% | 9.05% → 3.87% | 65 → **70** |
+| MSFT | 225.96 → 1167.21 | +417% | 9.02% → 3.87% | 71 → 74 |
+| XOM | 76.69 → 356.00 | +364% | 8.45% → 3.87% | 74 → 79 |
+| 0002.HK | 84.66 → 391.31 | +362% | 5.14% → 3.20% | 68 → 70 |
+| 0700.HK | 912.47 → **9507.31** | **+942%** | 4.60% → 1.42% | 73 → 75 |
+
+No exception, no flag, and the one field that would have shown it — `weight_equity`, at
+0.0 — is computed, returned, and rendered nowhere. The composite moved the *wrong way*: a
+missing input pushed `dcf_upside_pct` off its floor and raised the score. Reachable from
+ordinary vendor behaviour in two ways: an omitted key, and a `NaN` that
+`data_provider._clean` converts to `None` on the way in — a function whose whole purpose is
+to keep the JSON serialisable.
+
+Now refused, on the same ground a missing FX rate withholds the upside rather than
+computing one across two currencies. A rate that omits the equity side is not a
+conservative discount rate; it is the wrong one. **Gated on the dependency, not the
+field**: a caller supplying `wacc_override` is not refused, because the sensitivity grid
+and `solve_for_fair_value` name their own rate and never consult the collapsed one.
+
+**A burning company holding nothing scored better than one holding a dollar.**
+`cash_runway_q` was guarded by `and total_cash`. Measured on RIVN: **one dollar of cash
+scored the Health pillar 32, and zero dollars scored it 63** — the metric that exists to
+catch exactly this company was dropped from coverage instead of scored at the bottom of its
+own curve. `total_cash` comes from `info.get()`, so `None` and `0` were always
+distinguishable; the guard simply did not distinguish them.
+
+**A debt-free issuer lost its strongest health signal.** `interest_coverage` returned
+`None` for a reported zero, so AAPL with its interest expense zeroed fell from Health 78 to
+71 and composite 65 to 64 — while an issuer paying a single dollar scored 100. The
+discriminator already existed and was being thrown away: `statements.interest_coverage`
+returns `(None, period)` for a reported zero and `(None, None)` when no period reports both
+legs, and the call site read `coverage, _ =`. A reported zero now takes the top of its own
+curve — read from the anchors rather than written as 100, so a recalibration cannot leave
+it behind — and carries `raw: null` with a note. **Not the top anchor as a raw value**:
+printing `15.0×` would put a coverage multiple on screen that no statement supports.
+
+Measured across 18 cases: **all eight fixtures as filed are unchanged**, as is the
+`wacc_override` path and the one-dollar-of-cash case. The eight that moved are exactly the
+eight the fix targets.
+
+Seven tests added. Three of them fail against the pre-fix source and pass after — verified
+by reverting the two modules and re-running. The other four guard the opposite direction:
+that an *unreported* cash balance and an *unreported* interest row are still excluded, that
+a caller naming its own WACC is still served, and that no fixture as filed is refused. All
+three defects had survived a 559-test suite because no fixture carries a missing market
+cap, a zero cash balance or a zero interest expense — nothing had ever observed them.
+
+Suite 559 → 566. Docs: an `As implemented` note on the WACC formula in the reference doc,
+and the reported-zero rule recorded beside the anchor table it governs. No golden moved.
+ruff, oxlint, vitest and vite build clean.
+
+**Found and deliberately left open**, recorded in TODOLIST: `comps`' `totalCash or 0`
+(overstates net debt by 1.37% of market cap on AAPL, peer-implied bar only) and
+`format.js`'s missing `NaN` guard (`big(Infinity)` renders `InfinityT`). Both are visible
+rather than plausible, which is why they rank below the three fixed here.
+
 ## 2026-08-26 - Stock compensation was added back against a share count that never moves
 
 An audit of all eleven markdown files against the code they describe: data collection,

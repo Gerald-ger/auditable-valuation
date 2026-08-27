@@ -87,7 +87,12 @@ function PillarBar({ name, data }) {
             {Object.entries(data.metrics).map(([m, v]) => (
               <tr key={m}>
                 <td>{m.replaceAll('_', ' ')}</td>
-                <td>{num(v.raw, 3)}</td>
+                {/* A scored metric whose raw value does not exist: interest
+                    coverage on an issuer with no interest expense. The note
+                    says so rather than printing a ratio no statement supports,
+                    and rather than the em-dash a null would otherwise render,
+                    which would read as 'not reported' beside a score of 100. */}
+                <td>{v.note ?? num(v.raw, 3)}</td>
                 <td style={{ color: scoreColor(v.score) }}>{v.score}</td>
               </tr>
             ))}

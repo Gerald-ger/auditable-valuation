@@ -580,7 +580,13 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     # vendored table, which is what stops them naming two different countries.
     erp, erp_source, erp_market = equity_risk_premium_for(reporting_ccy)
     cost_of_equity = rf + beta * erp
-    market_cap = info.get("marketCap") or 0
+    # `or 0` is kept because the arithmetic below still has to produce a number
+    # for the audit row when a caller supplies its own WACC. What changed on
+    # 2026-08-27 is that the *fact* now leaves this function: a zero market cap
+    # is not a capital structure, it is a missing input, and `dcf_valuation`
+    # refuses on it rather than discounting at a debt-only rate.
+    reported_market_cap = info.get("marketCap")
+    market_cap = reported_market_cap or 0
     # the capital-structure weights compare a trading-currency market cap with a
     # reporting-currency debt balance, so the debt leg is converted first
     fx, _ = _to_trading(info)
@@ -594,6 +600,10 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
         wacc = (market_cap / total) * cost_of_equity + \
                (total_debt / total) * cost_of_debt * (1 - tax_rate)
     return {
+        # Not a diagnostic for the reader — a gate for `dcf_valuation`. Measured
+        # 2026-08-27 across the fixtures, discounting at the collapsed rate this
+        # function would otherwise return moved fair value +362% to +942%.
+        "market_cap_missing": not reported_market_cap,
         "risk_free_rate": round(rf, 4),
         # `usd_proxy` means this rate is not this currency's. Reported beside
         # `equity_risk_premium_market` below, which names the country the *other*
@@ -750,6 +760,23 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
         growth_rate_published = fwd if fwd is not None else trailing
 
     wacc_parts = _wacc(f, tax_rate, peers, market_bars)
+    # Refused rather than approximated, for the same reason a missing FX rate
+    # withholds the upside instead of computing one across two currencies.
+    # Without a market capitalisation there is no equity weight, so `_wacc`
+    # returns the after-tax cost of debt alone — 3.87% against AAPL's 9.05%,
+    # which is not a conservative discount rate but a wrong one. Measured
+    # 2026-08-27: fair value +362% (0002.HK) to +942% (0700.HK), and the
+    # composite *rose* five points as `dcf_upside_pct` came off its floor.
+    # Nothing failed and nothing was flagged.
+    #
+    # Gated on `wacc_override is None` on purpose: a caller that names its own
+    # rate never consults the collapsed one, and the sensitivity grid and
+    # `solve_for_fair_value` both sweep it explicitly. Refusing them too would
+    # withhold a valuation that does not depend on the missing figure.
+    if wacc_override is None and wacc_parts["market_cap_missing"]:
+        return {"error": "No market capitalisation reported, so the equity and "
+                         "debt weights cannot be formed and there is no WACC "
+                         "to discount at — DCF not applicable."}
     wacc = wacc_override if wacc_override is not None else wacc_parts["wacc"]
 
     # Terminal growth: the platform's policy, or exactly what the caller asked

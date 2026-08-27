@@ -17,7 +17,7 @@
 > third option.
 >
 > **Also: the first 16,000 characters of this file are pasted verbatim into the local AI's
-> system prompt** (`backend/ai_client.py`, `REFERENCE_CHAR_BUDGET`) — 21.4% of it as of
+> system prompt** (`backend/ai_client.py`, `REFERENCE_CHAR_BUDGET`) — 21.2% of it as of
 > 2026-08-26, and the share falls every time the file grows. Anything inserted near the top
 > pushes the tail out of the model's view entirely. A correction beside its own rule earns
 > that space; a preamble does not.
@@ -123,6 +123,16 @@ WACC = (E/V) * Re + (D/V) * Rd * (1 - Tc)
   D = market value of debt (book value acceptable proxy for healthy issuers)
   V = E + D
 ```
+
+> **As implemented** (`financial_models.dcf_valuation`, 2026-08-27): when `E` is not
+> reported, the DCF is **refused** rather than computed. `_wacc` read a missing market cap
+> as `0`, which is not a capital structure — it makes `E/V` zero and returns the after-tax
+> cost of debt alone. Measured across the fixtures before the guard: AAPL discounted at
+> 3.87% against its real 9.05% and returned 618.69 against 127.91; the error ran +362%
+> (`0002.HK`) to +942% (`0700.HK`), with no exception and no flag, and the composite *rose*
+> as `dcf_upside_pct` came off its floor. A caller that supplies `wacc_override` is not
+> refused: the sensitivity grid and `solve_for_fair_value` both name their own rate and
+> never consult the collapsed one.
 
 **Cost of equity — CAPM:**
 

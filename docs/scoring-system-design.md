@@ -158,13 +158,25 @@ METRIC_ANCHORS = {
   "interest_coverage":  [(0.0, 0), (2.0, 25), (4.0, 60), (8.0, 85), (15.0, 100)],
   "current_ratio":      [(0.5, 10), (1.0, 50), (1.2, 75), (1.6, 100), (2.5, 90), (4.0, 60)],  # band-optimal; >3 lazy balance sheet
   "debt_equity":        [(3.0, 10), (2.0, 30), (1.5, 50), (1.0, 70), (0.5, 90), (0.1, 100)],
-  "cash_runway_q":      [(2, 0), (4, 30), (8, 60), (12, 80), (20, 100)],
+  "cash_runway_q":      [(2, 0), (4, 30), (8, 60), (12, 80), (20, 100)],   # 0 quarters is a reading, not a gap - see the note below
   "equity_assets":      [(0.04, 10), (0.06, 40), (0.08, 65), (0.10, 85), (0.14, 100)],
   # Growth
   "revenue_growth":     [(-0.15, 0), (-0.05, 20), (0.0, 35), (0.05, 55), (0.12, 75), (0.25, 95), (0.50, 100)],
   "revenue_cagr_3y":    [(-0.10, 0), (0.0, 30), (0.05, 55), (0.10, 75), (0.20, 95), (0.35, 100)],
   "earnings_growth":    [(-0.30, 0), (-0.10, 20), (0.0, 40), (0.10, 65), (0.25, 85), (0.50, 100)],
   "pe_gap":             [(-0.20, 10), (0.0, 45), (0.10, 65), (0.25, 85), (0.50, 100)],
+  # A value of exactly zero is a reading and is scored. A missing row is not,
+  # and is excluded from coverage. **Amended 2026-08-27** - two metrics could
+  # not tell the two apart, and both failed in the direction that flatters:
+  #   cash_runway_q     `and total_cash` dropped a burning company holding
+  #                     nothing, the worst case the metric exists to catch.
+  #                     Measured on RIVN: one dollar of cash scored Health 32,
+  #                     zero dollars scored it 63.
+  #   interest_coverage EBIT/0 has no value, so the metric was excluded - while
+  #                     an issuer paying one dollar of interest scored 100. A
+  #                     reported zero now takes the top of this curve, carrying
+  #                     `raw: null` and a note, because printing 15.0 would put
+  #                     a ratio on screen that no statement supports.
   # Momentum
   "price_vs_200dma":    [(-0.30, 5), (-0.10, 30), (0.0, 55), (0.10, 80), (0.25, 100), (0.60, 85)],  # blow-off tops score down
   "range_52w_pos":      [(0.0, 10), (0.3, 35), (0.5, 55), (0.8, 85), (1.0, 100)],

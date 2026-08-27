@@ -1137,6 +1137,58 @@ def test_the_reported_year_stays_the_headline():
     assert d["diagnostics"]["base_year"]["fair_value_normalised"] != d["fair_value_per_share"]
 
 
+def test_a_missing_market_cap_refuses_the_dcf_rather_than_discounting_at_debt():
+    """`marketCap or 0` made the equity weight zero and the WACC a cost of debt.
+
+    Measured 2026-08-27, before the guard: AAPL discounted at 3.87% against its
+    real 9.05% and returned **618.69** against 127.91, XOM 356.00 against 76.69,
+    0700.HK 9507.31 against 912.47 — +362% to +942% across the fixtures, with no
+    error, no flag, and the one field that would have shown it
+    (`weight_equity`, 0.0) rendered nowhere. The scorecard moved the wrong way
+    too: `dcf_upside_pct` came off its floor and AAPL's composite *rose* 65 to
+    70 because an input had gone missing.
+
+    A rate that omits the equity side is not a conservative discount rate, it is
+    the wrong one, so this is refused on the same ground a missing FX rate
+    withholds the upside instead of computing one across two currencies.
+    """
+    for stem in ("AAPL", "MSFT", "XOM", "0700_HK", "0002_HK"):
+        f = load_fundamentals(stem)
+        assert f["info"]["marketCap"], f"{stem} fixture has no market cap to remove"
+        f["info"]["marketCap"] = None
+
+        d = fm.dcf_valuation(f)
+        assert "error" in d, stem
+        assert "market capitalisation" in d["error"], stem
+        assert "fair_value_per_share" not in d, stem
+
+
+def test_a_caller_naming_its_own_wacc_is_not_refused_for_a_missing_market_cap():
+    """The gate is on the *dependency*, not on the field.
+
+    `solve_for_fair_value` and the sensitivity grid both sweep WACC explicitly,
+    and a valuation that never consults the collapsed rate is not damaged by it.
+    Refusing those too would withhold an answer that does not rest on the
+    missing figure — which is the opposite of the discipline the guard exists
+    to enforce.
+    """
+    f = load_fundamentals("AAPL")
+    f["info"]["marketCap"] = None
+
+    d = fm.dcf_valuation(f, wacc_override=0.09)
+    assert "error" not in d
+    assert d["fair_value_per_share"] > 0
+    assert d["assumptions"]["wacc_used"] == pytest.approx(0.09)
+
+
+def test_the_market_cap_gate_leaves_every_fixture_as_filed_alone():
+    """A guard that moved a real valuation would be a change, not a fix."""
+    for stem in sorted(FIXTURES):
+        d = fm.dcf_valuation(load_fundamentals(stem))
+        if "error" in d:
+            assert "market capitalisation" not in d["error"], stem
+
+
 def test_stock_compensation_is_subtracted_rather_than_added_back():
     """The reference doc states it as an absolute, and the engine used to breach it.
 

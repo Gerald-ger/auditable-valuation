@@ -220,8 +220,15 @@ def extract_metrics(f: dict,
     # FY2023 interest — 33.8x, a ratio of two different years. `ebit` above
     # stays unpinned on purpose: NOPAT wants the most recent operating income,
     # and it is divided by a balance-sheet figure, not another income row.
-    coverage, _ = statements.interest_coverage(inc)
+    # The period is kept, not discarded: `interest_coverage` returns
+    # `(None, period)` when the row was reported and holds zero, and
+    # `(None, None)` when no period reports both legs. Only the first is a
+    # company with no interest burden; the second is a company we cannot read.
+    # Told apart here so the scoring loop can score the one and skip the other.
+    coverage, coverage_period = statements.interest_coverage(inc)
     m["interest_coverage"] = _clamp(coverage, -50, 200)
+    if coverage is None and coverage_period is not None:
+        flags.append("no_interest_expense")
     m["current_ratio"] = _clamp(info.get("currentRatio"), 0, 20)
     de = div(total_debt, equity) if equity and equity > 0 else None
     if de is None and equity is not None and equity <= 0:
@@ -251,7 +258,14 @@ def extract_metrics(f: dict,
                               "Cash Flow From Continuing Operating Activities") \
         if fcf_period else None
     burn = statement_fcf[1] if statement_fcf else None
-    if period_ocf is not None and period_ocf < 0 and burn and total_cash:
+    # `total_cash is not None`, not `total_cash`. A burning company holding
+    # exactly nothing is the worst case this metric exists to catch, and a
+    # truthiness test read it as "not reported" and dropped it from coverage
+    # instead. Measured 2026-08-27 on RIVN: one dollar of cash scored the
+    # Health pillar 32, zero dollars scored it 63. `burn` keeps its truthiness
+    # test — it is the divisor below, and zero burn would raise rather than
+    # mislead.
+    if period_ocf is not None and period_ocf < 0 and burn and total_cash is not None:
         m["cash_runway_q"] = _clamp(total_cash / (abs(burn) / 4), 0, 100)
     else:
         m["cash_runway_q"] = None
@@ -348,6 +362,19 @@ def score_company(f: dict, dcf: dict | None = None,
         for metric in metric_list:
             anchors = profile["anchor_overrides"].get(metric, METRIC_ANCHORS[metric])
             s = piecewise_score(raw.get(metric), anchors)
+            note = None
+            # EBIT over zero interest has no value, but the company it describes
+            # has no interest burden at all — the best thing this curve can say.
+            # Scored rather than excluded, because excluding it made a debt-free
+            # issuer look *less* healthy than one paying a single dollar, which
+            # scored 100. The raw stays None: the ratio genuinely does not
+            # exist, and printing the top anchor in its place would put a
+            # fabricated multiple on screen. Taken from the curve rather than
+            # written as 100, so a recalibration cannot leave this behind.
+            if s is None and metric == "interest_coverage" \
+                    and "no_interest_expense" in flags:
+                s = float(max(score for _, score in anchors))
+                note = "no interest expense"
             if s is None:
                 missing.append(metric)
             else:
@@ -360,7 +387,12 @@ def score_company(f: dict, dcf: dict | None = None,
                     if "dupont_leverage_cap_applied" not in flags:
                         flags.append("dupont_leverage_cap_applied")
                 scores.append(s)
-                detail[metric] = {"raw": round(raw[metric], 4), "score": round(s)}
+                detail[metric] = {
+                    "raw": round(raw[metric], 4) if raw.get(metric) is not None else None,
+                    "score": round(s),
+                }
+                if note:
+                    detail[metric]["note"] = note
         avail_frac = len(scores) / len(metric_list) if metric_list else 0
         pillars[pillar_names[pillar]] = {
             "score": round(sum(scores) / len(scores)) if scores else None,
