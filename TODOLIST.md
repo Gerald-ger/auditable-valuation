@@ -83,13 +83,21 @@ They lived only in a conversation, which is why the second run could report *0 f
 **That is the defect this entry fixes first.** Re-verified against `6a8dd5a` after today's two
 commits, so the evidence below is today's rather than the review's. Two are now closed.
 
-**The one thing, if only one gets done.** Stand up a hosted, zero-install instance of demo mode,
-and put the link in the three places a visitor looks: the GitHub *Website* field (empty today),
-the first lines of the README, and the CV. It is the only item that reaches all three audiences
-at once, and the expensive half is already built and measured — a data path with no credentials,
-no vendor rate limits, and no drift between visitors or across days. What remains is API-base
-and CORS configuration for a non-localhost origin, plus a host; the simplest shape serves
-`frontend/dist` from the same FastAPI process, which avoids a second origin entirely.
+**The one thing, if only one gets done — now half done.** Stand up a hosted, zero-install
+instance of demo mode, and put the link in the three places a visitor looks: the GitHub
+*Website* field (empty today), the first lines of the README, and the CV. It is the only item
+that reaches all three audiences at once.
+
+**The mechanism landed 2026-08-27.** `main.py` mounts `frontend/dist` after every route, so one
+process serves the API and the UI on one port, and a `Dockerfile` bakes in `DEMO_MODE=1`;
+`deploy/huggingface/` carries the two files a Space needs. Verified in a browser: exactly one
+origin, zero console errors. The API-base and CORS work this entry predicted turned out to be
+**already done** — `api.js` has requested a relative `/api` for months — so nothing was needed
+there at all.
+
+**What is left is not code.** Someone has to create the Space and push those two files; the
+container has never been built, because this machine has no Docker, so its first build is its
+first test. Then the URL goes in the three places above. *Trigger: an afternoon.*
 
 **Two things to settle before that link goes anywhere.** Free tiers spin down when idle, and a
 recruiter's one click landing on a thirty-second cold start is worse than no link at all — so
@@ -155,7 +163,7 @@ deliberately rather than letting the old scope carry by default.
   Windows, the platform this is developed on, is the one never tested. *Trigger: the first
   macOS or Windows contributor.*
 - **No coverage measurement anywhere.** No `pytest-cov`, no `--cov`, no `@vitest/coverage-*`, no
-  `--coverage`. *Trigger: wanting to know which of the 793 tests overlap.*
+  `--coverage`. *Trigger: wanting to know which of the 797 tests overlap.*
 - **Streaming errors arrive as in-body events under HTTP 200.**
   [main.py:132](backend/main.py#L132)'s `_ndjson` turns `AIUnavailable` and generic exceptions
   into a final NDJSON event rather than a non-200 status. *Trigger: a second consumer of those

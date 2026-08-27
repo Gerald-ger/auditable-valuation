@@ -126,13 +126,13 @@ export default function App() {
         )}
         {demo && (
           <div className="notice-banner">
-            <b>Demo mode — real data, frozen.</b> Eight companies&rsquo; filings and
-            prices exactly as captured between <b>2026-08-10</b> and{' '}
-            <b>2026-08-19</b> (see{' '}
+            <b>Demo mode — real data, frozen.</b> Eight companies&rsquo; financial
+            statements and prices exactly as captured between <b>2026-08-10</b>{' '}
+            and <b>2026-08-19</b> (see{' '}
             <code>backend/tests/fixtures/PROVENANCE.md</code>). Nothing here is
             fabricated and nothing is live, so every number is reproducible — these
             are the same bytes the test suite pins its golden scores to. No API key
-            and no network are used. <b>Scorecard</b> and <b>Financial Models</b>
+            and no network are used. <b>Scorecard</b> and <b>Financial Models</b>{' '}
             answer in full; <b>Tracker</b> and <b>Screener</b> do not. Anything you
             save in <b>Portfolio</b> is written to a separate demo database and never
             reaches your own.

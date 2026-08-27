@@ -20,6 +20,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import ai_client
@@ -924,3 +925,29 @@ async def ai_debate(ticker: str):
             yield {"stage": stage, "delta": delta}
 
     return _ndjson(events())
+
+
+# ── The built frontend, served from this same process ────────────────────────
+#
+# Mounted last, and only when the directory exists. Every route above is under
+# `/api/`, and FastAPI's own `/docs`, `/redoc` and `/openapi.json` are registered
+# before any of them, so nothing here can shadow a route: Starlette matches in
+# registration order, and a mount is a prefix match of last resort.
+#
+# This is the whole of what a single-origin deployment needs from the backend.
+# `frontend/src/api.js` already requests a relative `/api` — deliberately, after
+# an absolute host once made a shifted dev-server port fail silently — so with
+# the UI served from here there is no second origin and no CORS handshake at all.
+# The `allow_origins` list above is left alone: in a single-origin deployment
+# nothing matches it, and the Vite dev server still needs it.
+#
+# `html=True` serves `index.html` at `/`. `App.jsx` switches tabs with `useState`
+# rather than a router, so there are no deep links needing a rewrite rule.
+#
+# In development this directory does not exist — `frontend/dist/` is gitignored,
+# and only `npm run build` creates it — so the mount is simply absent and Vite
+# serves the UI on its own port, proxying `/api` back here.
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

@@ -183,13 +183,38 @@ signal to a reader, and that reason was never weighed against the first.
 
 ---
 
+### Single-origin container — done 2026-08-27
+
+`backend/main.py` mounts `frontend/dist` when that directory exists, after every route, so one
+process serves the API and the UI on one port.
+
+Nothing else was needed. `frontend/src/api.js` already requests a relative `/api` — a decision
+taken months earlier, after an absolute host once made a shifted dev-server port fail silently
+— so a single-origin deployment has no second origin and no CORS handshake at all. The
+`allow_origins` list is untouched; nothing matches it in that shape, and the Vite dev server
+still needs it.
+
+| | |
+|---|---|
+| Verified | Built the frontend, ran uvicorn alone with `DEMO_MODE=1` and no Vite, and drove it in a browser: `/` serves the SPA, all twelve API calls resolve, `/docs` is not shadowed, zero console errors, and `performance.getEntriesByType('resource')` reports **exactly one origin** |
+| Guarded by | `backend/tests/test_serving.py` — four drift tests on the two invariants that make a `/` mount safe: it is registered last, and every route this app defines is under `/api/`. Mutation-proved: a route added below the mount fails exactly two of them |
+| Not verified | The `Dockerfile` itself. This machine has no Docker, so the first build is the first test |
+
+**A hosted instance is a different question, and only half answered here.** The container is
+the mechanism; whether to expose it turns on the yfinance licensing note below — which
+`DEMO_MODE=1` sidesteps by serving only fixtures already committed to this repository, but
+does not settle in general. And because the app is local-first with no session, every visitor
+to one instance shares one database.
+
+---
+
 ## Deliberately not done
 
 Each carries the condition that would reopen it.
 
 | Item | Why not | Reopen when |
 |---|---|---|
-| Docker / docker-compose | The install is four commands; a container mainly hides the Python 3.14 requirement rather than solving it | Someone asks for a reproducible environment, or CI needs to test the runtime set |
+| ~~Docker~~ / docker-compose | ~~The install is four commands; a container mainly hides the Python 3.14 requirement rather than solving it~~ — that reasoning was about *installing*, and it still holds; a `Dockerfile` was added 2026-08-27 for a different reason, **hosting**. No compose file: there is one process. | Someone asks for a reproducible *local* environment, or CI needs to test the runtime set |
 | ~~Git tags, semver, GitHub Releases~~ | ~~There are no consumers pinning a version~~ | **Reopened and done 2026-08-27** — see below |
 | `CONTRIBUTING.md`, `SECURITY.md`, issue/PR templates | Single author, no inbound contributions | A first external issue or PR arrives |
 | Relaxing Python below 3.14 | The floor is `requires-python = ">=3.14"` in `pyproject.toml`, chosen to match the only tested configuration (3.14.6 locally, 3.14 in CI) — **not** a dependency constraint. Checked against PyPI: `pandas==3.0.5` ships wheels back to cp311 and declares `>=3.11`; `numpy==2.5.1` ships back to cp312 and declares `>=3.12`. So 3.12/3.13 would plausibly work; lowering the floor honestly means running the suite there first, which is a task, not a config edit | Someone is actually blocked — then test on 3.12 and 3.13 and lower the floor to what passes |

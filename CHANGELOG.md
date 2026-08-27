@@ -16,6 +16,63 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-27 - One process, one port, one origin
+
+Demo mode built the data path a hosted demo would need and stopped there, deliberately. This
+is the rest of the mechanism: `backend/main.py` now mounts `frontend/dist` when that directory
+exists, after every route, so a single process serves the API and the UI together.
+
+**Nothing else was needed, and that is the interesting part.**
+[frontend/src/api.js](frontend/src/api.js) already requests a relative `/api` — a decision
+taken months earlier after an absolute host made a shifted dev-server port fail silently — so
+a single-origin deployment has no second origin and no CORS handshake at all. Both
+`NEXT-STEPS.md` and the review that asked for this said the work included "env-var config for
+API base + CORS". Both were wrong: the API base is already relative, and `allow_origins` is
+untouched because in that shape nothing matches it. The old decision paid for this one.
+
+**Why a `/` mount is safe here**, since it is a prefix match against everything: it is
+registered last, and all 27 routes this app defines are under `/api/` — FastAPI's own `/docs`,
+`/redoc` and `/openapi.json` are registered before any of them. Neither invariant is expressed
+in code that would fail if it stopped holding: a route added below the mount would simply
+return the SPA's HTML with a 200. `backend/tests/test_serving.py` asserts both, and is
+mutation-proved — adding `@app.get("/healthz")` after the mount fails exactly two of its four
+tests, and the other two correctly keep passing. The mount is conditional on the directory
+existing, so a dev checkout and the CI runner, neither of which builds the frontend, boot with
+no mount at all.
+
+**Driven, not just started.** Built the frontend, ran uvicorn alone with `DEMO_MODE=1` and no
+Vite, and drove it in a browser at 1440x900: `/` serves the SPA (200, `text/html`), the bundle
+(200, 473,582 bytes), `/docs` is not shadowed, `/api/score/AAPL` returns composite 65
+unchanged, and twelve API calls resolve in 2-17 ms. Zero console errors, and
+`performance.getEntriesByType('resource')` reports **exactly one origin**.
+
+**Two defects the screenshot found in the demo banner**, both mine, both from the demo-mode
+commit earlier the same day:
+
+- **"Financial Models" ran into "answer"** with no space. JSX strips whitespace containing a
+  newline at an element-to-text boundary, and this was the one place in that banner that did
+  not use `{' '}` where the other three did.
+- **It promised "filings".** `FixtureProvider.get_filings` returns `[]`, and the banner's own
+  next sentence gives the missing filings as a reason the Tracker is withheld — it
+  contradicted itself two clauses later. The fixtures are financial statements and prices, per
+  `PROVENANCE.md`, and it now says so.
+
+A `Dockerfile` and `.dockerignore` at the root, and `deploy/huggingface/` with the two files a
+Space needs — a Docker Space is configured by YAML front matter in its own `README.md`, and
+GitHub renders front matter as a table above everything else, so the Space clones this repo
+rather than being a push of it. **The container is written, not verified:** this machine has
+no Docker, so the first build is the first test. Every step in it either produces its artifact
+or fails at build time.
+
+**A caveat that only appears once it is hosted.** The app is local-first and has no session,
+so every visitor to one instance shares one `demo.db` — a Portfolio row added by one is
+visible to all until the container restarts. Recorded in the README, in
+`docs/release-readiness.md`, and on the Space's own page.
+
+Suite 628 -> 632 (659 collected, 27 network-deselected); frontend 165 unchanged. Bundle
+473.58 -> 473.59 kB, gzip 148.05 -> 148.06 — the banner's corrected wording. No engine code
+changed and no computed number moved.
+
 ## 2026-08-27 - Demo mode: the committed fixtures served as a data vendor
 
 A four-agent review asked whether this repo is worth starring and using. Its sharpest

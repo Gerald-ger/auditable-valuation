@@ -1,0 +1,29 @@
+# Without this the build context is ~700 MB: backend/.venv alone is 251 MB and
+# frontend/node_modules is larger again. Both are rebuilt inside the image from
+# their lockfiles, so shipping them would be slow and wrong — a Windows venv
+# cannot run in a Linux container.
+
+# Rebuilt in the image
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+
+# Local state, never part of a deployment. backend/data/ holds app.db — the real
+# score history — which must not leave this machine; the container creates its
+# own demo.db at runtime.
+backend/data/
+*.db
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# History is not needed to build, and it is the largest thing left.
+.git/
+.github/
+
+# Local planning files, already gitignored, listed again so a build from a dirty
+# working tree does not pick them up.
+NEXT-STEPS.md
+WORKPLAN-*.md

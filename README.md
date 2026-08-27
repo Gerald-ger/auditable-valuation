@@ -202,6 +202,31 @@ unlevered peer median — and demo mode can resolve none. It makes no difference
 and peers are consulted only when there is no series to regress. Every fixture carries its own
 5y/1wk bars, so all eight resolve `beta_source: "computed"` and the peer list is never reached.
 
+### Hosting it
+
+`docker build -t finance-analysis . && docker run -p 7860:7860 finance-analysis` serves the
+whole app — API and UI — from **one process on one port**, with `DEMO_MODE=1` baked in.
+
+That flag is what makes it safe to expose. The eight committed fixtures answer every request,
+no credential is read, and nothing reaches a data vendor: serving *live* yfinance data from a
+public host is an unresolved licensing question, recorded in
+[docs/data-sources-review.md](docs/data-sources-review.md) §3, and this image never asks it.
+
+The backend serves `frontend/dist` itself when that directory exists, mounted after every
+route. Nothing else was needed, because [frontend/src/api.js](frontend/src/api.js) already
+requests a relative `/api` — so a single-origin deployment has no second origin and no CORS
+handshake at all. In development the directory does not exist and Vite serves the UI instead,
+so the mount is simply absent.
+
+**One caveat if you put it on the public internet.** This app is local-first and has no notion
+of a session, so every visitor shares one database — anything saved in **Portfolio** is visible
+to everyone on that instance until it restarts. `deploy/huggingface/` carries the two files a
+Hugging Face Space needs, and says so on the page itself.
+
+*The container has not been built on this machine, which has no Docker installed. Every step in
+it either produces its artifact or fails at build time; none of them can fail quietly at run
+time. It is written, not verified.*
+
 ### Development server
 
 Both modes, not just the one above.
@@ -403,12 +428,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 628 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 632 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 165 tests
 ```
 
-Of the 655 collected, 27 are `network`-marked and deselected by default.
+Of the 659 collected, 27 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; four component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
@@ -608,6 +633,9 @@ pytest.ini     test config; network tests deselected by default
 start.bat / start.ps1   one-click cold start on Windows (backend + frontend + browser)
 start.sh                the same on macOS/Linux
 start-demo.bat / .sh    the same with DEMO_MODE=1 — committed fixtures, no key, no network
+Dockerfile     one process serving API + built UI on one port, DEMO_MODE=1 baked in
+.dockerignore  keeps the 251 MB venv and the real app.db out of the build context
+deploy/huggingface/     README.md + Dockerfile for a Hugging Face Space, which needs its own
 LICENSE        GNU AGPL-3.0
 ```
 
@@ -625,7 +653,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 628-test suite runs entirely offline against them. Provenance and capture dates in
+  the 632-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
