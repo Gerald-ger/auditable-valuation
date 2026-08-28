@@ -23,7 +23,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/Gerald-ger/finance-analysis-platform /src
+RUN git clone --depth 1 https://github.com/Gerald-ger/auditable-valuation /src
 
 WORKDIR /src/frontend
 RUN npm ci && npm run build

@@ -1,6 +1,7 @@
 # Changelog
 
-Notable changes to the Stock Analysis Platform. Newest first.
+Notable changes to Auditable Valuation. Newest first.
+*(Named the Stock Analysis Platform, then the Finance Analysis Platform, until 2026-08-28.)*
 
 > ### ⛔ Do not edit past entries. Append.
 >
@@ -15,6 +16,100 @@ Notable changes to the Stock Analysis Platform. Newest first.
 >
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
+
+## 2026-08-28 (b) - A README nobody would read to the end of, and a name nobody would remember
+
+Two problems with the same cause: everything true about this project was written down, and all
+of it was written down in one file. The README had reached **997 lines / 9,947 words** — around
+forty minutes of reading, in front of a repository whose visitors decide in fifteen seconds.
+
+The specific failure was ordering. A visitor's first screen held a title, four badges, two
+paragraphs and then a thirteen-line legal disclaimer; the first screenshot was at **line 42**,
+two screens down. And the last 219 lines — 22% of the file, its single largest section — were
+the limitations, so a reader who did reach the end finished on a list of what the tool does not
+know. That list is the most honest thing here and it should exist. It should not be the last
+impression.
+
+### Moved, not shortened
+
+Nothing was rewritten for brevity. Sections were lifted out by line range and the split is
+verifiable as such: of the original's **856 non-blank lines, 828 survive verbatim**, and after
+normalising the `../` link rewrites and one heading-level promotion, exactly **three** lines
+differ on purpose — the H1, the CI badge URL, and one link that had become self-referential.
+
+| | before | after |
+|---|---|---|
+| README lines | 997 | **473** (−53%) |
+| README words | 9,947 | **3,699** (−63%) |
+| lines to the first screenshot | 42 | **12** |
+| largest section | Notes & limitations, 219 lines | Install, 55 lines |
+| sections over 100 lines | 3 | **0** |
+| internal navigation | none | a Contents table |
+
+| new file | lines | was |
+|---|---|---|
+| [docs/limitations.md](docs/limitations.md) | 232 | `## Notes & limitations` |
+| [docs/features.md](docs/features.md) | 147 | the Tab 1-6 detail under `## Architecture` |
+| [docs/credentials.md](docs/credentials.md) | 132 | `### Credentials` |
+| [docs/testing.md](docs/testing.md) | 114 | the `## Tests` detail, plus demo-mode fidelity |
+| [docs/development.md](docs/development.md) | 63 | `### Hosting it` + `### Development server` |
+
+The disclaimer stays, in both places it belongs: one line at the top where a visitor cannot
+miss it, and the full verbatim block at the bottom beside the limitations pointer. It used to
+appear twice by accident; now it appears twice on purpose, and differently.
+
+The three "why" notes in Install fold into a `<details>` rather than moving. They answer real
+questions *during* an install and belong nowhere else — they were simply seventeen lines of
+rationale standing between the commands and the next heading.
+
+### Renamed: `finance-analysis-platform` → `auditable-valuation`
+
+Three generic nouns, carrying neither of the two words this project is actually about. The
+repository name is what appears on a CV, in a URL and in a search result; `valuation` is the
+word a reader in finance recognises and `auditable` is the claim that separates this from the
+category. It is also the load-bearing word in the README's own opening sentence, which had
+been saying so since the beginning.
+
+**The Python distribution was deliberately not renamed.** It is still
+`finance-analysis-platform` in `pyproject.toml`, because that string appears inside a *measured*
+error message quoted in two places (`ERROR: Package 'finance-analysis-platform' requires a
+different Python: 3.11.3 not in '>=3.14'`, 8.8 s, recorded 2026-08-17). Renaming the package to
+tidy up the mismatch would have made both records false. The README now says why the two names
+differ rather than hiding it.
+
+Six lines changed across three files. The badge URL points at the new name and is broken until
+the rename happens on GitHub; GitHub redirects the old URL afterwards, so clones written before
+today keep working.
+
+### Four things the move itself broke, found and fixed
+
+A restructure that relocates 606 lines breaks pointers into them, and this repository has
+enough cross-references for that to matter. Every one was found by checking rather than by
+reading:
+
+- **`frontend/src/App.jsx`** told a user with a failing FMP key to see *"Credentials in the
+  README"*. It now names the **🔑 API Key** tab instead — in the app the reader is already
+  looking at, and immune to any future reorganisation of the docs.
+- **`backend/main.py:927`** pointed a code comment at "README limitations".
+- **`docs/release-readiness.md`** described five screenshots living "under *What it looks
+  like*, directly beneath the disclaimer". After the move the Scorecard one is the hero and
+  sits *above* the disclaimer, so the sentence was wrong twice over.
+- **`TODOLIST.md`** recorded that the `--reload` rejection "is recorded in the README". Only
+  the pointer moved; the account of what happened is untouched.
+
+All 23 relative links in the new README and all 23 inside the five new files were checked to
+resolve, along with every one of the 12 heading anchors.
+
+### And one number I got wrong in the writing
+
+The new README summarised the limitations as "thirty of them". Counting them gives **29**. It
+was wrong for the length of one verification step, which is the point of having one — but it is
+worth recording that the very first draft of a file about not asserting unmeasured numbers
+asserted an unmeasured number. The count now appears once, next to the list it counts, instead
+of in the four places the draft had put it.
+
+Suite unchanged and green throughout: **667 backend, 189 frontend**, ruff and oxlint clean,
+build 478.64 kB (+0.08 kB, the longer banner string in `App.jsx`).
 
 ## 2026-08-28 - The key tab wrote before it checked, and that cost a real key
 

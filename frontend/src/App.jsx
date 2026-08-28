@@ -128,8 +128,9 @@ export default function App() {
             <b>Your FMP key is configured, but its last call failed.</b> Peer
             discovery has fallen back to the keyless tier, so comps for anything
             outside the curated list are thinner than they should be. Usually the
-            key is wrong or the free tier&rsquo;s daily quota is spent — see{' '}
-            <b>Credentials</b> in the README. Everything else is unaffected.
+            key is wrong or the free tier&rsquo;s daily quota is spent — the{' '}
+            <b>🔑 API Key</b> tab will tell you which, and replacing the key
+            there checks it against FMP before storing it. Everything else is unaffected.
           </div>
         )}
         {backendStale && (

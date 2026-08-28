@@ -17,7 +17,7 @@ assumption carries the source it came from, trading comps, and a deterministic 0
 scorecard built from 28 anchor curves across five sector-weighted pillars.
 
 **Source, and the reasoning behind every number:**
-[github.com/Gerald-ger/finance-analysis-platform](https://github.com/Gerald-ger/finance-analysis-platform)
+[github.com/Gerald-ger/auditable-valuation](https://github.com/Gerald-ger/auditable-valuation)
 
 ## What you are looking at
 

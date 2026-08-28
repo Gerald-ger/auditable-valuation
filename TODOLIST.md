@@ -1601,7 +1601,8 @@ useful signal and one people switch off. A byte hash false-positived immediately
 checkout` restored `sector_weights.py` with 252 CRLF where the process had loaded LF, so the
 guard called a git-clean file stale. Pinned, and mutation-checked against `read_bytes()`.
 
-**`--reload` was tried first and rejected**, which is recorded in the README because the
+**`--reload` was tried first and rejected**, which is recorded in
+[docs/development.md](docs/development.md) (in the README until 2026-08-28) because the
 failure is not obvious: WatchFiles logged `detected changes in 'backend\main.py'.
 Reloading...`, the replacement worker never started, and the old process kept serving while
 the log claimed a reload had happened. It also orphaned a child holding port 8000 after the

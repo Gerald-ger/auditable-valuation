@@ -118,8 +118,9 @@ Done with the `gh` CLI once it was installed and authenticated:
 
 ### Screenshots — done 2026-08-17
 
-Five captures in `docs/images/`, one per tab, live in the README under *What it looks like*,
-directly beneath the disclaimer so a visitor sees the product before the install steps.
+Five captures in `docs/images/`, one per tab. Since the 2026-08-28 restructure the Scorecard
+one opens the README directly under the positioning sentence, and the other four sit under
+*What it looks like* — in both cases a visitor sees the product before the install steps.
 
 They could not be automated: the tab and ticker are React state rather than URL parameters, so
 a headless browser only ever reaches the Tracker tab on its default ticker. Every shot needed a

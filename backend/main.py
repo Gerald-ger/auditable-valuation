@@ -924,7 +924,7 @@ def portfolio():
             "holdings": len(held),
             "watchlist_only": len(rows) - len(held),
         },
-        # Mixed currencies are summed at face value — see README limitations.
+        # Mixed currencies are summed at face value — see docs/limitations.md.
         "concentration": {
             "top_weight_pct": round(weights[0], 1) if weights else None,
             "top3_weight_pct": round(sum(weights[:3]), 1) if weights else None,
