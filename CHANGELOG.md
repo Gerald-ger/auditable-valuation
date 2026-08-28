@@ -16,6 +16,70 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-28 - The 107 pins nothing installed, and the port the proxy assumed
+
+Three changes, none touching engine code and none moving a computed number. `/api/score/AAPL`
+reads composite 65, tier A before and after — verified through the dev proxy rather than
+against the backend directly, because the proxy is what changed.
+
+### CI installs the runtime set
+
+`ci.yml` has only ever installed `backend/requirements-test.txt`, six entries. The 107-pin set
+the README hands a stranger had never been installed by anything but the development machine,
+so a broken runtime pin passed CI green and the first report of one would have arrived from
+somebody who could not install the project. The pins are not independent either:
+`fastapi==0.136.3` and `uvicorn==0.40.0` are OpenBB's ceiling rather than a preference, and
+nothing exercised that constraint.
+
+[runtime-install.yml](.github/workflows/runtime-install.yml) installs it in the README's own
+order, then imports twice. The second import is the point — every `from openbb import obb` in
+this codebase is deferred into the function that needs it, to keep a slow import off the
+request path, so `import backend.main` never reaches OpenBB and 31 of the 107 pins would have
+stayed uncovered by a job that looked thorough.
+
+| | before | after |
+|---|---|---|
+| CI runs that install `requirements.txt` | 0, ever | on pin-file change + weekly |
+| OpenBB pins exercised | 0 of 31 | 31 of 31 |
+| Added cost on an ordinary push | — | 0 s — the `paths` filter excludes it |
+| First green run on Linux | — | 63 s, all six steps |
+
+The plan recorded in TODOLIST said "installs `requirements.txt` and `-e .` and then runs
+nothing — the install *is* the assertion", and gave the per-push download cost as the reason
+it had not been done. Both were revised: the cost is avoidable rather than payable, and an
+install that resolves is not the same as one the app can import under.
+
+### The dev proxy no longer assumes port 8000
+
+[frontend/vite.config.js](frontend/vite.config.js) hard-coded `http://127.0.0.1:8000` in both
+the `server` and `preview` proxies, while the port on the far end is uvicorn's `--port` flag.
+Nothing kept the two in step, and 8000 is a common enough default to collide.
+
+Proven before the change, with the backend moved to 8899:
+
+| | result |
+|---|---|
+| backend direct, `/api/health` | 200 |
+| through the proxy, no override | **502** — dev server started cleanly, page rendered, no clue on screen |
+| through the proxy, `VITE_API_TARGET` set | 200 |
+| default path afterwards, nothing set | 200, and `/api/score/AAPL` still composite 65, tier A |
+
+That 502 is the same silent failure the proxy was introduced to remove — the comment above it
+describes fixing it for the *frontend* port drifting — surviving on the other side of the hop.
+`VITE_API_TARGET` overrides the target; unset, the literal is unchanged.
+
+### nanoid 3.3.16 to 3.3.18
+
+`npm install` printed `1 high severity vulnerability` to every stranger, unexplained. It was
+not the security issue that line implies: nanoid arrives under `vite` → `postcss`, is
+build-time only, and GHSA-2v37-7h3g-55p8 needs a size-zero call postcss never makes. `npm
+audit fix` changed one package and three lines of `package-lock.json`; `package.json` was not
+touched, correctly, since nothing depends on it directly.
+
+The evidence it never reached the browser: the bundle is byte-identical afterwards — same
+content hashes, `index-tPo7i16B.js` at 473.59 kB and `index-Bt0vDtI0.css` at 26.57 kB.
+`npm audit` now reports 0 vulnerabilities.
+
 ## 2026-08-27 - The two tabs a demo visitor sees, and a pair of endpoints that always said yes
 
 Two of the eight standing software findings, chosen because one is the only real

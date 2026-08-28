@@ -642,7 +642,7 @@ raise it on a portfolio that was not mixed at all. It now reads the same set the
 uses to build `held`. That fixed when the warning fires; the summation it warns about is
 still unconverted, which is why this item stays open.
 
-### 🟡 CI proves the tests, not the install
+### ⚪ ~~CI proves the tests, not the install~~ — closed 2026-08-28
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml) installs `backend/requirements-test.txt`
 — six entries — then runs ruff and pytest. It never installs `backend/requirements.txt`, so
@@ -655,11 +655,21 @@ declare `requires-python >=3.10,<4`, with `pandas>=3.11` and `numpy>=3.12`, so n
 set excludes 3.14. The README's "CI runs the whole suite on Linux" is true of the tests and
 says nothing about the install, which is the part a first-time user hits first.
 
-**Trigger: the first report of an install that fails, or any edit to a runtime pin.** The fix
-is a CI job that installs `requirements.txt` and `-e .` and then runs nothing — the install
-*is* the assertion. The cost is downloading the full set on every push, which is the reason it
-is not already there. First recorded as a warning inside the 2026-08-17 Done entry; promoted
-here so it is not lost inside a dated one.
+**Closed 2026-08-28** by [runtime-install.yml](.github/workflows/runtime-install.yml), which
+differs from the fix planned above in two ways, both deliberate.
+
+It does not run on every push. That cost was the stated reason this was not already here, and
+it turned out to be avoidable rather than payable: the set can only break by being edited,
+which a `paths` filter catches at once, or by an upstream release being yanked or re-tagged,
+which a Monday run catches. A normal push pays nothing.
+
+And it does not run *nothing* after installing. `import backend.main` proves the app builds
+its route table under the resolved set, and a second `from openbb import obb` proves the 31
+OpenBB pins — which the first import structurally cannot reach, because every OpenBB import in
+this codebase is deferred into the function that needs it to keep a slow import off the
+request path. Without that second line the job would have been reassuring rather than useful.
+
+Measured: 2.84 s and 8.35 s for the two imports locally; 63 s for the whole first green run.
 
 ### 🟡 EMA overlay — near-free, and not obviously worth it
 

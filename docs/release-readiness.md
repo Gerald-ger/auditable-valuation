@@ -226,9 +226,12 @@ Each carries the condition that would reopen it.
 
 ## Known limitations a reader should know about
 
-- **CI never installs `backend/requirements.txt`.** It installs the smaller
-  `requirements-test.txt`. A broken runtime pin — or a missing runtime dependency such as
-  `openbb` — passes CI green. The runtime set is only exercised by hand.
+- ~~**CI never installs `backend/requirements.txt`.**~~ **Closed 2026-08-28.** A second
+  workflow ([runtime-install.yml](../.github/workflows/runtime-install.yml)) installs the
+  107-pin set the way the README's Install section says to, then imports the app *and* OpenBB
+  under it. The second import is not redundant: every `from openbb import obb` here is
+  deferred into the function that needs it, so `import backend.main` structurally cannot reach
+  31 of the 107 pins. On pin-file changes and weekly, not every push. First green run, 63 s.
 - **The 27 `network`-marked tests do not run in CI.** They are deselected by `pytest.ini` so the
   suite is offline and deterministic; they exist to detect yfinance changing shape, which means
   that detection only happens when someone runs them deliberately.
