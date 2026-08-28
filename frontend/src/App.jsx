@@ -50,6 +50,11 @@ export default function App() {
   // Serving the committed fixtures instead of a live vendor. Read off the same
   // `/health` poll as the two flags above.
   const [demo, setDemo] = useState(false);
+  // An FMP key that is present and not working. Deliberately not raised when no
+  // key is configured: that is the documented default, it works, and the keyless
+  // tier below it covers the gap — so saying anything there would be noise on a
+  // screen that is behaving correctly. The pair is what makes this reportable.
+  const [fmpFailing, setFmpFailing] = useState(false);
   // Demo mode lands on the Scorecard rather than the default Tracker, since the
   // Tracker is one of the two tabs it cannot answer — a demo whose first screen
   // is a notice explaining what it cannot do has wasted the only 30 seconds it
@@ -69,6 +74,7 @@ export default function App() {
           setAiOnline(s.ai?.online ?? false);
           setBackendStale(s.source_changed_since_start === true);
           setDemo(s.demo === true);
+          setFmpFailing(s.fmp?.configured === true && s.fmp?.last_call === 'failed');
           if (s.demo === true && !demoLanded.current) {
             demoLanded.current = true;
             setTab((t) => (t === 'tracker' ? 'scorecard' : t));
@@ -115,6 +121,15 @@ export default function App() {
         </nav>
       </header>
       <main>
+        {fmpFailing && (
+          <div className="ai-offline-note">
+            <b>Your FMP key is configured, but its last call failed.</b> Peer
+            discovery has fallen back to the keyless tier, so comps for anything
+            outside the curated list are thinner than they should be. Usually the
+            key is wrong or the free tier&rsquo;s daily quota is spent — see{' '}
+            <b>Credentials</b> in the README. Everything else is unaffected.
+          </div>
+        )}
         {backendStale && (
           <div className="ai-offline-note">
             <b>The backend is running older code than this project folder.</b> Python

@@ -697,6 +697,35 @@ request path. Without that second line the job would have been reassuring rather
 
 Measured: 2.84 s and 8.35 s for the two imports locally; 63 s for the whole first green run.
 
+### 🟡 The FMP key still has to be typed into a JSON file by hand
+
+Reported now, since 2026-08-28: `GET /api/health` carries
+`fmp: {configured, last_call}`, and the app raises a banner when a key is present and its last
+real call failed. That closes the half that was actually painful — before it, no file, a wrong
+path, malformed JSON, `fmp_apikey` instead of `fmp_api_key`, a rejected key and a spent quota
+all produced the same silence, because `comps._fmp_peers` catches everything and falls through
+to the keyless tier.
+
+Not done: entering the key **in the app**. It is a small feature and a large decision, which is
+why the reporting half shipped alone.
+
+- The plumbing is ready. `obb.user.credentials.fmp_api_key` is writable at runtime — measured:
+  not frozen, `validate_assignment: True`, and the field is a `SecretStr`, so pydantic masks it
+  in every repr, log line and traceback for free. Assigning it does not touch the settings file
+  (mtime unchanged after a write).
+- Where the key would live is the real question. Not `app.db`: that file is "your data", it
+  gets copied and backed up, and putting a credential in it means every copy carries one.
+  `~/.openbb_platform/user_settings.json` is the better home — OpenBB already reads it, it is
+  already outside the repo, and the app would write it once.
+- **A GET that returns the key must never exist.** Only whether one is set. `/api/health` has
+  no authentication, and neither does anything else here.
+
+**Trigger: deciding whether to host.** On a single-user local install this is a convenience. On
+a hosted instance it is a different feature entirely — either a visitor typing their own
+credential into someone else's server, or every visitor sharing the host's free-tier quota —
+and the answer to "where does it go" changes with that decision. Building the form first would
+mean building the wrong one.
+
 ### 🟡 EMA overlay — near-free, and not obviously worth it
 
 Raised 2026-08-17 (f). `emaArray` already exists as MACD's helper, so exposing an EMA

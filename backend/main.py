@@ -231,6 +231,10 @@ async def health():
     already tells the reader to suspect it; this lets the app say so first.
     """
     return {"status": "ok", "ai": await ai_client.status(),
+            # Same reasoning as `demo` below, and the same poll. Costs a file
+            # read: `fmp_status` deliberately does not ask OpenBB, whose
+            # credentials model takes 3.37 s to import.
+            "fmp": comps.fmp_status(),
             "source_changed_since_start": _source_fingerprint() != SOURCE_AT_START,
             # Rides this poll rather than adding an endpoint: the frontend
             # already calls `/health` on mount and every 30 s, and a second

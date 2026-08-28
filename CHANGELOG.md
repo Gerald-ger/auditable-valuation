@@ -16,6 +16,66 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-28 - Six ways to get the FMP key wrong, all of which looked identical
+
+Setting the key means hand-editing a JSON file at a path most people have never opened, and
+there was no way to find out whether it had worked. `comps._fmp_peers` catches every exception
+and returns `[]`, so these six produced the same silence and the same quiet fall-through to the
+keyless peer tier:
+
+| | before | after |
+|---|---|---|
+| no settings file | silence | `configured: false` |
+| file at the wrong path | silence | `configured: false` |
+| malformed JSON | silence | `configured: false` |
+| `fmp_apikey` instead of `fmp_api_key` | silence | `configured: false` |
+| the key is rejected | silence | `configured: true`, `last_call: "failed"` + a banner |
+| the free quota is spent | silence | `configured: true`, `last_call: "failed"` + a banner |
+| **a ticker that has no peers** | silence | `last_call: "ok"` — the key worked |
+
+That last row is the one worth getting right. FMP answers "no peers for this symbol" with
+`EmptyDataError`, and recording it as a failure would tell someone with a working key that
+their key is broken — a false alarm is worse than the silence it replaced, because it sends
+them to redo a setup that was already correct.
+
+### What it costs
+
+Nothing measurable. `configured` reads the environment and the settings file directly rather
+than asking OpenBB, because `/health` is polled every 30 s by every open tab and importing
+`openbb_core.app.model.credentials` costs **3.37 s** (`openbb` itself, 5.20 s). Measured at
+**0.133 ms** per call. `USER_SETTINGS_PATH` comes from `openbb_core.app.constants`, measured at
+**0.00 s**, which is why that one import is at module scope.
+
+`last_call` adds no network at all: it records the outcome of calls the app was already making.
+
+### The banner fires on a pair, and the pair is the point
+
+Only `configured && last_call === "failed"` raises it. Either half alone is a normal, working
+state — no key is the documented default and the keyless tier covers it; a configured key that
+has not been used yet has nothing to report.
+
+The pair is not pedantry. An install with no key produces `configured: false, last_call:
+"failed"` on its first peer lookup, because OpenBB raises for a missing credential — so
+dropping the `configured` half would tell everyone who never set a key that the key they never
+set has stopped working. App.test.jsx's "stays quiet when no key is configured, even though the
+call did fail" is pinned against exactly that, and mutation-proved: removing the check fails
+that test and no other.
+
+### Elsewhere
+
+- The env variable is `FMP_API_KEY`, not `OPENBB_FMP_API_KEY`, and it wins over the file.
+  OpenBB lower-cases the name and matches it against its credential fields, so the prefixed
+  spelling lands under `openbb_fmp_api_key` and is never read as the FMP key. Documented, since
+  it is not guessable.
+- The status never carries the key, any part of it, or any exception message. FMP takes the key
+  as an `?apikey=` query parameter, so a raised URL can carry one, and `/api/health` has no
+  authentication. Two tests assert the payload does not contain a planted secret.
+- Demo mode needs no special case: `suggest_peers` returns before the FMP tier under
+  `DEMO_MODE`, so `last_call` stays `null` and the banner cannot fire.
+
+18 tests — 13 backend, 5 frontend. Backend 643 → 656, frontend 173 → 178, 816 → 834 offline.
+Bundle 473.59 → 474.12 kB (+0.53 kB, the banner and one piece of state); CSS unchanged.
+
 ## 2026-08-28 - A status code those endpoints could never send, and the first coverage number
 
 Three of the eight standing software findings. Only the first changes behaviour, and no

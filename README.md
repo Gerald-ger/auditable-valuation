@@ -454,12 +454,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 643 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 656 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 173 tests
+cd frontend; npm test                                   # 178 tests
 ```
 
-Of the 670 collected, 27 are `network`-marked and deselected by default.
+Of the 683 collected, 27 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; six component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
@@ -583,6 +583,29 @@ To add one: get a free key at https://site.financialmodelingprep.com, then creat
 That file lives outside the repo and is never committed. Edit it by hand — OpenBB 4.7.2 has
 no `obb.account.save()`. The other three calls (`treasury_rates`, `equity.search`,
 `equity.fundamental.filings`) need no key at all.
+
+`FMP_API_KEY` in the environment works too, and **wins over the file**. Not
+`OPENBB_FMP_API_KEY`: OpenBB lower-cases the variable name and matches it against its own
+credential fields, so the prefixed spelling lands under `openbb_fmp_api_key` and is never read
+as the FMP key.
+
+**How to tell whether it worked.** `GET /api/health` reports it, and the app raises a banner
+when — and only when — a key is configured *and* its last real call to FMP failed:
+
+```json
+"fmp": { "configured": true, "last_call": "ok" }
+```
+
+`configured` answers the setup question (was the file found, is the field name right, is the
+JSON valid) without a network request of any kind. `last_call` is `null` until a lookup
+actually happens, then `"ok"` or `"failed"` — recorded from calls the app was making anyway, so
+it costs no quota. A ticker that genuinely has no peers counts as `"ok"`: the call reached FMP
+and FMP answered.
+
+Before this, all six ways of getting it wrong — no file, wrong path, malformed JSON, `fmp_apikey`
+instead of `fmp_api_key`, a rejected key, a spent quota — produced exactly the same silence,
+because [comps.py](backend/comps.py)'s FMP tier catches everything and falls through to the
+keyless one.
 
 **What OpenBB is actually used for today** — four calls, all on the free tier, all with a
 fallback when the fetch fails:
@@ -720,7 +743,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 643-test suite runs entirely offline against them. Provenance and capture dates in
+  the 656-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

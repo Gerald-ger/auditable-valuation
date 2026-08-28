@@ -14,9 +14,15 @@ everything else.
 """
 from __future__ import annotations
 
+import json
+import os
 from statistics import median, quantiles
 
 import yfinance as yf
+# Constants only, and measured before adding it here: 0.00 s cold, against 3.37 s
+# for openbb_core.app.model.credentials and 5.20 s for openbb itself. The rule
+# against importing OpenBB at module scope is about that 5 s, and this is not it.
+from openbb_core.app.constants import USER_SETTINGS_PATH
 from yfinance.const import EQUITY_SCREENER_EQ_MAP
 
 from backend import financial_models as fm
@@ -137,23 +143,78 @@ _FMP_PEER_CACHE: dict[str, list[str]] = {}
 _SCREENED_INDUSTRY_CACHE: dict[tuple[str, str], list[str]] = {}
 
 
+# How the last real FMP call went: None until one has been made, then "ok" or
+# "failed". Reported by /api/health, because until 2026-08-28 a key that was
+# present and not working was indistinguishable from no key at all — a bad key,
+# an exhausted free quota, an FMP outage and a ticker that genuinely has no
+# peers all arrived here as the same `return []` and the same silence.
+_FMP_LAST_CALL: str | None = None
+
+
+def fmp_status() -> dict:
+    """Whether an FMP key is configured, and how the last real call went.
+
+    `configured` is resolved the way OpenBB resolves it — `FMP_API_KEY` in the
+    environment wins over `credentials.fmp_api_key` in the settings file — but by
+    reading both here rather than asking OpenBB, which costs seconds this cannot
+    spend: `/health` is polled every 30 s by every open tab.
+
+    A malformed or unreadable settings file reports `False`, which is the useful
+    answer: OpenBB would not have got a key out of it either.
+
+    Never returns the key, any part of it, or any message that might carry it.
+    This endpoint has no authentication.
+    """
+    configured = bool(os.environ.get("FMP_API_KEY"))
+    if not configured:
+        try:
+            with open(USER_SETTINGS_PATH, encoding="utf-8") as f:
+                configured = bool(json.load(f).get("credentials", {}).get("fmp_api_key"))
+        except (OSError, ValueError, AttributeError):
+            configured = False
+    return {"configured": configured, "last_call": _FMP_LAST_CALL}
+
+
 def _fmp_peers(ticker: str) -> list[str]:
     """FMP peer discovery — free tier, no extra key beyond the configured one.
 
     Successes are cached for the process lifetime; failures are **not**, so a
     transient outage does not permanently blank a ticker's peers (same rule as
     data_provider._us_treasury_10y).
+
+    Also records the outcome in `_FMP_LAST_CALL` for `fmp_status`. A cache hit
+    deliberately records nothing: it did not call FMP, so it has no news.
     """
+    global _FMP_LAST_CALL
     if ticker in _FMP_PEER_CACHE:
         return _FMP_PEER_CACHE[ticker]
+
     try:
         # deferred: importing openbb costs ~5 s, so only a request that actually
         # needs discovery pays it, and only once per process
         from openbb import obb
+        from openbb_core.provider.utils.errors import EmptyDataError
+    except Exception:
+        _FMP_LAST_CALL = "failed"
+        return []
+
+    try:
         rows = obb.equity.compare.peers(symbol=ticker, provider="fmp").results
         peers = [r.symbol for r in rows if getattr(r, "symbol", None)][:MAX_AUTO_PEERS]
+    except EmptyDataError:
+        # The call reached FMP and FMP said this ticker has no peers. That is the
+        # key working, and recording it as a failure would report a good key as
+        # broken — worse than reporting nothing, which is what this replaced.
+        _FMP_LAST_CALL = "ok"
+        return []
     except Exception:
-        return []  # EmptyDataError for unknown tickers, plus network/quota failures
+        # The status only, never the message. FMP takes the key as an `?apikey=`
+        # query parameter, so a raised URL can carry it, and this ends up in an
+        # unauthenticated /health response.
+        _FMP_LAST_CALL = "failed"
+        return []
+
+    _FMP_LAST_CALL = "ok"
     if peers:
         _FMP_PEER_CACHE[ticker] = peers
     return peers

@@ -38,9 +38,9 @@ const HEALTH = { status: 'ok', ai: { online: false }, source_changed_since_start
  * `/portfolio/tickers` on every tab change, and handing the health payload to
  * the second would make `r.tickers` undefined.
  */
-function serve({ demo = false } = {}) {
+function serve({ demo = false, fmp = undefined } = {}) {
   api.get.mockImplementation((url) => {
-    if (url.includes('/health')) return Promise.resolve({ ...HEALTH, demo });
+    if (url.includes('/health')) return Promise.resolve({ ...HEALTH, demo, fmp });
     if (url.includes('/portfolio/tickers')) return Promise.resolve({ tickers: [] });
     return Promise.resolve({});
   });
@@ -165,5 +165,54 @@ describe('demo mode', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * The FMP key banner. It fires on a *pair* of conditions, and the reason the
+ * pair matters is that either half alone is a normal, working state: no key
+ * configured is the documented default, and a configured key that has not been
+ * used yet has nothing to report. Only "present and failing" is news.
+ */
+describe('FMP key status', () => {
+  const banner = (c) =>
+    [...c.querySelectorAll('.ai-offline-note')]
+      .find((d) => d.textContent.includes('FMP key'));
+
+  it('warns when a configured key is failing', async () => {
+    serve({ fmp: { configured: true, last_call: 'failed' } });
+    const { container } = await mount();
+    expect(banner(container)).toBeDefined();
+    // Says what still works, so the reader knows the scope of the damage.
+    expect(banner(container).textContent).toContain('keyless tier');
+  });
+
+  it('stays quiet when no key is configured, even though the call did fail', async () => {
+    // Not a contrived pair — it is what every install without a key produces.
+    // OpenBB raises for a missing credential, so `_fmp_peers` records "failed",
+    // and dropping the `configured` half of the condition would tell everyone
+    // who never set a key that the key they never set has stopped working.
+    serve({ fmp: { configured: false, last_call: 'failed' } });
+    expect(banner((await mount()).container)).toBeUndefined();
+  });
+
+  it('stays quiet before the key has been used', async () => {
+    serve({ fmp: { configured: true, last_call: null } });
+    expect(banner((await mount()).container)).toBeUndefined();
+  });
+
+  it('stays quiet while the key is working', async () => {
+    serve({ fmp: { configured: true, last_call: 'ok' } });
+    expect(banner((await mount()).container)).toBeUndefined();
+  });
+
+  it('survives a backend too old to send the field at all', async () => {
+    // Not hypothetical here: a backend running older code than the folder is
+    // this project's most repeated self-inflicted wound, and it is exactly the
+    // condition under which a new response field is simply absent.
+    serve({ fmp: undefined });
+    const { container } = await mount();
+    expect(banner(container)).toBeUndefined();
+    expect(container.querySelector('nav')).not.toBeNull();
   });
 });
