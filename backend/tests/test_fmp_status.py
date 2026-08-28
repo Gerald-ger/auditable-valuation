@@ -18,11 +18,27 @@ from __future__ import annotations
 import json
 import sys
 import types
+from pathlib import Path
 
 import pytest
-from openbb_core.provider.utils.errors import EmptyDataError
 
 from backend import comps
+
+
+class EmptyDataError(Exception):
+    """Stand-in for OpenBB's, injected below with the fake `openbb` module.
+
+    Not the real class, and deliberately not imported: `requirements-test.txt`
+    does not install OpenBB, and a module-scope import of it here aborts
+    collection for the whole file in CI. `_fmp_peers` resolves the name through
+    `sys.modules` at call time, so a fake registered there is the class its
+    `except` clause actually matches -- which is what these tests are about.
+    """
+
+
+# Captured at import, because the autouse fixture below redirects the module's
+# copy at every test. The drift test needs the value the app actually ships.
+REAL_SETTINGS_PATH = comps.USER_SETTINGS_PATH
 
 
 @pytest.fixture(autouse=True)
@@ -55,9 +71,25 @@ def _fake_openbb(monkeypatch, *, results=None, raises=None):
     obb = types.SimpleNamespace(
         equity=types.SimpleNamespace(compare=types.SimpleNamespace(peers=peers)))
     monkeypatch.setitem(sys.modules, "openbb", types.SimpleNamespace(obb=obb))
+    # A leaf already in sys.modules short-circuits the import machinery before it
+    # touches the parent packages, so `openbb_core` itself need not exist.
+    monkeypatch.setitem(sys.modules, "openbb_core.provider.utils.errors",
+                        types.SimpleNamespace(EmptyDataError=EmptyDataError))
 
 
 # ── configured: the setup-time question ─────────────────────────────────────
+
+def test_the_settings_path_still_matches_openbbs_own():
+    """The drift test for computing that path instead of importing it.
+
+    `comps` cannot import `openbb_core.app.constants` -- doing so took five test
+    modules out of CI on 2026-08-28 -- so it derives the same path itself. This
+    pins the two together wherever OpenBB is installed, and skips where it is
+    not, which is exactly the CI job that cannot answer the question anyway.
+    """
+    constants = pytest.importorskip("openbb_core.app.constants")
+    assert Path(REAL_SETTINGS_PATH) == Path(constants.USER_SETTINGS_PATH)
+
 
 def test_no_key_anywhere_reports_not_configured():
     assert comps.fmp_status() == {"configured": False, "last_call": None}

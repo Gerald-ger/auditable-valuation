@@ -16,13 +16,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from statistics import median, quantiles
 
 import yfinance as yf
-# Constants only, and measured before adding it here: 0.00 s cold, against 3.37 s
-# for openbb_core.app.model.credentials and 5.20 s for openbb itself. The rule
-# against importing OpenBB at module scope is about that 5 s, and this is not it.
-from openbb_core.app.constants import USER_SETTINGS_PATH
 from yfinance.const import EQUITY_SCREENER_EQ_MAP
 
 from backend import financial_models as fm
@@ -141,6 +138,19 @@ _FMP_PEER_CACHE: dict[str, list[str]] = {}
 # for fifty REITs where one will do. The target is removed at read time instead,
 # which is the only part of the answer that varies by name.
 _SCREENED_INDUSTRY_CACHE: dict[tuple[str, str], list[str]] = {}
+
+
+# Where OpenBB keeps its credentials. Computed rather than imported from
+# `openbb_core.app.constants`, which holds the same value: `requirements-test.txt`
+# deliberately does not install OpenBB, so a module-scope import of it aborts
+# collection of every test module that reaches this file — five of them, on
+# 2026-08-28, found by CI after a local run passed because the dev venv has the
+# runtime set installed. Measuring that the import was fast (0.00 s) said nothing
+# about whether it was there.
+#
+# `test_the_settings_path_still_matches_openbbs_own` pins the two together
+# wherever OpenBB *is* installed, and skips where it is not.
+USER_SETTINGS_PATH = Path.home() / ".openbb_platform" / "user_settings.json"
 
 
 # How the last real FMP call went: None until one has been made, then "ok" or

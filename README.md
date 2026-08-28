@@ -454,12 +454,14 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 656 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 657 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 178 tests
 ```
 
-Of the 683 collected, 27 are `network`-marked and deselected by default.
+Of the 684 collected, 27 are `network`-marked and deselected by default. One more skips
+unless OpenBB is installed — it checks that the settings path `comps.py` computes still
+matches OpenBB’s own constant, which is unanswerable without it, so CI reports 656 and a skip.
 
 The frontend suite runs in vitest's default `node` environment; six component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
@@ -743,7 +745,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 656-test suite runs entirely offline against them. Provenance and capture dates in
+  the 657-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

@@ -73,7 +73,10 @@ that test and no other.
 - Demo mode needs no special case: `suggest_peers` returns before the FMP tier under
   `DEMO_MODE`, so `last_call` stays `null` and the banner cannot fire.
 
-18 tests — 13 backend, 5 frontend. Backend 643 → 656, frontend 173 → 178, 816 → 834 offline.
+19 tests — 14 backend, 5 frontend. Backend 643 → 657, frontend 173 → 178, 816 → 835 offline.
+(Written at 656/834 and corrected the same day: CI rejected a module-scope `openbb_core`
+import that took five test modules out of collection, and the fix — computing the settings
+path instead — needed a drift test to pin it against OpenBB’s own constant.)
 Bundle 473.59 → 474.12 kB (+0.53 kB, the banner and one piece of state); CSS unchanged.
 
 ## 2026-08-28 - A status code those endpoints could never send, and the first coverage number
