@@ -78,16 +78,37 @@ describe('SettingsTab', () => {
     expect(removeButton(container)).toBeUndefined();
   });
 
-  it('reports the verdict the save came back with, not "saved"', async () => {
-    const { container } = await mount({ configured: false, last_call: null });
-    post.mockResolvedValue({ configured: true, last_call: 'failed' });
+  it('says a rejected key changed nothing, and keeps it in the box to fix', async () => {
+    // The sentence that had to exist after 2026-08-28. "Your key is failing" and
+    // "what you just typed was refused and nothing moved" are different facts,
+    // and the first version could only say the former.
+    const { container } = await mount({ configured: true, last_call: 'ok' });
+    post.mockResolvedValue({ configured: true, last_call: 'ok', saved: false });
 
     await type(field(container), 'a-wrong-key');
     click(saveButton(container));
     await flush();
 
     expect(post).toHaveBeenCalledWith('/settings/fmp-key', { key: 'a-wrong-key' });
-    expect(verdict(container).textContent).toMatch(/failed/i);
+    expect(container.querySelector('.error-banner')?.textContent)
+      .toMatch(/nothing was changed/i);
+    // The stored key's own verdict is untouched: it was never retested.
+    expect(verdict(container).textContent).toMatch(/set and working/i);
+    // And the paste stays put, because a rejected key is usually a mistyped one.
+    expect(field(container).value).toBe('a-wrong-key');
+  });
+
+  it('clears the box only when the key was actually stored', async () => {
+    const { container } = await mount({ configured: false, last_call: null });
+    post.mockResolvedValue({ configured: true, last_call: 'ok', saved: true });
+
+    await type(field(container), 'a-good-key');
+    click(saveButton(container));
+    await flush();
+
+    expect(field(container).value).toBe('');
+    expect(container.querySelector('.error-banner')).toBeNull();
+    expect(verdict(container).textContent).toMatch(/set and working/i);
   });
 
   it('keeps the key out of the DOM', async () => {
@@ -97,7 +118,7 @@ describe('SettingsTab', () => {
     const { container } = await mount({ configured: false, last_call: null });
     expect(field(container).type).toBe('password');
 
-    post.mockResolvedValue({ configured: true, last_call: 'ok' });
+    post.mockResolvedValue({ configured: true, last_call: 'ok', saved: true });
     await type(field(container), 'sk-SECRET');
     click(saveButton(container));
     await flush();

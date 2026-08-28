@@ -264,11 +264,17 @@ def _reject_key_writes_in_demo():
 
 @app.post("/api/settings/fmp-key")
 async def set_fmp_key(req: FmpKeyRequest):
-    """Store an FMP key and immediately find out whether it works.
+    """Verify an FMP key, and store it only if it works.
 
-    The response is `fmp_status()` with `last_call` already set by a real lookup,
-    so the caller can say "working" or "rejected" rather than "saved" — which was
-    the whole complaint about editing the JSON by hand.
+    Verify *then* store, in that order. The reverse cost a real key on
+    2026-08-28: a placeholder typed to see what the tab did overwrote a working
+    one before the check ran, and the accurate "failed" that came back was a
+    report on damage already done.
+
+    The response carries `saved`, because "the key you have is failing" and "what
+    you just typed was rejected and nothing changed" are different sentences.
+    On a rejection nothing on disk moves and `last_call` is left as it was —
+    that verdict belonged to the candidate, not to the key still stored.
 
     There is deliberately no GET counterpart. Nothing here is authenticated, and
     an endpoint that returns a stored credential is how a convenience becomes a

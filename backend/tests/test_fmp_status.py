@@ -69,7 +69,12 @@ def _fake_openbb(monkeypatch, *, results=None, raises=None):
         return types.SimpleNamespace(results=results or [])
 
     obb = types.SimpleNamespace(
-        equity=types.SimpleNamespace(compare=types.SimpleNamespace(peers=peers)))
+        equity=types.SimpleNamespace(compare=types.SimpleNamespace(peers=peers)),
+        # `save_fmp_key` sets the candidate here *before* probing, and puts the
+        # previous value back if the probe fails. Tests read it to check that a
+        # rejected key leaves nothing behind, in memory or on disk.
+        user=types.SimpleNamespace(
+            credentials=types.SimpleNamespace(fmp_api_key="previous-key")))
     monkeypatch.setitem(sys.modules, "openbb", types.SimpleNamespace(obb=obb))
     # A leaf already in sys.modules short-circuits the import machinery before it
     # touches the parent packages, so `openbb_core` itself need not exist.
@@ -271,12 +276,54 @@ def test_an_empty_key_is_rejected_rather_than_stored(monkeypatch, tmp_path):
         comps.save_fmp_key("   ")
 
 
-def test_saving_verifies_the_key_instead_of_just_reporting_it_stored(monkeypatch, tmp_path):
-    """The whole point of doing this in the app rather than in a text editor."""
-    _settings_at(monkeypatch, tmp_path, {})
+def test_a_rejected_key_never_reaches_the_file(monkeypatch, tmp_path):
+    """The regression that cost a real key on 2026-08-28.
+
+    The first version wrote and then checked, so a placeholder typed to see what
+    the tab did replaced a working key before the probe ran. The probe was right
+    and the report was accurate; it just arrived after the loss.
+    """
+    p = _settings_at(monkeypatch, tmp_path,
+                     {"credentials": {"fmp_api_key": "the-real-one"}})
     _fake_openbb(monkeypatch, raises=RuntimeError("Invalid API KEY"))
 
-    assert comps.save_fmp_key("wrong-key") == {"configured": True, "last_call": "failed"}
+    result = comps.save_fmp_key("a-placeholder")
+
+    assert result["saved"] is False
+    assert json.loads(p.read_text(encoding="utf-8")) == {
+        "credentials": {"fmp_api_key": "the-real-one"}}, "overwrote a working key"
+    assert not p.with_suffix(".json.bak").exists(), "made a backup of an unchanged file"
+
+
+def test_a_rejected_key_leaves_no_trace_in_memory_either(monkeypatch, tmp_path):
+    """The candidate is set on the live credential to be testable at all, so it
+    has to be put back — otherwise a rejected paste silently disables a working
+    key until the process restarts, which is the same loss with a longer fuse."""
+    _settings_at(monkeypatch, tmp_path, {"credentials": {"fmp_api_key": "the-real-one"}})
+    _fake_openbb(monkeypatch, raises=RuntimeError("Invalid API KEY"))
+    monkeypatch.setattr(comps, "_FMP_LAST_CALL", "ok")
+
+    comps.save_fmp_key("a-placeholder")
+
+    assert sys.modules["openbb"].obb.user.credentials.fmp_api_key == "previous-key"
+    # The verdict belonged to the candidate. The stored key was never retested,
+    # so claiming it failed would put a banner on a key nothing has tried.
+    assert comps.fmp_status()["last_call"] == "ok"
+
+
+def test_an_accepted_key_is_written_and_backed_up(monkeypatch, tmp_path):
+    p = _settings_at(monkeypatch, tmp_path,
+                     {"credentials": {"fmp_api_key": "the-old-one"}})
+    _fake_openbb(monkeypatch, results=[types.SimpleNamespace(symbol="MSFT")])
+
+    result = comps.save_fmp_key("a-working-one")
+
+    assert result == {"configured": True, "last_call": "ok", "saved": True}
+    assert json.loads(p.read_text(encoding="utf-8"))["credentials"]["fmp_api_key"]         == "a-working-one"
+    # One generation of undo, which is what this feature did not have when it
+    # cost somebody a key.
+    assert json.loads(p.with_suffix(".json.bak").read_text(encoding="utf-8")) == {
+        "credentials": {"fmp_api_key": "the-old-one"}}
 
 
 def test_the_verification_leaves_nothing_in_the_peer_cache(monkeypatch, tmp_path):

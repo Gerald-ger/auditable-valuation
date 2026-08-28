@@ -16,6 +16,52 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-28 - The key tab wrote before it checked, and that cost a real key
+
+Shipped hours earlier the same day, and wrong in its order of operations. `save_fmp_key`
+wrote the settings file and *then* made its verification call. A placeholder typed to see what
+the new tab did replaced a working key; the probe correctly answered "failed"; the key was
+already gone. Reporting a failure accurately is worth nothing if the report arrives after the
+damage.
+
+Nothing recovered it. There was no `.bak`, the atomic write had consumed its own temporary
+file, and — by design — no endpoint here will hand a stored credential back, so the running
+process could not be asked either. The security property and the recovery path were the same
+property, pointing opposite ways.
+
+### The order, reversed
+
+| | before | after |
+|---|---|---|
+| a key that works | written, then confirmed | **confirmed, then written** |
+| a key that is rejected | **written, then reported failed** | never reaches the file |
+| the in-memory credential after a rejection | left as the rejected key | restored |
+| `last_call` after a rejection | the candidate's verdict, on the stored key | restored |
+| the previous file | gone | kept as `user_settings.json.bak` |
+
+The candidate now goes no further than OpenBB's in-memory credential until a real call comes
+back. On a rejection nothing on disk moves, the previous in-memory value is put back, and the
+verdict is put back too — it belonged to the candidate, and a key that was never adopted should
+not leave its verdict on the one still stored.
+
+Verified live, against the real file on the development machine: posting a deliberately bad key
+returned `{"configured": true, "last_call": null, "saved": false}` and left it at 187 bytes with
+an identical mtime and an identical sha256, with no `.bak` written because nothing changed.
+
+### The response grew a field, because two sentences were one
+
+`saved` distinguishes "the key you have is failing" from "what you just typed was rejected and
+nothing changed". The first version could only say the former, which is exactly the sentence
+that made the loss look like a diagnosis.
+
+A rejected key now stays in the box rather than being cleared — a rejected key is usually a
+rejected *paste* — and the notice says outright that a good key is refused here too when FMP is
+down or the daily quota is spent, so "rejected" is not read as "wrong".
+
+Backend 665 → 667, frontend 188 → 189, 853 → 856 offline. Bundle 477.65 → 478.56 kB js; CSS
+unchanged. Mutation-proved both ways: writing regardless of the verdict fails the two rejection
+tests and nothing else; dropping the in-memory restore fails exactly one.
+
 ## 2026-08-28 - A sixth tab that takes the one credential this app reads
 
 The earlier entry today made the FMP key's state visible. This one makes it settable: a

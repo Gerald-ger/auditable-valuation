@@ -432,12 +432,12 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
 - **Tab 5 — Portfolio**: watchlist and holdings. A row with 0 shares is watch-only; add
   shares and a cost basis and it becomes a position with live P&L, weight, top-1/top-3
   concentration and a Herfindahl index. The latest stored score is joined onto each row.
-- **Tab 6 — API Key**: the one credential this platform reads. Saving writes it into
-  `~/.openbb_platform/user_settings.json` on your own machine and then makes one real call,
-  so the screen can say *working* or *rejected* rather than *saved*. Read-modify-write:
-  anything else in that file, including other providers' credentials, survives untouched.
-  Withheld in demo mode — a key would change nothing there, and the machine storing it may
-  not be yours.
+- **Tab 6 — API Key**: the one credential this platform reads. Saving makes one real call to
+  FMP **first**, and writes `~/.openbb_platform/user_settings.json` only if the key comes back
+  working — so trying a key out cannot cost you the one you already have. Read-modify-write:
+  anything else in that file, including other providers' credentials, survives untouched, and
+  the previous version is kept as `user_settings.json.bak`. Withheld in demo mode — a key
+  would change nothing there, and the machine storing it may not be yours.
 
 All AI features degrade gracefully: until Ollama is installed the site shows an
 "AI offline" notice and everything else keeps working.
@@ -464,12 +464,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 665 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 667 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 188 tests
+cd frontend; npm test                                   # 189 tests
 ```
 
-Of the 692 collected, 27 are `network`-marked and deselected by default. One more skips
+Of the 694 collected, 27 are `network`-marked and deselected by default. One more skips
 unless OpenBB is installed — it checks that the settings path `comps.py` computes still
 matches OpenBB’s own constant, which is unanswerable without it, so CI reports 656 and a skip.
 
@@ -582,9 +582,10 @@ Financial Modeling Prep's free tier. **Skipping this is fine** — peer discover
 the built-in `PEER_SUGGESTIONS` table in [backend/comps.py](backend/comps.py) and everything
 else runs unchanged.
 
-**The easiest way is the 🔑 API Key tab**, which writes the same file, keeps everything else
-in it, and then makes one real call so it can tell you whether the key works rather than that
-it saved. The rest of this section is what it does, and how to do it by hand.
+**The easiest way is the 🔑 API Key tab.** It verifies the key against FMP before writing
+anything, keeps everything else in that file, and leaves the previous version as a `.bak` — so
+a key that turns out to be wrong costs nothing, and one that is right is confirmed on screen
+rather than assumed. The rest of this section is what it does, and how to do it by hand.
 
 To add one by hand: get a free key at https://site.financialmodelingprep.com, then create
 `~/.openbb_platform/user_settings.json` (on Windows, `%USERPROFILE%\.openbb_platform\`):
@@ -762,7 +763,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 665-test suite runs entirely offline against them. Provenance and capture dates in
+  the 667-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

@@ -723,6 +723,15 @@ half and is not a control — the route is reachable regardless, and on a hosted
 filesystem being written would be the operator's. A visitor would either overwrite the
 operator's key or leave their own on a stranger's machine for the next visitor to spend.
 
+**Corrected the same day.** The first version wrote the file and *then* verified, and that
+order cost a real key within the hour: a placeholder typed to see what the tab did replaced a
+working one, the probe correctly returned "failed", and the accurate report arrived after the
+loss. A verdict you cannot act on is not a safeguard. It now verifies first and writes only on
+success, restores the in-memory credential and the previous verdict on a rejection, and keeps
+one generation of the whole file as `.bak` — which is what would have made the original
+incident recoverable and did not exist. Mutation-proved both ways: writing regardless of the
+verdict fails the two rejection tests, and dropping the in-memory restore fails exactly one.
+
 Still open, and unchanged by this: hosting. The tab is the right shape for a local
 single-user install, which is what this is. A hosted instance would need a different answer to
 "whose key is this", and the 403 above is what stands in for that answer until there is one.

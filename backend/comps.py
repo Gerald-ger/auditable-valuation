@@ -197,14 +197,27 @@ _FMP_PROBE = "AAPL"
 
 
 def _write_settings(data: dict) -> None:
-    """Replace the settings file atomically, and never leave a half-written one.
+    """Replace the settings file atomically, keeping one generation behind it.
 
     `os.replace` is atomic on both POSIX and Windows, so a crash mid-write leaves
     the original intact rather than a truncated file with somebody's credentials
     half in it.
+
+    The `.bak` exists because the first version of this had no undo. On
+    2026-08-28 a key typed to try the feature out replaced a real one, and there
+    was nothing on disk to restore from — the atomic write had already consumed
+    its own temporary file. Everything above this line was careful about the
+    *other* fields in the file and careless about the one being changed.
     """
     path = Path(USER_SETTINGS_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = path.with_suffix(".json.bak")
+        backup.write_bytes(path.read_bytes())
+        try:
+            os.chmod(backup, 0o600)
+        except OSError:
+            pass
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     try:
@@ -239,47 +252,92 @@ def _load_settings() -> dict:
     return data
 
 
+def _running_openbb():
+    """The `obb` of an already-imported OpenBB, or None. Never imports."""
+    mod = sys.modules.get("openbb")
+    return getattr(mod, "obb", None) if mod is not None else None
+
+
+def _import_openbb():
+    """Import OpenBB, paying its ~5 s cost. Only for an explicit save.
+
+    Verifying a key needs the credential set on the live object, and the live
+    object does not exist until this runs. A save is a button press, not a page
+    load, so the wait is the user's own and it buys the answer they asked for.
+    """
+    try:
+        from openbb import obb
+        return obb
+    except Exception:
+        return None
+
+
 def _apply_to_running_openbb(key: str | None) -> None:
     """Update an already-imported OpenBB, which will not re-read the file.
 
-    Only when it is already in `sys.modules`: importing it here to set a
-    credential would cost 5 s on a request whose work is otherwise a file write.
-    If it has not been imported, the first import reads the file we just wrote.
+    Only when it is already in `sys.modules`: importing it here would cost 5 s on
+    a request whose work is otherwise a file write. If it has not been imported,
+    the first import reads the file. Used by the delete path; `save_fmp_key` sets
+    the credential itself, because it has to set it *before* the check.
     """
-    mod = sys.modules.get("openbb")
-    if mod is None:
+    obb = _running_openbb()
+    if obb is None:
         return
     try:
-        mod.obb.user.credentials.fmp_api_key = key
+        obb.user.credentials.fmp_api_key = key
     except Exception:
         pass  # best effort; the file is the source of truth on next start
 
 
 def save_fmp_key(key: str) -> dict:
-    """Store the key in OpenBB's settings file, then prove whether it works.
+    """Verify the key first, and only write it to disk if it works.
 
-    Read-modify-write on exactly one JSON key. Everything else in that file —
-    other providers' credentials, preferences, command defaults — is read back
-    and written out untouched.
+    The first version wrote and *then* checked. That order cost a real key on
+    2026-08-28: a placeholder typed to see what the tab did replaced a working
+    one, the probe correctly said "failed", and by then the working key was gone.
+    Reporting a failure accurately is no use if the report arrives after the
+    damage.
 
-    Returns the same shape as `fmp_status`, with `last_call` set by a real
-    lookup, so the caller can say "working" or "rejected" rather than "saved".
+    So the candidate goes no further than OpenBB's in-memory credential until a
+    real call has come back. On a rejection nothing on disk changes, the previous
+    in-memory credential is put back, and `_FMP_LAST_CALL` is restored too — that
+    verdict belonged to the candidate, and a key that was never adopted should
+    not leave its verdict on the one that is still stored.
+
+    Returns `fmp_status()` plus `saved`, because "your key is failing" and "the
+    key you just typed was rejected and nothing changed" are different sentences
+    and the caller has to be able to tell them apart.
     """
+    global _FMP_LAST_CALL
     key = (key or "").strip()
     if not key:
         raise ValueError("An empty key is not a key. Use the delete path to remove one.")
 
+    # Before anything else, so an unreadable file fails without a network call.
     data = _load_settings()
-    data.setdefault("credentials", {})["fmp_api_key"] = key
-    _write_settings(data)
-    _apply_to_running_openbb(key)
 
-    # The probe, and the reason a save can answer at all. Cache entry removed
-    # afterwards so a validation call leaves no trace in the peer cache.
+    obb = _running_openbb() or _import_openbb()
+    if obb is None:
+        raise CredentialFileError(
+            "OpenBB is not installed in this environment, so a key cannot be "
+            "verified — and this refuses to store one it could not check.")
+
+    previous_key = obb.user.credentials.fmp_api_key
+    previous_verdict = _FMP_LAST_CALL
+    obb.user.credentials.fmp_api_key = key
+
     _FMP_PEER_CACHE.pop(_FMP_PROBE, None)
     _fmp_peers(_FMP_PROBE)
     _FMP_PEER_CACHE.pop(_FMP_PROBE, None)
-    return fmp_status()
+
+    if _FMP_LAST_CALL != "ok":
+        obb.user.credentials.fmp_api_key = previous_key
+        _FMP_LAST_CALL = previous_verdict
+        return {**fmp_status(), "saved": False}
+
+    data.setdefault("credentials", {})["fmp_api_key"] = key
+    _write_settings(data)
+    return {**fmp_status(), "saved": True}
 
 
 def clear_fmp_key() -> dict:

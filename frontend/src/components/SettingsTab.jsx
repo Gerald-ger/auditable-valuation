@@ -9,10 +9,15 @@ import { get, post, del } from '../api';
  * ways of getting that wrong all produced the same silence, because the FMP
  * tier in `comps.py` catches everything and falls through to the keyless one.
  *
- * Saving writes that same file (read-modify-write: whatever else is in it is
- * read back and written out untouched) and then makes **one real call** so this
- * screen can say "working" or "rejected" while the person who typed it is still
- * looking. That verification is the point; the text box is the easy half.
+ * Saving makes **one real call first**, and writes the file only if the key comes
+ * back working. That order is the whole safety property, and it was the wrong way
+ * round for the first few hours of this feature's life: on 2026-08-28 a
+ * placeholder typed to see what the tab did overwrote a real key, the probe
+ * correctly reported "failed", and the report arrived after the loss. A verdict
+ * you cannot act on is not a safeguard.
+ *
+ * The write is still read-modify-write — everything else in that file is read
+ * back and written out untouched — with the previous version kept as `.bak`.
  *
  * There is no endpoint that returns the key, so this component cannot show one
  * back — only whether one is set. Nothing here is authenticated.
@@ -22,6 +27,10 @@ export default function SettingsTab() {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // A save that was refused. Distinct from `status.last_call === 'failed'`,
+  // which is about the key that is *stored* — after a rejection those are two
+  // different keys and conflating them is how the first version lost one.
+  const [rejected, setRejected] = useState(false);
 
   useEffect(() => {
     get('/health')
@@ -33,9 +42,18 @@ export default function SettingsTab() {
     e.preventDefault();
     setBusy(true);
     setError('');
+    setRejected(false);
     try {
-      setStatus(await post('/settings/fmp-key', { key }));
-      setKey('');   // not kept in component state a moment longer than needed
+      const res = await post('/settings/fmp-key', { key });
+      setStatus(res);
+      if (res.saved) {
+        setKey('');           // not kept a moment longer than needed
+      } else {
+        // Left in the box on purpose: a rejected key is usually a rejected
+        // *paste*, and clearing it would make the reader start over rather
+        // than look at what they typed.
+        setRejected(true);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -46,6 +64,7 @@ export default function SettingsTab() {
   async function remove() {
     setBusy(true);
     setError('');
+    setRejected(false);
     try {
       setStatus(await del('/settings/fmp-key'));
     } catch (err) {
@@ -104,6 +123,15 @@ export default function SettingsTab() {
           )}
         </form>
 
+        {rejected && (
+          <div className="error-banner">
+            <b>That key was rejected by FMP, so nothing was changed.</b> Whatever
+            was stored before is still stored. Check for a stray space or a
+            truncated paste — and if FMP itself is down or the free tier’s daily
+            quota is spent, a perfectly good key is refused here too, so it is
+            worth trying again later before assuming the key is wrong.
+          </div>
+        )}
         {error && <div className="error-banner">{error}</div>}
       </div>
 
@@ -113,9 +141,15 @@ export default function SettingsTab() {
         OpenBB already reads, outside the repository and never committed. Only the
         one <code>fmp_api_key</code> field is changed; anything else in that file,
         including other providers’ credentials, is read back and written out
-        untouched. The key is not sent anywhere except to FMP itself, and no
-        endpoint here will hand it back — <code>/api/health</code> reports only
-        whether one is set.
+        untouched, and the previous version of the whole file is kept beside it as{' '}
+        <code>user_settings.json.bak</code>. The key is not sent anywhere except to
+        FMP itself, and no endpoint here will hand it back — <code>/api/health</code>{' '}
+        reports only whether one is set.
+        <br /><br />
+        <b>Nothing is written until the key works.</b> Saving sends one real request
+        to FMP first; only a key that comes back working is stored. A rejected one
+        never reaches the file, so trying a key out cannot cost you the one you
+        already have.
         <br /><br />
         <b>Skipping this is fine.</b> A free key at{' '}
         <code>site.financialmodelingprep.com</code> buys automatic peer discovery
