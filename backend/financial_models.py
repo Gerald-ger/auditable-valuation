@@ -1134,6 +1134,397 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Excess return model — banks and insurers
+#
+# `CFO - CapEx` is not a cash flow for a bank. Deposits and wholesale borrowing
+# are not capital raised to fund reinvestment, they are the raw material the
+# business buys and reprocesses into loans, so the balance-sheet accounts that
+# dominate the cash flow statement swing by billions for reasons unrelated to
+# either growth or maintenance. There is no meaningful capex line either: a
+# bank's PP&E is branches and IT, a rounding error against its balance sheet.
+# Measured on the JPM fixture 2026-08-29, `Gross PPE` is 36.2bn against
+# `Total Assets` of 4,424.9bn — 0.8%.
+#
+# So the model values equity directly, off book value, which for a bank is a
+# far more meaningful number than for an industrial: financial-instrument
+# assets are marked to market far more than plant is, and book equity *is*
+# regulatory capital, so falling below a threshold has operating consequences
+# rather than being an accounting artefact.
+#
+#     Value of equity = Book value today + PV(expected excess returns)
+#     Excess return_t = (ROE - cost of equity) x Book value_t
+#
+# which is the Damodaran/residual-income form. It is arithmetically the same
+# claim a dividend discount model makes about the same company; it just tells
+# the story in terms of the spread over cost of equity rather than in terms of
+# the payout, which is what makes the assumption inspectable.
+DIVIDEND_PAID_ROWS = ("Cash Dividends Paid", "Common Stock Dividend Paid",
+                      "Cash Dividend Paid")
+
+# The grid sweeps the two inputs the answer is most sensitive to. Wider on ROE
+# than the DCF's terminal-growth steps because ROE genuinely moves that much:
+# JPM's own four reported years span 3.96 points, so a +/-2-point sweep is
+# narrower than this company's recent history rather than a hypothetical.
+EXCESS_ROE_STEPS = (-0.02, -0.01, 0.0, 0.01, 0.02)
+EXCESS_KE_STEPS = (-0.01, -0.005, 0.0, 0.005, 0.01)
+
+# A retention ratio outside this band is not a retention ratio. It is the same
+# shape of guard as GROWTH_VALIDITY_RANGE above and exists for the same reason:
+# a figure either passes and is used exactly as measured, or fails and is
+# rejected rather than quietly clamped into something plausible-looking.
+RETENTION_VALIDITY_RANGE = (-1.0, 1.0)
+
+# Net income and book equity live in two different statements, so the pairing
+# `statements.paired_latest` enforces inside one statement has to be done here.
+# The discipline is the same and the reason is the same: a ratio is only a ratio
+# when both legs describe one period.
+COMMON_EQUITY_ROWS = ("Common Stock Equity",)
+COMMON_INCOME_ROWS = ("Net Income Common Stockholders", "Net Income")
+
+
+def roe_history(f: dict) -> list[dict]:
+    """Return on *common* equity per reported period, oldest first.
+
+    Common rather than total, and that distinction is not cosmetic for the one
+    company type this model exists for. Measured on the JPM fixture 2026-08-29:
+    `Stockholders Equity` is 362.4bn and `Common Stock Equity` 342.4bn, the
+    20.0bn difference being preferred stock. Dividing `Net Income Common
+    Stockholders` by the larger figure charges the common shareholder for a
+    claim that is not theirs and reports 15.36% where the answer is 16.26% —
+    and yfinance's own `returnOnEquity` for that fixture, 17.79%, sits nearer
+    the common figure than the total one, which is the third reading that
+    settles it.
+
+    Both legs are read from the same period or the period is skipped. Two
+    independent `statements.latest` calls would happily pair this year's income
+    with an older balance sheet, which is the bug `paired_latest` exists to
+    stop within a statement — it cannot help across two.
+    """
+    out = []
+    for period in sorted(f.get("balance_sheet", {})):
+        equity = statements.value_at(f["balance_sheet"], period, *COMMON_EQUITY_ROWS)
+        income = statements.value_at(f.get("income_statement", {}), period,
+                                     *COMMON_INCOME_ROWS)
+        if equity is None or income is None or equity <= 0:
+            continue
+        out.append({"period": period, "equity": equity, "net_income": income,
+                    "roe": income / equity})
+    return out
+
+
+def _normalised_payout(f: dict, history: list[dict]) -> tuple[float | None, int]:
+    """(mean payout ratio, periods averaged) across years that earned a profit.
+
+    Averaged for the same reason ROE is, and refused on a loss year for a
+    sharper one. A payout ratio measured against negative earnings is not a
+    small number, it is a *negative* number, and `1 - payout` then exceeds one
+    and drives book value growth above anything the company could earn.
+
+    Found in adversarial review 2026-08-29, on the JPM fixture with only the
+    newest year's net income changed and the real dividend held:
+
+        net income   payout    retention   growth      fair value/share
+          55.7bn      0.299      0.701      11.09%              338.32
+         -30.0bn     -0.554      1.554      14.84%              158.96
+          -5.0bn     -3.325      4.325      49.19%              452.82
+          -1.0bn    -16.625     17.625     205.61%           23,718.76
+          -0.001bn  -16,625     16,626    195,172%             1.19e28
+
+    which is not a hypothetical for the one sector this model serves: a bank
+    that takes a provisioning loss and keeps paying its dividend is 2008 and
+    2020 both. The valuation diverged with no refusal, no clamp and no flag —
+    the first draft guarded the equity leg of the ratio and not the income one.
+    """
+    cash_flow = f.get("cash_flow", {}) or {}
+    ratios = []
+    for period in history:
+        if period["net_income"] <= 0:
+            continue
+        dividends = statements.value_at(cash_flow, period["period"],
+                                        *DIVIDEND_PAID_ROWS)
+        if not dividends:
+            continue
+        ratios.append(abs(dividends) / period["net_income"])
+    if not ratios:
+        return None, 0
+    return sum(ratios) / len(ratios), len(ratios)
+
+
+def _excess_return_project(book: float, roe: float, ke: float, g: float,
+                           g_term: float) -> tuple[float, float, list[dict]]:
+    """(PV of explicit excess returns, PV of terminal excess return, the path).
+
+    Book value compounds at `g` along the same two-stage fade the DCF uses for
+    cash flow, so the two models make the same shape of claim about how fast the
+    explicit period converges on the terminal one. ROE is held flat: see
+    `excess_returns_valuation` for why that is stated rather than assumed away.
+
+    At module level for the same reason `_project` is — so the arithmetic can be
+    tested without running a whole valuation.
+    """
+    pv = 0.0
+    equity = book
+    path = []
+    for year, growth in enumerate(_growth_path(g, g_term), start=1):
+        # The excess is earned *on the equity in place at the start of the
+        # year*, then that equity grows by the retained portion. Compounding
+        # first would credit the year with capital it had not yet retained.
+        excess = (roe - ke) * equity
+        discounted = excess / (1 + ke) ** year
+        pv += discounted
+        path.append({"year": year, "opening_equity": round(equity, 2),
+                     "growth": round(growth, 6), "excess_return": round(excess, 2),
+                     "present_value": round(discounted, 2)})
+        equity *= (1 + growth)
+    terminal = (roe - ke) * equity / (ke - g_term)
+    return pv, terminal / (1 + ke) ** PROJECTION_YEARS, path
+
+
+def excess_returns_valuation(f: dict, roe: float | None = None,
+                             terminal_growth: float | None = None,
+                             cost_of_equity_override: float | None = None,
+                             tax_rate: float | None = None,
+                             peers: list[dict] | None = None,
+                             market_bars: tuple[list[dict], list[dict]] | None = None
+                             ) -> dict:
+    """Two-stage excess return valuation, for company types a DCF cannot value.
+
+    Returns the same envelope `dcf_valuation` does — `assumptions`,
+    `equity_value`, `fair_value_per_share`, `current_price`, `upside_pct`,
+    `diagnostics`, and two sensitivity grids — or `{"error": ...}` on the same
+    single-key convention. It deliberately does **not** return `enterprise_value`
+    or `net_debt`: this model reaches equity directly rather than bridging to it,
+    and reporting an EV it never computed would invite a comparison that does
+    not exist.
+
+    **ROE is normalised across the reported periods rather than taken from the
+    newest one.** Loan-loss provisioning is procyclical and, under CECL,
+    forward-looking, so a single year is a reserve-build or a reserve-release as
+    much as it is a run rate. Measured on the JPM fixture 2026-08-29, reported
+    ROE runs 13.55 / 15.89 / 17.51 / 16.26% across four years — a 3.96-point
+    spread — and feeding the newest of those into a perpetuity is a 4-point
+    error compounded forever. The mean is the headline; the newest year's own
+    fair value is reported beside it in `diagnostics.fair_value_latest_roe`,
+    which is the same "show both, choose neither" treatment `base_year_context`
+    gives the DCF's base year.
+
+    **ROE is held flat rather than faded toward the cost of equity**, and that
+    is the single largest assumption here. Competition and regulation should
+    erode a spread over cost of equity, and a model that assumes today's ROE
+    survives forever is assuming the moat does too. Fading it was the
+    alternative, and it was rejected because the fade rate would be a constant
+    nothing in this repository can calibrate — the same reason the beta
+    regression publishes its R-squared instead of applying a "fit too weak"
+    threshold. What the model does instead is print the assumption:
+    `diagnostics.excess_spread` is the permanent gap being claimed, and
+    `diagnostics.implied_terminal_payout` is the payout ratio the terminal phase
+    requires for that ROE and that growth to be mutually consistent. On JPM
+    those read 7.14 points and 84.2% against a current payout of 29.9%, which is
+    a stance a reader can disagree with rather than one buried in the arithmetic.
+
+    Terminal growth is capped exactly as the DCF caps it, and for a measured
+    reason rather than a tidy one: retention growth for a profitable bank
+    routinely exceeds its own cost of equity. On JPM, `ROE x (1 - payout)` is
+    11.09% against a cost of equity of 8.66%, so an uncapped Gordon terminal
+    value is negative — not large, *negative*. The explicit stage still grows at
+    the retention rate; only the perpetuity is held under the same two ceilings
+    `dcf_valuation` documents at length.
+    """
+    info = f.get("info", {}) or {}
+    history = roe_history(f)
+    if not history:
+        # One refusal, not two. A negative-equity issuer reaches here rather
+        # than a separate guard further down, because `roe_history` already
+        # drops those periods — return on equity is undefined on negative
+        # equity, and a negative-equity issuer with a negative net income
+        # reports a spuriously *positive* one. So an empty history means either
+        # the rows are missing or the equity is not something this model can
+        # start from, and the message has to name both.
+        return {"error": "No period reports positive common equity together with "
+                         "net income, so return on equity cannot be measured — "
+                         "excess return model not applicable. A negative-equity "
+                         "issuer is an option on recovering solvency rather than "
+                         "a going concern earning a stable spread."}
+
+    book = history[-1]["equity"]
+    roes = [h["roe"] for h in history]
+    roe_normalised = sum(roes) / len(roes)
+    roe_latest = roes[-1]
+    roe_source = "user"
+    if roe is None:
+        roe, roe_source = roe_normalised, "normalised_mean"
+
+    tax_rate = tax_rate_for(info) if tax_rate is None else tax_rate
+    wacc_parts = _wacc(f, tax_rate, peers, market_bars)
+    ke = wacc_parts["cost_of_equity"] if cost_of_equity_override is None \
+        else cost_of_equity_override
+    ke_source = "capm" if cost_of_equity_override is None else "user"
+
+    # Retention growth for the explicit stage. Dividends paid is the cash-flow
+    # figure rather than `info["payoutRatio"]`, which yfinance reports against a
+    # trailing net income this model does not otherwise use. The row name is not
+    # stable across issuers — the JPM fixture reports `Cash Dividends Paid` and
+    # the O fixture `Common Stock Dividend Paid` — which is what the multi-name
+    # fallback in `statements.latest` is for.
+    payout, payout_periods = _normalised_payout(f, history)
+    if payout is None:
+        return {"error": "No period reports a dividend against positive earnings, "
+                         "so the retention ratio that drives book-value growth "
+                         "cannot be measured — excess return model not applicable."}
+    retention = 1 - payout
+    if not RETENTION_VALIDITY_RANGE[0] <= retention <= RETENTION_VALIDITY_RANGE[1]:
+        return {"error": f"Retention ratio of {retention:.1%} is outside "
+                         f"{RETENTION_VALIDITY_RANGE[0]:.0%} to "
+                         f"{RETENTION_VALIDITY_RANGE[1]:.0%} — the payout figure "
+                         "is not describing a payout, so the growth it implies "
+                         "cannot be used."}
+    growth = roe * retention
+    growth_source = "roe_x_retention"
+
+    terminal_growth_source = "user"
+    if terminal_growth is None:
+        rf_cap = wacc_parts["risk_free_rate"]
+        terminal_growth = min(TERMINAL_GROWTH, rf_cap)
+        terminal_growth_source = ("platform_default" if terminal_growth == TERMINAL_GROWTH
+                                  else "capped_at_risk_free_rate")
+
+    if ke <= terminal_growth:
+        return {"error": f"Cost of equity ({ke:.2%}) must exceed terminal growth "
+                         f"({terminal_growth:.2%})."}
+
+    pv_explicit, pv_terminal, path = _excess_return_project(
+        book, roe, ke, growth, terminal_growth)
+    equity_value = book + pv_explicit + pv_terminal
+
+    # Book equity and net income are statement figures; price and share count
+    # are traded ones. Converted once, here, exactly as `dcf_valuation` does —
+    # and when no rate can be had the comparison is withheld rather than made
+    # across two units.
+    shares = info.get("sharesOutstanding")
+    price = info.get("currentPrice") or info.get("regularMarketPrice")
+    fx, fx_mismatch = _to_trading(info)
+    fx_basis = ("single_currency" if not fx_mismatch
+                else "converted" if fx is not None else "rate_unavailable")
+    conv = fx if fx is not None else 1.0
+    fair_value = equity_value * conv / shares if shares else None
+    comparable = fair_value and price and fx_basis != "rate_unavailable"
+
+    def _fair_value_at(r: float, k: float | None = None) -> float | None:
+        """Fair value per share at an alternative ROE and cost of equity.
+
+        Everything else is held, including the retention ratio — so a swept ROE
+        moves the growth rate with it, which is the honest coupling: retention
+        growth *is* a function of ROE and pinning one while sweeping the other
+        would show a company that reinvests at a rate it does not earn.
+        """
+        k = ke if k is None else k
+        if not shares or k <= terminal_growth:
+            return None
+        g = r * retention if retention is not None else r
+        pv_e, pv_t, _ = _excess_return_project(book, r, k, g, terminal_growth)
+        return round((book + pv_e + pv_t) * conv / shares, 2)
+
+    # Pinned to the period `book` came from rather than read with `latest`,
+    # which walks backward independently. A tangible-book figure from an older
+    # year over this year's equity is the same mispairing `paired_latest` exists
+    # to stop — found in adversarial review 2026-08-29, where dropping the row
+    # from the newest JPM period silently produced 0.7598 from two fiscal years.
+    tangible = statements.value_at(f.get("balance_sheet", {}),
+                                   history[-1]["period"], "Tangible Book Value")
+
+    return {
+        "assumptions": {
+            "book_value_of_equity": book,
+            "book_value_period": history[-1]["period"],
+            "book_value_basis": "common_stock_equity",
+            "roe": roe,
+            "roe_source": roe_source,
+            "roe_normalised": roe_normalised,
+            "roe_latest": roe_latest,
+            "roe_periods": len(history),
+            "payout_ratio": payout,
+            "payout_periods": payout_periods,
+            "retention_ratio": retention,
+            "growth_rate_explicit": growth,
+            "growth_source": growth_source,
+            "terminal_growth": terminal_growth,
+            "terminal_growth_source": terminal_growth_source,
+            "terminal_growth_anchor": TERMINAL_GROWTH,
+            "terminal_growth_ceilings": {
+                "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
+                "risk_free_rate": wacc_parts["risk_free_rate"],
+            },
+            "cost_of_equity_used": ke,
+            "cost_of_equity_source": ke_source,
+            "tax_rate": tax_rate,
+            "projection_years": PROJECTION_YEARS,
+            "stage1_years": STAGE1_YEARS,
+            "stage2_years": STAGE2_YEARS,
+            **wacc_parts,
+            "currency": info.get("currency"),
+            "reporting_currency": info.get("financialCurrency"),
+            "fx_basis": fx_basis,
+            "fx_rate_used": round(fx, 6) if fx_mismatch and fx is not None else None,
+        },
+        "book_value_of_equity": book,
+        "excess_return_pv": round(pv_explicit, 2),
+        "terminal_value_pv": round(pv_terminal, 2),
+        "equity_value": round(equity_value, 2),
+        "fair_value_per_share": round(fair_value, 2) if fair_value else None,
+        "current_price": price,
+        "upside_pct": round((fair_value / price - 1) * 100, 1) if comparable else None,
+        "diagnostics": {
+            "roe_history": [{"period": h["period"], "roe": round(h["roe"], 6)}
+                            for h in history],
+            "roe_vendor_reported": info.get("returnOnEquity"),
+            # The whole assumption, in one number: the spread this model claims
+            # the company earns over its cost of equity, forever.
+            "excess_spread": round(roe - ke, 6),
+            # And what that spread costs to sustain. Growth needs retention, so
+            # a terminal phase growing at g while earning ROE can only pay out
+            # what is left: 1 - g/ROE. Where that is far from today's payout,
+            # the model is quietly assuming a change in policy.
+            "implied_terminal_payout": round(1 - terminal_growth / roe, 6) if roe else None,
+            "current_payout": round(payout, 6) if payout is not None else None,
+            "terminal_value_share": round(pv_terminal / equity_value, 6) if equity_value else None,
+            "terminal_value_high": bool(equity_value and pv_terminal / equity_value > 0.75),
+            "book_value_per_share": round(book * conv / shares, 2) if shares else None,
+            # Gated on the same condition `upside_pct` is: price is a traded
+            # figure and book a statement one, so without a rate this is two
+            # currencies over each other. Left ungated in the first draft.
+            "price_to_book": round(price * shares / (book * conv), 3)
+                             if comparable and shares and price and book else None,
+            # The newest year's own answer, beside the normalised one, chosen
+            # neither way — the same treatment the DCF's base year gets.
+            "fair_value_latest_roe": _fair_value_at(roe_latest),
+            "fair_value_normalised_roe": _fair_value_at(roe_normalised),
+            # Book value is the starting point, so how much of it is goodwill
+            # rather than tangible capital is part of reading the answer. The
+            # mark-to-market assumption that makes book meaningful for a bank
+            # does not extend to intangibles.
+            "tangible_book_value": tangible,
+            "tangible_share_of_book": round(tangible / book, 4) if tangible and book else None,
+            "projection": path,
+        },
+        # ROE against cost of equity, because those are the two inputs the
+        # answer is most sensitive to and the two a reader is most likely to
+        # disagree with. The DCF's grid sweeps WACC against terminal growth for
+        # the same reason.
+        "sensitivity": {
+            "roe_cols": [round(roe + dr, 6) for dr in EXCESS_ROE_STEPS],
+            "rows": [{"cost_of_equity": round(ke + dk, 6),
+                      "values": [_fair_value_at(roe + dr, ke + dk)
+                                 for dr in EXCESS_ROE_STEPS]}
+                     for dk in EXCESS_KE_STEPS],
+        },
+        "roe_sensitivity": {
+            "roe_values": [round(roe + dr, 6) for dr in EXCESS_ROE_STEPS],
+            "values": [_fair_value_at(roe + dr) for dr in EXCESS_ROE_STEPS],
+        },
+    }
+
+
 # How far this year's cash conversion may sit from the company's own history
 # before the base year stops being a run-rate.
 #
