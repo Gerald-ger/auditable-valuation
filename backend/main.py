@@ -243,6 +243,56 @@ async def health():
             "demo": DEMO_MODE}
 
 
+class FmpKeyRequest(BaseModel):
+    key: str
+
+
+def _reject_key_writes_in_demo():
+    """Demo mode must never write a credential, and this is the load-bearing half.
+
+    Hiding the tab is the visible half and is not a control: the endpoint is
+    reachable regardless. On a hosted demo the filesystem being written would be
+    the *host's*, so a visitor typing a key would either overwrite the operator's
+    or leave their own on a stranger's machine for every later visitor to use.
+    """
+    if DEMO_MODE:
+        raise HTTPException(
+            status_code=403,
+            detail="Demo mode uses committed fixtures and reaches no vendor, so a "
+                   "key would do nothing — and this may not be your machine.")
+
+
+@app.post("/api/settings/fmp-key")
+async def set_fmp_key(req: FmpKeyRequest):
+    """Store an FMP key and immediately find out whether it works.
+
+    The response is `fmp_status()` with `last_call` already set by a real lookup,
+    so the caller can say "working" or "rejected" rather than "saved" — which was
+    the whole complaint about editing the JSON by hand.
+
+    There is deliberately no GET counterpart. Nothing here is authenticated, and
+    an endpoint that returns a stored credential is how a convenience becomes a
+    disclosure. `/api/health` reports *whether* one is set, never what it is.
+    """
+    _reject_key_writes_in_demo()
+    try:
+        return await asyncio.to_thread(comps.save_fmp_key, req.key)
+    except comps.CredentialFileError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.delete("/api/settings/fmp-key")
+async def delete_fmp_key():
+    """Remove the key, leaving every other setting in that file as it was."""
+    _reject_key_writes_in_demo()
+    try:
+        return await asyncio.to_thread(comps.clear_fmp_key)
+    except comps.CredentialFileError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
 @app.get("/api/search")
 async def search_endpoint(q: str = "", limit: int = 8):
     """Typo-tolerant symbol/name lookup for the header search box.

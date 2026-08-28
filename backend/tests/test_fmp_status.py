@@ -208,3 +208,116 @@ def test_demo_mode_never_reaches_fmp(monkeypatch):
     _fake_openbb(monkeypatch, raises=RuntimeError("must not be reached"))
     assert comps.suggest_peers("AAPL") == []
     assert comps.fmp_status()["last_call"] is None
+
+
+# ── saving: writing a file this app does not own ────────────────────────────
+
+def _settings_at(monkeypatch, tmp_path, data: dict | str):
+    p = tmp_path / "user_settings.json"
+    p.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(comps, "USER_SETTINGS_PATH", p)
+    return p
+
+
+def test_saving_a_key_leaves_every_other_setting_alone(monkeypatch, tmp_path):
+    """The test this feature most needs, and the reason it is read-modify-write.
+
+    Measured on the development machine before any of this was written: that file
+    holds a `tiingo_token` beside the FMP key, plus `preferences` and `defaults`.
+    A convenience feature that silently drops an unrelated provider's credential
+    would be a far worse bug than the one it set out to fix.
+    """
+    p = _settings_at(monkeypatch, tmp_path, {
+        "credentials": {"tiingo_token": "keep-me", "fmp_api_key": "old"},
+        "preferences": {"output_type": "dataframe"},
+        "defaults": {"commands": {}},
+    })
+    _fake_openbb(monkeypatch, results=[types.SimpleNamespace(symbol="MSFT")])
+
+    comps.save_fmp_key("new-key")
+
+    after = json.loads(p.read_text(encoding="utf-8"))
+    assert after["credentials"]["fmp_api_key"] == "new-key"
+    assert after["credentials"]["tiingo_token"] == "keep-me", "took another provider's key"
+    assert after["preferences"] == {"output_type": "dataframe"}
+    assert after["defaults"] == {"commands": {}}
+
+
+def test_a_file_that_cannot_be_parsed_is_refused_rather_than_replaced(monkeypatch, tmp_path):
+    """Stopping is the safe failure. Starting fresh would destroy what is there,
+    and what is there may be the only copy of somebody's other credentials."""
+    p = _settings_at(monkeypatch, tmp_path, "{ not json at all")
+    _fake_openbb(monkeypatch)
+
+    with pytest.raises(comps.CredentialFileError):
+        comps.save_fmp_key("new-key")
+
+    assert p.read_text(encoding="utf-8") == "{ not json at all", "overwrote it anyway"
+
+
+def test_saving_into_a_machine_with_no_settings_file_yet_works(monkeypatch, tmp_path):
+    monkeypatch.setattr(comps, "USER_SETTINGS_PATH", tmp_path / "sub" / "user_settings.json")
+    _fake_openbb(monkeypatch, results=[types.SimpleNamespace(symbol="MSFT")])
+
+    comps.save_fmp_key("first-key")
+
+    written = json.loads((tmp_path / "sub" / "user_settings.json").read_text(encoding="utf-8"))
+    assert written == {"credentials": {"fmp_api_key": "first-key"}}
+
+
+def test_an_empty_key_is_rejected_rather_than_stored(monkeypatch, tmp_path):
+    _settings_at(monkeypatch, tmp_path, {"credentials": {"fmp_api_key": "old"}})
+    with pytest.raises(ValueError):
+        comps.save_fmp_key("   ")
+
+
+def test_saving_verifies_the_key_instead_of_just_reporting_it_stored(monkeypatch, tmp_path):
+    """The whole point of doing this in the app rather than in a text editor."""
+    _settings_at(monkeypatch, tmp_path, {})
+    _fake_openbb(monkeypatch, raises=RuntimeError("Invalid API KEY"))
+
+    assert comps.save_fmp_key("wrong-key") == {"configured": True, "last_call": "failed"}
+
+
+def test_the_verification_leaves_nothing_in_the_peer_cache(monkeypatch, tmp_path):
+    """The probe is a health check, not a lookup someone asked for."""
+    _settings_at(monkeypatch, tmp_path, {})
+    _fake_openbb(monkeypatch, results=[types.SimpleNamespace(symbol="MSFT")])
+
+    comps.save_fmp_key("good-key")
+    assert comps._FMP_PROBE not in comps._FMP_PEER_CACHE
+
+
+def test_removing_a_key_takes_only_that_key(monkeypatch, tmp_path):
+    p = _settings_at(monkeypatch, tmp_path, {
+        "credentials": {"tiingo_token": "keep-me", "fmp_api_key": "going"},
+        "preferences": {"output_type": "dataframe"},
+    })
+    monkeypatch.setattr(comps, "_FMP_LAST_CALL", "ok")
+
+    assert comps.clear_fmp_key() == {"configured": False, "last_call": None}
+
+    after = json.loads(p.read_text(encoding="utf-8"))
+    assert "fmp_api_key" not in after["credentials"]
+    assert after["credentials"]["tiingo_token"] == "keep-me"
+    assert after["preferences"] == {"output_type": "dataframe"}
+
+
+def test_demo_mode_refuses_to_write_a_key_at_all(monkeypatch):
+    """Hiding the tab is the visible half and is not a control.
+
+    On a hosted demo the filesystem being written is the operator's, not the
+    visitor's, so this has to be refused at the endpoint rather than in the UI.
+    """
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from backend import main
+
+    monkeypatch.setattr(main, "DEMO_MODE", True)
+    for call in (lambda: main.set_fmp_key(main.FmpKeyRequest(key="x")),
+                 lambda: main.delete_fmp_key()):
+        with pytest.raises(HTTPException) as excinfo:
+            asyncio.run(call())
+        assert excinfo.value.status_code == 403

@@ -16,6 +16,59 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-28 - A sixth tab that takes the one credential this app reads
+
+The earlier entry today made the FMP key's state visible. This one makes it settable: a
+**🔑 API Key** tab beside Portfolio, which writes `~/.openbb_platform/user_settings.json` on
+the user's own machine and then makes **one real call** so the screen answers *working* or
+*rejected* rather than *saved*.
+
+That verification is the feature. A form that only said "saved" would have left the original
+complaint exactly where it was — hand-editing the file told you nothing either.
+
+### Three things it had to get right
+
+**Read-modify-write, never overwrite.** Measured before a line was written: that file also
+holds a `tiingo_token`, plus `preferences` and `defaults`. Only `credentials.fmp_api_key` is
+touched, and a file that cannot be parsed is refused with a 409 rather than replaced —
+starting fresh there could destroy the only copy of another provider's credential.
+
+| | before | after |
+|---|---|---|
+| `credentials.tiingo_token` | — | untouched |
+| `credentials.fmp_api_key` | — | replaced |
+| `preferences`, `defaults` | — | untouched |
+| unparseable file | — | **409, and the file is not written** |
+
+Mutation-proved: making `_load_settings` return `{}` fails exactly the three tests that check
+the rest of the file survives, and no others.
+
+**No endpoint returns the key.** `/api/health` reports whether one is set, never what it is.
+Nothing here is authenticated, and a GET that hands back a stored credential is how a
+convenience becomes a disclosure. The input is `type="password"`, cleared on save, and a test
+asserts the typed value does not remain anywhere in the DOM.
+
+**Demo mode refuses the write at the endpoint, not in the UI.** Hiding a tab is not a control:
+the route is reachable regardless, and on a hosted demo the filesystem being written would be
+the operator's, so a visitor would either overwrite the operator's key or leave their own on a
+stranger's machine. `test_demo_mode_refuses_to_write_a_key_at_all` covers both routes.
+
+### Elsewhere
+
+- An already-imported OpenBB does not re-read the file, so the running process is updated too —
+  but only when `openbb` is already in `sys.modules`, since importing it to set a credential
+  would cost 5 s on a request whose other work is a file write.
+- The probe removes its own peer-cache entry afterwards. A health check is not a lookup anybody
+  asked for.
+- This makes a known open issue worse and says so: the tab `<nav>` measured 469px against a
+  390px viewport with five buttons, and now has six. No browser was available to re-measure, so
+  TODOLIST records the direction without an invented number.
+
+18 tests — 8 backend, 10 frontend, one new suite. Backend 657 → 665, frontend 178 → 188,
+835 → 853 offline. Bundle 474.12 → 477.65 kB js and 26.57 → 26.77 kB css; the CSS is two rules,
+because the tab reuses `.panel`, `.position-form`, `.notice-banner` and `.error-banner` as they
+are rather than inventing a second visual language for one text box.
+
 ## 2026-08-28 - Six ways to get the FMP key wrong, all of which looked identical
 
 Setting the key means hand-editing a JSON file at a path most people have never opened, and

@@ -2239,3 +2239,28 @@ footer {
   padding: 4px 10px;
   font-size: 12px;
 }
+
+/* ── API key tab ─────────────────────────────── */
+/* Two rules, because everything else reuses .panel, .position-form, .notice-banner
+   and .error-banner as they are. A settings screen that invented its own layout
+   would be a second visual language for one text box. */
+.settings-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 90ch;
+}
+
+.fmp-verdict {
+  margin: 0 0 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.fmp-verdict b {
+  color: var(--text);
+}
+
+.fmp-verdict.bad b {
+  color: var(--down);
+}

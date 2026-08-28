@@ -697,34 +697,35 @@ request path. Without that second line the job would have been reassuring rather
 
 Measured: 2.84 s and 8.35 s for the two imports locally; 63 s for the whole first green run.
 
-### 🟡 The FMP key still has to be typed into a JSON file by hand
+### ⚪ ~~The FMP key still has to be typed into a JSON file by hand~~ — closed 2026-08-28
 
-Reported now, since 2026-08-28: `GET /api/health` carries
-`fmp: {configured, last_call}`, and the app raises a banner when a key is present and its last
-real call failed. That closes the half that was actually painful — before it, no file, a wrong
-path, malformed JSON, `fmp_apikey` instead of `fmp_api_key`, a rejected key and a spent quota
-all produced the same silence, because `comps._fmp_peers` catches everything and falls through
-to the keyless tier.
+A sixth tab, **🔑 API Key**, beside Portfolio. It writes
+`~/.openbb_platform/user_settings.json` — the file OpenBB already reads, on the user's own
+machine, outside the repo — and then makes **one real call**, so the screen answers *working*
+or *rejected* rather than *saved*. That verification is the feature; the text box is the easy
+half, and a form that only said "saved" would have left the original complaint intact.
 
-Not done: entering the key **in the app**. It is a small feature and a large decision, which is
-why the reporting half shipped alone.
+Three things this had to get right, each with a test that fails without it.
 
-- The plumbing is ready. `obb.user.credentials.fmp_api_key` is writable at runtime — measured:
-  not frozen, `validate_assignment: True`, and the field is a `SecretStr`, so pydantic masks it
-  in every repr, log line and traceback for free. Assigning it does not touch the settings file
-  (mtime unchanged after a write).
-- Where the key would live is the real question. Not `app.db`: that file is "your data", it
-  gets copied and backed up, and putting a credential in it means every copy carries one.
-  `~/.openbb_platform/user_settings.json` is the better home — OpenBB already reads it, it is
-  already outside the repo, and the app would write it once.
-- **A GET that returns the key must never exist.** Only whether one is set. `/api/health` has
-  no authentication, and neither does anything else here.
+**Read-modify-write, never overwrite.** Measured on the development machine before a line was
+written: that file also holds a `tiingo_token`, plus `preferences` and `defaults`. Only
+`credentials.fmp_api_key` is touched. A file that cannot be parsed is **refused** with a 409
+rather than replaced — starting fresh there would destroy what may be the only copy of another
+provider's credential. Mutation-proved: making `_load_settings` return `{}` fails exactly the
+three tests that check the rest of the file survives.
 
-**Trigger: deciding whether to host.** On a single-user local install this is a convenience. On
-a hosted instance it is a different feature entirely — either a visitor typing their own
-credential into someone else's server, or every visitor sharing the host's free-tier quota —
-and the answer to "where does it go" changes with that decision. Building the form first would
-mean building the wrong one.
+**No endpoint returns the key.** `/api/health` reports whether one is set, never what it is.
+Nothing here is authenticated, and a GET that hands back a stored credential is how a
+convenience becomes a disclosure. The input is `type="password"` and is cleared on save.
+
+**Demo mode refuses the write at the endpoint, not in the UI.** Hiding the tab is the visible
+half and is not a control — the route is reachable regardless, and on a hosted demo the
+filesystem being written would be the operator's. A visitor would either overwrite the
+operator's key or leave their own on a stranger's machine for the next visitor to spend.
+
+Still open, and unchanged by this: hosting. The tab is the right shape for a local
+single-user install, which is what this is. A hosted instance would need a different answer to
+"whose key is this", and the 403 above is what stands in for that answer until there is one.
 
 ### 🟡 EMA overlay — near-free, and not obviously worth it
 
@@ -868,6 +869,11 @@ client width. Nothing in the caveat layer causes it — all 22 visible note elem
 checked for self-overflow and none contributes. Two things do: the tab `<nav>` (469px, an
 unwrapped button row) and the two `.sens-table` grids (373px and 385px, whose 61-66px
 columns do not compress).
+
+**Worse since 2026-08-28, by an amount not measured.** The 469px `<nav>` was five buttons; the
+🔑 API Key tab makes it six. No browser was available to re-measure, so no new number is
+recorded here rather than an estimated one — but the direction is certain, and the nav was
+already the largest of the two contributors.
 
 Separately the page runs **2125px at 1440px wide against 4127px at 390px**, 1.94×, because
 every prose caveat rewraps from one line into six to nine.

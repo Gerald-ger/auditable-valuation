@@ -7,6 +7,7 @@ import ScreenerTab from './components/ScreenerTab';
 import PortfolioTab from './components/PortfolioTab';
 import SearchBar from './components/SearchBar';
 import ErrorBoundary from './components/ErrorBoundary';
+import SettingsTab from './components/SettingsTab';
 import { pushRecent } from './recents';
 
 const TABS = [
@@ -15,6 +16,7 @@ const TABS = [
   ['scorecard', '🎯 Scorecard'],
   ['screener', '📊 Screener'],
   ['portfolio', '💼 Portfolio'],
+  ['settings', '🔑 API Key'],
 ];
 
 // Screener and Portfolio work across many tickers, so the single-ticker box in
@@ -180,6 +182,18 @@ export default function App() {
           {tab === 'screener' &&
             (demo ? <DemoTabNotice /> : <ScreenerTab onPick={openScorecard} />)}
           {tab === 'portfolio' && <PortfolioTab onPick={openScorecard} />}
+          {/* Its own notice, not DemoTabNotice: that one explains missing OHLCV
+              and news, which has nothing to do with why a key is pointless here.
+              The backend refuses the write regardless — hiding a tab is not a
+              control, and on a hosted demo the filesystem is not the visitor's. */}
+          {tab === 'settings' && (demo ? (
+            <div className="notice-banner">
+              <b>Not available in demo mode.</b> Demo mode serves the committed
+              fixtures and reaches no vendor at all, so an API key would change
+              nothing — and if this is a hosted demo, the machine storing it would
+              not be yours.
+            </div>
+          ) : <SettingsTab />)}
         </ErrorBoundary>
       </main>
       <footer>

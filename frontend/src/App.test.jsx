@@ -21,7 +21,7 @@ const { api } = vi.hoisted(() => ({
 }));
 vi.mock('./api', () => api);
 
-// The five tabs are stubbed: this file is about which one App decides to show,
+// The six tabs are stubbed: this file is about which one App decides to show,
 // and the real TrackerTab fetches three endpoints on mount (TrackerTab.jsx:36-40)
 // which would make the test about TrackerTab instead.
 vi.mock('./components/TrackerTab', () => ({ default: () => <div id="t" /> }));
@@ -30,6 +30,7 @@ vi.mock('./components/ScorecardTab', () => ({ default: () => <div id="s" /> }));
 vi.mock('./components/ScreenerTab', () => ({ default: () => <div id="scr" /> }));
 vi.mock('./components/PortfolioTab', () => ({ default: () => <div id="p" /> }));
 vi.mock('./components/SearchBar', () => ({ default: () => <div id="search" /> }));
+vi.mock('./components/SettingsTab', () => ({ default: () => <div id="set" /> }));
 
 const HEALTH = { status: 'ok', ai: { online: false }, source_changed_since_start: false };
 
@@ -214,5 +215,34 @@ describe('FMP key status', () => {
     const { container } = await mount();
     expect(banner(container)).toBeUndefined();
     expect(container.querySelector('nav')).not.toBeNull();
+  });
+});
+
+describe('the API key tab', () => {
+  it('is reachable next to Portfolio and mounts the form', async () => {
+    serve({ demo: false });
+    const { container } = await mount();
+
+    const labels = [...container.querySelectorAll('nav button')].map((b) => b.textContent);
+    expect(labels.at(-1)).toContain('API Key');
+    expect(labels.at(-2)).toContain('Portfolio');
+
+    click(tabButton(container, 'API Key'));
+    await flush();
+    expect(container.querySelector('#set')).not.toBeNull();
+  });
+
+  it('withholds it in demo mode, and does not mount the form', async () => {
+    // Not because the tab would break, but because the machine storing the key
+    // would not be the visitor's. The endpoint refuses independently -- hiding a
+    // tab is not a control -- and that is asserted in test_fmp_status.py.
+    serve({ demo: true });
+    const { container } = await mount();
+
+    click(tabButton(container, 'API Key'));
+    await flush();
+
+    expect(container.textContent).toMatch(/Not available in demo mode/);
+    expect(container.querySelector('#set')).toBeNull();
   });
 });

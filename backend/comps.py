@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from statistics import median, quantiles
 
@@ -183,6 +184,118 @@ def fmp_status() -> dict:
         except (OSError, ValueError, AttributeError):
             configured = False
     return {"configured": configured, "last_call": _FMP_LAST_CALL}
+
+
+class CredentialFileError(RuntimeError):
+    """The settings file exists and cannot be edited without losing what is in it."""
+
+
+# One real call, on an explicit save, to answer "did that work?" while the person
+# who typed it is still looking. AAPL because FMP certainly knows it: a probe that
+# fails for being obscure would read as a rejected key.
+_FMP_PROBE = "AAPL"
+
+
+def _write_settings(data: dict) -> None:
+    """Replace the settings file atomically, and never leave a half-written one.
+
+    `os.replace` is atomic on both POSIX and Windows, so a crash mid-write leaves
+    the original intact rather than a truncated file with somebody's credentials
+    half in it.
+    """
+    path = Path(USER_SETTINGS_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)  # no-op on Windows; the file holds credentials
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def _load_settings() -> dict:
+    """The current settings, or {} if there is no file yet.
+
+    Raises rather than returning {} when the file exists and cannot be parsed.
+    Returning {} there would mean the next write silently replaces whatever is in
+    it — and it is not this app's file. Measured on the development machine
+    before this was written: a `tiingo_token` alongside the FMP key, plus
+    `preferences` and `defaults`. Losing an unrelated credential to a
+    convenience feature is not a trade worth making, so this stops instead.
+    """
+    path = Path(USER_SETTINGS_PATH)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise CredentialFileError(
+            f"{path} exists but could not be read as JSON ({type(e).__name__}). "
+            "Fix or delete it by hand — refusing to overwrite it, because it may "
+            "hold credentials for other providers.") from e
+    if not isinstance(data, dict):
+        raise CredentialFileError(f"{path} is valid JSON but not an object.")
+    return data
+
+
+def _apply_to_running_openbb(key: str | None) -> None:
+    """Update an already-imported OpenBB, which will not re-read the file.
+
+    Only when it is already in `sys.modules`: importing it here to set a
+    credential would cost 5 s on a request whose work is otherwise a file write.
+    If it has not been imported, the first import reads the file we just wrote.
+    """
+    mod = sys.modules.get("openbb")
+    if mod is None:
+        return
+    try:
+        mod.obb.user.credentials.fmp_api_key = key
+    except Exception:
+        pass  # best effort; the file is the source of truth on next start
+
+
+def save_fmp_key(key: str) -> dict:
+    """Store the key in OpenBB's settings file, then prove whether it works.
+
+    Read-modify-write on exactly one JSON key. Everything else in that file —
+    other providers' credentials, preferences, command defaults — is read back
+    and written out untouched.
+
+    Returns the same shape as `fmp_status`, with `last_call` set by a real
+    lookup, so the caller can say "working" or "rejected" rather than "saved".
+    """
+    key = (key or "").strip()
+    if not key:
+        raise ValueError("An empty key is not a key. Use the delete path to remove one.")
+
+    data = _load_settings()
+    data.setdefault("credentials", {})["fmp_api_key"] = key
+    _write_settings(data)
+    _apply_to_running_openbb(key)
+
+    # The probe, and the reason a save can answer at all. Cache entry removed
+    # afterwards so a validation call leaves no trace in the peer cache.
+    _FMP_PEER_CACHE.pop(_FMP_PROBE, None)
+    _fmp_peers(_FMP_PROBE)
+    _FMP_PEER_CACHE.pop(_FMP_PROBE, None)
+    return fmp_status()
+
+
+def clear_fmp_key() -> dict:
+    """Remove the key, leaving the rest of the file as it was."""
+    global _FMP_LAST_CALL
+    data = _load_settings()
+    creds = data.get("credentials")
+    if isinstance(creds, dict):
+        creds.pop("fmp_api_key", None)
+        _write_settings(data)
+    _apply_to_running_openbb(None)
+    # The verdict belonged to a key that is gone; keeping it would report on
+    # something no longer configured.
+    _FMP_LAST_CALL = None
+    _FMP_PEER_CACHE.pop(_FMP_PROBE, None)
+    return fmp_status()
 
 
 def _fmp_peers(ticker: str) -> list[str]:

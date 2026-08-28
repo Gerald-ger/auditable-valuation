@@ -77,7 +77,7 @@ shown are fabricated for the screenshot.
 > data is frozen: they are the same bytes the test suite pins its golden scores to.
 >
 > It does still need the install below — it removes the *configuration*, not the
-> toolchain. Two of the five tabs are withheld, and it says so on screen. Details:
+> toolchain. Three of the six tabs are withheld, and it says so on screen. Details:
 > [Demo mode](#demo-mode--no-api-key-no-network-no-ollama).
 
 ## Prerequisites
@@ -177,7 +177,7 @@ financial statements and prices are real, captured between **2026-08-10** and **
 live. They are also the *same bytes the test suite pins its golden scores to*, so a green suite
 is evidence that the demo is showing the right numbers.
 
-**Three of the five tabs work; two are withheld, and it says so on screen.**
+**Three of the six tabs work; three are withheld, and it says so on screen.**
 
 | tab | in demo mode |
 |---|---|
@@ -186,6 +186,7 @@ is evidence that the demo is showing the right numbers.
 | 💼 Portfolio | Works — it was never a vendor feature; holdings live in the local SQLite store. |
 | 📈 Tracker | **Withheld.** The captured bars are weekly *closes* — no OHLCV, so no candles and no volume — and there are no news items or SEC filings. |
 | 📊 Screener | **Withheld.** The eight fixtures are eight *sectors*, chosen to exercise edge cases, so no peer group exists to screen against. |
+| 🔑 API Key | **Withheld.** Demo mode reaches no vendor, so a key would change nothing — and on a hosted demo the machine storing it would not be yours. The endpoint refuses the write independently; hiding the tab is not the control. |
 
 Withheld rather than drawn with holes in it, on the same reasoning the rest of this project
 uses for a missing input: a stripped chart reads as a broken chart, not as a documented limit.
@@ -294,7 +295,10 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
       │  Tab 3: Scorecard          │                     │    FMP peer sets
       │  Tab 4: Screener           │
       │  Tab 5: Portfolio          ├─►  SQLite (backend/data/app.db)
-      │                            │      score history · watchlist · positions · drawings
+      │  Tab 6: API Key            │      score history · watchlist · positions · drawings
+      │                            │
+      │                            ├─►  ~/.openbb_platform/user_settings.json
+      │                            │      the FMP key, read-modify-write, never in the repo
       │                            │
       │                            └──►  Ollama (localhost:11434) — local AI, optional,
       │                                   streamed as newline-delimited JSON
@@ -428,6 +432,12 @@ React (localhost:5173)  ──►  FastAPI (localhost:8000)  ──┬─►  yf
 - **Tab 5 — Portfolio**: watchlist and holdings. A row with 0 shares is watch-only; add
   shares and a cost basis and it becomes a position with live P&L, weight, top-1/top-3
   concentration and a Herfindahl index. The latest stored score is joined onto each row.
+- **Tab 6 — API Key**: the one credential this platform reads. Saving writes it into
+  `~/.openbb_platform/user_settings.json` on your own machine and then makes one real call,
+  so the screen can say *working* or *rejected* rather than *saved*. Read-modify-write:
+  anything else in that file, including other providers' credentials, survives untouched.
+  Withheld in demo mode — a key would change nothing there, and the machine storing it may
+  not be yours.
 
 All AI features degrade gracefully: until Ollama is installed the site shows an
 "AI offline" notice and everything else keeps working.
@@ -454,19 +464,20 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 657 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 665 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 178 tests
+cd frontend; npm test                                   # 188 tests
 ```
 
-Of the 684 collected, 27 are `network`-marked and deselected by default. One more skips
+Of the 692 collected, 27 are `network`-marked and deselected by default. One more skips
 unless OpenBB is installed — it checks that the settings path `comps.py` computes still
 matches OpenBB’s own constant, which is unanswerable without it, so CI reports 656 and a skip.
 
-The frontend suite runs in vitest's default `node` environment; six component
+The frontend suite runs in vitest's default `node` environment; seven component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
 `ErrorBoundary.test.jsx`, `ModelsTab.test.jsx`, `PortfolioTab.test.jsx`,
-`PriceChart.test.jsx`, `ScorecardTab.test.jsx`, `TrackerTab.test.jsx`. Rendering is
+`PriceChart.test.jsx`, `ScorecardTab.test.jsx`, `SettingsTab.test.jsx`,
+`TrackerTab.test.jsx`. Rendering is
 `createRoot` + React 19's own `act`
 ([frontend/src/test-utils.js](frontend/src/test-utils.js), 53 lines) rather than a
 testing library.
@@ -571,7 +582,11 @@ Financial Modeling Prep's free tier. **Skipping this is fine** — peer discover
 the built-in `PEER_SUGGESTIONS` table in [backend/comps.py](backend/comps.py) and everything
 else runs unchanged.
 
-To add one: get a free key at https://site.financialmodelingprep.com, then create
+**The easiest way is the 🔑 API Key tab**, which writes the same file, keeps everything else
+in it, and then makes one real call so it can tell you whether the key works rather than that
+it saved. The rest of this section is what it does, and how to do it by hand.
+
+To add one by hand: get a free key at https://site.financialmodelingprep.com, then create
 `~/.openbb_platform/user_settings.json` (on Windows, `%USERPROFILE%\.openbb_platform\`):
 
 ```json
@@ -582,8 +597,9 @@ To add one: get a free key at https://site.financialmodelingprep.com, then creat
 }
 ```
 
-That file lives outside the repo and is never committed. Edit it by hand — OpenBB 4.7.2 has
-no `obb.account.save()`. The other three calls (`treasury_rates`, `equity.search`,
+That file lives outside the repo and is never committed. OpenBB 4.7.2 has no
+`obb.account.save()`, which is why the tab writes the JSON itself rather than asking OpenBB
+to. The other three calls (`treasury_rates`, `equity.search`,
 `equity.fundamental.filings`) need no key at all.
 
 `FMP_API_KEY` in the environment works too, and **wins over the file**. Not
@@ -699,7 +715,8 @@ backend/    FastAPI + yfinance data adapter (15-min TTL cache), DCF/ratio models
             tests/                    pytest suite + committed fixtures + goldens
             requirements.txt          runtime set
             requirements-test.txt     minimal set for CI (tests + lint)
-frontend/   React (Vite) UI: Tracker, Financial Models, Scorecard, Screener, Portfolio
+frontend/   React (Vite) UI: Tracker, Financial Models, Scorecard, Screener, Portfolio,
+            API Key
             vite.config.js            fixed port 5173 + /api proxy to the backend
 docs/       financial-models-reference.md (the AI's methodology playbook)
             scoring-system-design.md (scoring architecture & rationale)
@@ -745,7 +762,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 657-test suite runs entirely offline against them. Provenance and capture dates in
+  the 665-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
