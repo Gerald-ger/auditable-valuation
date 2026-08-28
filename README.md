@@ -454,12 +454,12 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 638 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 643 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 173 tests
 ```
 
-Of the 665 collected, 27 are `network`-marked and deselected by default.
+Of the 670 collected, 27 are `network`-marked and deselected by default.
 
 The frontend suite runs in vitest's default `node` environment; six component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
@@ -473,6 +473,25 @@ CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
 `npm run build` on the frontend. Run those two lint commands before pushing or a green
 local suite will still fail CI.
+
+Both jobs run on **ubuntu, Windows and macOS** with `fail-fast: false`, so one platform
+failing still reports the other two. Lint runs once, on ubuntu — it reads the same files
+everywhere.
+
+**Coverage** is measured but not gated:
+
+```powershell
+backend\.venv\Scripts\python.exe -m pytest --cov --cov-report=term-missing
+cd frontend; npm run test:coverage
+```
+
+First reading, 2026-08-28: **82%** backend, **69.8%** frontend lines. There is deliberately no
+threshold. A percentage target is satisfied by an assertion that cannot fail — this repo found
+two of those by mutation the day before — so the number is here to locate the zeroes, not to be
+hit. What it located: the deterministic engine is 96–100% covered and every layer around it is
+thinner, and four frontend files are at 0% — `api.js`, `ScreenerTab.jsx`, `ChatBox.jsx`,
+`Debate.jsx`. `api.js` is the interesting one: every network call goes through it and every
+suite mocks it, so no test has ever executed it.
 
 A second workflow
 ([.github/workflows/runtime-install.yml](.github/workflows/runtime-install.yml)) installs
@@ -701,7 +720,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 638-test suite runs entirely offline against them. Provenance and capture dates in
+  the 643-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

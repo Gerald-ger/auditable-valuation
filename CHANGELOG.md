@@ -16,6 +16,74 @@ Notable changes to the Stock Analysis Platform. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-28 - A status code those endpoints could never send, and the first coverage number
+
+Three of the eight standing software findings. Only the first changes behaviour, and no
+computed number moved: `/api/score/AAPL` is composite 65, tier A, unchanged.
+
+### Streaming failures can now be a status, where a status is still possible
+
+`_ndjson` turned every failure into an in-body event under **HTTP 200** — including one that
+happened before a single byte existed. A second consumer doing the ordinary thing could not
+see those four endpoints fail at all:
+
+```python
+r = requests.post(".../api/ai/debate/AAPL", stream=True)
+r.raise_for_status()          # never raised, whatever went wrong
+```
+
+The two halves are not the same, and the old code treated them as if they were. `ai_client`
+raises `AIUnavailable` from a mid-stream error chunk — 200 is on the wire, nothing but an
+in-body event is possible — and from the `except` around `session.post`, which is a connection
+failure *before anything is yielded*. The second is the path every request takes while Ollama
+is not running, which today is every request on every machine.
+
+So `_ndjson` pulls one event before deciding. Failure before it is a real 503 (or 500);
+failure after it is unchanged. The peeked event is replayed rather than re-requested, and the
+status is raised as an `HTTPException` so the body carries `detail` — the key
+`frontend/src/api.js` already reads. It checked `res.ok` all along, so nothing in the UI
+changed.
+
+| | before | after |
+|---|---|---|
+| Ollama absent, `POST /api/ai/debate/{t}` | 200 + in-body event | **503** + `{"detail": ...}` |
+| failure after the first token | 200 + in-body event | 200 + in-body event (unchanged) |
+| stream that yields nothing | empty 200 | empty 200 (unchanged) |
+| tests on these four endpoints | **0** | 5 |
+
+Mutation-proved both ways: dropping the replay of the peeked event fails exactly the two
+tests about losing the first token; dropping the 503 clause fails exactly the one about an
+unreachable model, and the other four keep passing.
+
+### Coverage, measured for the first time
+
+`pytest-cov` and `@vitest/coverage-v8`, run in CI on ubuntu and uploaded as artifacts. No
+threshold and no gate, deliberately: a percentage target is met by exactly the kind of
+assertion that cannot fail, two of which this repo found by mutation the day before.
+
+**82% backend, 69.8% frontend lines.** The shape is the useful part:
+
+| | |
+|---|---|
+| `scoring.py` · `market_series.py` · `financial_models.py` | 99% · 100% · 96% |
+| `main.py` · `ai_client.py` | 57% · 45% |
+| `api.js`, `ScreenerTab.jsx`, `ChatBox.jsx`, `Debate.jsx` | **0%** |
+
+The engine is covered; everything around it is thinner. `api.js` at 0% is the finding worth
+keeping — every network call in the app goes through it and every suite mocks it, so no test
+has ever executed it. Those four files were a suspicion before this and are a number now.
+
+### CI runs three operating systems
+
+Both jobs, `ubuntu-latest` / `windows-latest` / `macos-latest`, `fail-fast: false` so one leg
+failing does not hide the other two. Windows is the platform this is developed on and was the
+only one never tested automatically; macOS had never been run at all and was the genuine
+unknown. **All six legs passed on the first run.**
+
+Wall clock 37 s → 74 s, not ×3: the legs run in parallel and the slowest sets the time. Lint
+and the coverage upload stay on ubuntu alone — three legs would buy the same answer three
+times.
+
 ## 2026-08-28 - The 107 pins nothing installed, and the port the proxy assumed
 
 Three changes, none touching engine code and none moving a computed number. `/api/score/AAPL`

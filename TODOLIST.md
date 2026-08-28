@@ -184,16 +184,42 @@ deliberately rather than letting the old scope carry by default.
   success. Safe to change the signature because `main.py` was the only caller.
 - **`aria-*` appears in exactly one file**, `SearchBar.jsx`. The two `.notice-banner` divs added
   today carry none either. *Trigger: any accessibility claim, or a screen-reader user.*
-- **CI runs one OS and one version.** [ci.yml](.github/workflows/ci.yml): both jobs
-  `ubuntu-latest`, Python pinned `3.14`, Node `22`, no `matrix:` anywhere — and note that
-  Windows, the platform this is developed on, is the one never tested. *Trigger: the first
-  macOS or Windows contributor.*
-- **No coverage measurement anywhere.** No `pytest-cov`, no `--cov`, no `@vitest/coverage-*`, no
-  `--coverage`. *Trigger: wanting to know which of the 811 tests overlap.*
-- **Streaming errors arrive as in-body events under HTTP 200.**
-  [main.py:132](backend/main.py#L132)'s `_ndjson` turns `AIUnavailable` and generic exceptions
-  into a final NDJSON event rather than a non-200 status. *Trigger: a second consumer of those
-  endpoints that is not the app's own chat box.*
+- ~~**CI runs one OS and one version.**~~ **Closed 2026-08-28.** Both jobs now run a
+  three-OS matrix with `fail-fast: false`, so one leg failing does not hide the other two.
+  All six legs passed on the first run, macOS included — which had never been run at all, and
+  was the one genuine unknown; Windows was low-risk only because it is this machine. Lint and
+  the coverage upload stay on ubuntu alone, since three legs would buy the same answer three
+  times. Wall clock 37 s → 74 s, not ×3, because the legs run in parallel and the slowest one
+  sets the time. Python and Node are still single-valued: no evidence yet says a version
+  matrix would find anything, and the OS one is what Windows-only assumptions needed.
+- ~~**No coverage measurement anywhere.**~~ **Closed 2026-08-28.** `pytest-cov` and
+  `@vitest/coverage-v8`, run in CI on ubuntu and uploaded as artifacts. No threshold and no
+  gate: a percentage target is met by exactly the kind of assertion that cannot fail, two of
+  which this repo found by mutation on 2026-08-27.
+
+  First reading — **82%** backend, **69.8%** frontend lines. The shape says more than the
+  number. The deterministic engine is 96–100% (`scoring` 99, `financial_models` 96,
+  `market_series` 100) and every layer around it is thinner: `main.py` 57%, `ai_client.py`
+  45%. Four frontend files are at **0%** — `api.js`, `ScreenerTab.jsx`, `ChatBox.jsx`,
+  `Debate.jsx`. `api.js` is the one that matters: every network call in the app goes through
+  it and every suite mocks it, so nothing has ever executed it. Those four are now a finding
+  with a number attached rather than a suspicion. *Trigger for acting on them: unchanged — a
+  change to any of the four.*
+- ~~**Streaming errors arrive as in-body events under HTTP 200.**~~ **Closed 2026-08-28**,
+  for the half that could be closed. `_ndjson` pulls one event before deciding: a failure
+  before it is a real 503 (or 500), a failure after it stays an in-body event, because 200 is
+  already on the wire by then and HTTP cannot take it back. That asymmetry is not a
+  compromise — it is the constraint.
+
+  The half that moved is the one that mattered: `ai_client` raises `AIUnavailable` from the
+  `except` around `session.post`, a connection failure before anything is yielded, and that is
+  the path every request takes while Ollama is not running. The status is an `HTTPException`
+  so the body carries `detail`, which is the key `frontend/src/api.js` already reads — it
+  checked `res.ok` all along, so nothing in the UI changed.
+
+  Five tests where these four endpoints had none, mutation-proved both ways: dropping the
+  replay of the peeked event fails exactly the two tests about losing the first token,
+  dropping the 503 clause fails exactly the one about an unreachable model.
 
 **Structural — how the repo reads as a set of files (9; four actionable).**
 
