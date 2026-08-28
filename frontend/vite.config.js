@@ -1,6 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Where both proxies below forward `/api`. Overridable because the port on the
+// far end is uvicorn's `--port` flag and nothing kept the two in step: someone
+// whose 8000 was already taken — a common enough default — got a dev server that
+// started cleanly, a page that rendered, and a bare 502 on every request, with
+// the only clue in this file. That is the same silent failure the proxy was
+// introduced to remove, surviving on the other side of the hop.
+const API_TARGET = process.env.VITE_API_TARGET || 'http://127.0.0.1:8000'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -25,12 +33,12 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { '/api': 'http://127.0.0.1:8000' },
+    proxy: { '/api': API_TARGET },
   },
 
   // `npm run preview` serves the production build and needs the same hop.
   // Serving dist/ from anywhere else means bringing your own reverse proxy.
   preview: {
-    proxy: { '/api': 'http://127.0.0.1:8000' },
+    proxy: { '/api': API_TARGET },
   },
 })

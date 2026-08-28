@@ -1,0 +1,59 @@
+name: Runtime install
+
+# ci.yml installs backend/requirements-test.txt — six entries — and has never
+# installed backend/requirements.txt, the 107-pin runtime set the README tells a
+# stranger to install. So a broken runtime pin passes CI green, and the first
+# report of one would arrive from somebody who could not install the project.
+# The pins are not independent either: fastapi==0.136.3 and uvicorn==0.40.0 are
+# OpenBB's ceiling rather than a preference, and nothing tested that constraint.
+#
+# Not on every push. A full 107-package resolve costs minutes, and the set can
+# only break two ways — editing it, which the paths filter catches at once, or an
+# upstream release being yanked or re-tagged under a pin that used to resolve,
+# which the Monday run catches. Scheduled runs fire only from the default branch,
+# and GitHub disables them after 60 days with no activity in the repository.
+
+on:
+  push:
+    paths:
+      - "backend/requirements.txt"
+      - "pyproject.toml"
+      - ".github/workflows/runtime-install.yml"
+  pull_request:
+    paths:
+      - "backend/requirements.txt"
+      - "pyproject.toml"
+      - ".github/workflows/runtime-install.yml"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          # Keyed on the file this job installs, not on the test set ci.yml uses.
+          cache-dependency-path: backend/requirements.txt
+
+      # The two commands the README's Install section gives, in its order: `-e .`
+      # first because it is the step that reads requires-python, so a wrong
+      # interpreter is rejected in seconds rather than after 107 packages.
+      - name: Install the runtime set, the way the README says to
+        run: pip install -e . && pip install -r backend/requirements.txt
+
+      # Proves fastapi, pydantic, pandas and numpy co-resolve, and that the app
+      # builds its route table under them.
+      - name: Import the application
+        run: python -c "import backend.main"
+
+      # Proves the other 31 pins, which the step above cannot reach: every
+      # `from openbb import obb` in this codebase is deferred into the function
+      # that needs it, deliberately, to keep a ~4–5 s import off the request path.
+      # Without this step the job would be reassuring rather than useful.
+      - name: Import OpenBB
+        run: python -c "from openbb import obb"

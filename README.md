@@ -159,6 +159,15 @@ cd frontend; npm run dev
 
 Then open http://localhost:5173.
 
+**If port 8000 is already taken** — it is a common enough default — move the backend and tell
+the dev server where it went. Without the second half, Vite starts cleanly, the page renders,
+and every request through the proxy answers 502 with nothing on screen to say why:
+
+```powershell
+backend\.venv\Scripts\python.exe -m uvicorn backend.main:app --port 8123
+cd frontend; $env:VITE_API_TARGET="http://127.0.0.1:8123"; npm run dev
+```
+
 ### Demo mode — no API key, no network, no Ollama
 
 **What it is, before how to run it.** Demo mode serves the eight companies committed under
@@ -464,6 +473,14 @@ CI runs on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and
 than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint) plus
 `npm run build` on the frontend. Run those two lint commands before pushing or a green
 local suite will still fail CI.
+
+A second workflow
+([.github/workflows/runtime-install.yml](.github/workflows/runtime-install.yml)) installs
+`backend/requirements.txt` — the 107-pin runtime set, which the job above never touches, since
+it installs the six-entry test set instead — then imports the app and OpenBB under it. Until
+2026-08-27 a broken runtime pin passed CI green and the first report would have come from
+somebody who could not install this. It runs when a pin file changes and once a week rather
+than on every push, because those are the only two ways the set can break.
 
 `tests/test_plausibility.py` encodes the acceptance criteria written in
 [docs/scoring-system-design.md](docs/scoring-system-design.md) §5.2 — "RIVN … Tier 3–5",
