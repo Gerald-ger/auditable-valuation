@@ -17,3 +17,12 @@ requires-python = ">=3.14"
 
 [tool.setuptools]
 packages = ["backend"]
+
+# Coverage config lives here rather than in a .coveragerc so the repo root does
+# not gain a sixteenth file. This is tool configuration, not the dependency list
+# the note at the top of this file is about.
+[tool.coverage.run]
+source = ["backend"]
+# The test files' own coverage is always near 100% and says nothing. What this is
+# for is the opposite question: which lines of the app nothing reaches.
+omit = ["backend/tests/*"]

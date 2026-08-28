@@ -22,3 +22,9 @@ WORKPLAN-DEMO-MODE.md
 # protected only by a machine-global ignore, so any other clone would have staged it.
 **/.claude/settings.local.json
 .claude/agents/
+# coverage output, from 2026-08-28. Measured, never committed: a number that is
+# only true of one run does not belong in git.
+.coverage
+coverage.xml
+htmlcov/
+frontend/coverage/

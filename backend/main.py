@@ -130,13 +130,46 @@ def _market_bars(ticker: str) -> tuple[list[dict], list[dict]] | None:
     return (bars, index_bars) if bars and index_bars else None
 
 
-def _ndjson(events: AsyncIterator[dict]) -> StreamingResponse:
+_NO_EVENT = object()
+
+
+async def _ndjson(events: AsyncIterator[dict]) -> StreamingResponse:
     """Serialize an async event stream as newline-delimited JSON.
 
-    Errors become a final event instead of an HTTP status, because by the time
-    the model fails the response headers are long gone.
+    A failure *before* the first event becomes a real status. A failure after it
+    cannot: 200 is already on the wire by then, so it arrives as a terminal
+    in-body event instead. That asymmetry is HTTP's, not a preference.
+
+    Which half a failure lands in is not evenly split. `ai_client` raises
+    AIUnavailable from two places — a mid-stream `{"error": ...}` chunk, and the
+    `except (ClientError, TimeoutError)` around `session.post`. The second is a
+    connection failure, so it happens before anything is yielded, and it is the
+    one every request takes while Ollama is not running. Until 2026-08-28 that
+    case also answered 200, which meant a client doing the ordinary thing —
+
+        r = requests.post(..., stream=True); r.raise_for_status()
+
+    could never see it fail. The app's own `stream()` was never fooled: it
+    checks `res.ok` first (frontend/src/api.js) and reads `detail` off the body,
+    which is why the status raised here is an HTTPException rather than a
+    hand-built response.
+
+    Pulling one event to find out costs nothing extra — it is the same event the
+    body would have yielded first, held rather than re-requested.
     """
+    first = _NO_EVENT
+    try:
+        first = await anext(events)
+    except StopAsyncIteration:
+        pass  # an empty stream is a 200 with an empty body, as before
+    except ai_client.AIUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"stream_failed: {e}") from e
+
     async def body():
+        if first is not _NO_EVENT:
+            yield (json.dumps(first) + "\n").encode()
         try:
             async for event in events:
                 yield (json.dumps(event) + "\n").encode()
@@ -897,7 +930,7 @@ async def _ticker_context(ticker: str | None) -> str:
 @app.post("/api/ai/chat")
 async def ai_chat(req: ChatRequest):
     context = await _ticker_context(req.ticker)
-    return _ndjson(_text_stream(req.messages, context))
+    return await _ndjson(_text_stream(req.messages, context))
 
 
 @app.post("/api/ai/predict/{ticker}")
@@ -910,14 +943,14 @@ async def ai_predict(ticker: str):
         q, bars[-30:], news_items, await _analysis_with_beta(f),
         drawings=_drawing_context(ticker, bars, q.get("price")))
     prompt = ai_client.outlook_prompt(ticker.upper())
-    return _ndjson(_text_stream([{"role": "user", "content": prompt}], context))
+    return await _ndjson(_text_stream([{"role": "user", "content": prompt}], context))
 
 
 @app.post("/api/score/{ticker}/narrative")
 async def score_narrative(ticker: str):
     """LLM explains the already-computed score card. It never changes numbers."""
     card = await _aguard(_score_and_record, ticker)
-    return _ndjson(_text_stream(
+    return await _ndjson(_text_stream(
         [{"role": "user", "content": ai_client.NARRATIVE_PROMPT}], json.dumps(card)))
 
 
@@ -935,7 +968,7 @@ async def ai_debate(ticker: str):
         async for stage, delta in ai_client.stream_debate(ticker.upper(), context):
             yield {"stage": stage, "delta": delta}
 
-    return _ndjson(events())
+    return await _ndjson(events())
 
 
 # ── The built frontend, served from this same process ────────────────────────

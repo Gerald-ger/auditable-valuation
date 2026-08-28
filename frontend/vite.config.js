@@ -41,4 +41,19 @@ export default defineConfig({
   preview: {
     proxy: { '/api': API_TARGET },
   },
+
+  test: {
+    coverage: {
+      provider: 'v8',
+      // `include` is the whole point. Without it only files a test imported are
+      // reported, so a component nothing tests at all is not listed as 0% — it
+      // is not listed. The question this measurement exists to answer is which
+      // files those are, so the glob has to come from the tree, not the tests.
+      include: ['src/**/*.{js,jsx}'],
+      // The suites themselves, the render helper they all use, and the entry
+      // point, which is three lines of createRoot and has nothing to assert.
+      exclude: ['src/**/*.test.jsx', 'src/test-utils.js', 'src/main.jsx'],
+      reporter: ['text-summary', 'text', 'json-summary'],
+    },
+  },
 })

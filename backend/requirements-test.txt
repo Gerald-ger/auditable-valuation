@@ -1,4 +1,5 @@
-# What CI installs: the minimum needed to lint and to run backend/tests offline.
+# What CI installs: the minimum needed to lint, run backend/tests offline, and
+# measure what those tests reach.
 # Not the app's runtime set — that is requirements.txt. yfinance is here only
 # because data_provider imports it at module scope, and financial_models imports
 # data_provider; the tests themselves never call it.
@@ -8,6 +9,8 @@
 # and pydantic at module scope plus ai_client, which imports aiohttp. Without
 # them collection aborts before a single test runs. pydantic arrives with fastapi.
 pytest
+# Coverage, since 2026-08-28. Configured in pyproject.toml, not here.
+pytest-cov
 yfinance
 pandas
 fastapi

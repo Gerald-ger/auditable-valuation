@@ -7,7 +7,19 @@ on:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    # Three OSes since 2026-08-28. The one that most needed adding is Windows:
+    # it is the platform this is developed on and was the only one never tested
+    # automatically, so every Windows-only assumption was being checked by the
+    # author noticing. macOS had no coverage of any kind.
+    #
+    # fail-fast is off on purpose. The default cancels the remaining legs on the
+    # first failure, which turns "macOS fails" into "we do not know about
+    # Windows" — the opposite of what a matrix is for.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,14 +36,31 @@ jobs:
         # ruff's pin lives in requirements-test.txt, not inline here.
         run: pip install -r backend/requirements-test.txt && pip install -e .
       - name: Lint
+        # Once, not three times: ruff reads the same files and reports the same
+        # findings on every OS, so the other two legs would be paying for a
+        # duplicate answer.
+        if: matrix.os == 'ubuntu-latest'
         run: ruff check backend/
       # Network tests are deselected by pytest.ini addopts; the suite runs
       # entirely against the committed fixtures in backend/tests/fixtures/.
+      # Coverage settings (source, omit) live in pyproject.toml.
       - name: Test
-        run: python -m pytest -q
+        run: python -m pytest -q --cov --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage
+        # Also once. The three legs run the same tests over the same source, so
+        # three reports would be one answer stored three times.
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage.xml
 
   frontend:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: frontend
@@ -43,6 +72,17 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint
-      - run: npm test
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run lint
+      - name: Test
+        run: npm test -- --coverage
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          # Paths are relative to the workspace root, not to the job's
+          # working-directory default above.
+          path: frontend/coverage/coverage-summary.json
       - run: npm run build
