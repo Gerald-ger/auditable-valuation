@@ -155,9 +155,13 @@ deliberately rather than letting the old scope carry by default.
   README and the smallest file of the five**, 107,407 bytes against tracker's 202,769.
   *Trigger: a hosted demo would make a GIF redundant; rejecting hosting would make one the
   fallback.*
-- **Python 3.14 filters out most visitors, and demo mode sits behind that wall.**
-  `requires-python = ">=3.14"`, and `start-demo.bat` delegates to `start.bat`, which hard-fails
-  without an existing venv. *Trigger: a decision to widen the floor, or to host.*
+- ~~**Python 3.14 filters out most visitors, and demo mode sits behind that wall.**
+  `requires-python = ">=3.14"`~~ — **half closed 2026-08-28.** The floor is now `>=3.12`, which
+  is where `numpy==2.5.1` puts it; 3.12 and 3.13 were measured rather than assumed (full 107-pin
+  install, 667 tests, and 2,288 API fields identical to 3.14 across eight companies) and both run
+  in CI on every push. Ubuntu 24.04 LTS ships 3.12 as its `python3`, so the wall is now roughly
+  where a stock LTS install already is. **Still open:** `start-demo.bat` delegates to `start.bat`,
+  which hard-fails without an existing venv. *Trigger: a decision to host.*
 - **The ceiling stands at low double digits, 50-100 stars.** 2 stars, 0 forks, 0 watchers.
 - **New: the GitHub *Website* field is empty.** `homepage: ""` — the slot directly under the
   repo name, in search results, and on the profile. *Trigger: the moment any link exists.*
@@ -250,7 +254,8 @@ today in `f492687`.*
 
 **First run — what someone who actually tries it hits (7).**
 
-- **The Python 3.14 hard gate**, as above.
+- ~~**The Python 3.14 hard gate**~~, as above — the *version* half closed 2026-08-28 (`>=3.12`, all three in CI). What a first-timer still hits is the venv one: the start
+  scripts hard-fail without an existing virtualenv.
 - ~~**No offline or demo mode.**~~ Closed 2026-08-27 in `f492687`, and driven end-to-end against
   a live server: all eight tickers return complete Scorecard and Financial Models data, and
   unsupported paths degrade rather than 500.

@@ -28,10 +28,9 @@ RUN npm run build
 
 
 # ── Stage 2: the application ─────────────────────────────────────────────────
-# 3.14 because that is `requires-python` in pyproject.toml and the only
-# configuration this suite has ever run on. docs/release-readiness.md records
-# that the floor is a *tested* one rather than a dependency one — 3.12 and 3.13
-# would plausibly work and have never been tried. This pins the tested one.
+# `requires-python` is `>=3.12` since 2026-08-28, and 3.12, 3.13 and 3.14 are all
+# exercised in CI. An image has to choose one anyway, so it takes the newest — the
+# configuration this is developed on, and the one the other two are checked against.
 FROM python:3.14-slim
 
 # Hugging Face Spaces runs the container as uid 1000, and this app writes:

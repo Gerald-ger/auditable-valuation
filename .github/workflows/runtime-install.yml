@@ -30,12 +30,22 @@ on:
 
 jobs:
   install:
+    # All three supported interpreters since 2026-08-28. ci.yml proves the tests
+    # pass on 3.12 and 3.13; only this job proves the 107-pin runtime set — the
+    # one a stranger actually installs — resolves under them. Without it the
+    # lowered floor would be a claim backed by the six-entry test set and by one
+    # local measurement, which is exactly the shape of claim this file exists to
+    # stop making. Three legs of a job that runs weekly, not per push.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python }}
           cache: pip
           # Keyed on the file this job installs, not on the test set ci.yml uses.
           cache-dependency-path: backend/requirements.txt

@@ -30,8 +30,8 @@ RUN npm ci && npm run build
 
 
 # ── Stage 2: the application ─────────────────────────────────────────────────
-# 3.14 is `requires-python` in pyproject.toml and the only configuration the
-# suite has run on.
+# The floor is `>=3.12` and all three of 3.12/3.13/3.14 run in CI; an image picks
+# one, and it picks the newest, matching the root Dockerfile.
 FROM python:3.14-slim
 
 # Spaces runs the container as uid 1000, and the app writes: store.py creates

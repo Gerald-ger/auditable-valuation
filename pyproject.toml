@@ -13,7 +13,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "finance-analysis-platform"
 version = "0.1.0"
-requires-python = ">=3.14"
+# 3.12 because that is where numpy==2.5.1 stops: it declares Python>=3.12, and on 3.11
+# the resolve fails on that pin rather than on anything this project wrote. Measured
+# 2026-08-28 rather than reasoned about — 3.12.13 and 3.13.14 each install the full
+# 107-pin runtime set and pass all 667 offline tests, and ci.yml runs both on every
+# push so the floor cannot quietly stop being true. No upper bound: 3.15.0b4 fails
+# today because eight packages have no cp315 wheel yet, which is a message pip gives
+# clearly and which stops being true on its own.
+requires-python = ">=3.12"
 
 [tool.setuptools]
 packages = ["backend"]

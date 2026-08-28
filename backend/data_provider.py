@@ -1139,7 +1139,7 @@ class YFinanceProvider:
 # block rather than a conditional threaded through six functions.
 #
 # Why it exists: a reader deciding whether this engine is worth their time has
-# to install Python 3.14, 107 pinned packages and a Node toolchain *first*, on
+# to install Python 3.12+, 107 pinned packages and a Node toolchain *first*, on
 # the strength of the README's own claim that it is. Demo mode inverts that.
 
 DEMO_MODE = os.environ.get("DEMO_MODE") == "1"

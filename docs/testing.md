@@ -37,8 +37,15 @@ than the tests: `ruff check backend/` on the backend, and `npm run lint` (oxlint
 local suite will still fail CI.
 
 Both jobs run on **ubuntu, Windows and macOS** with `fail-fast: false`, so one platform
-failing still reports the other two. Lint runs once, on ubuntu — it reads the same files
-everywhere.
+failing still reports the other two. Since 2026-08-28 the backend job also runs **Python 3.12
+and 3.13** on ubuntu, which is what keeps the lowered `requires-python` floor honest — five
+backend legs and three frontend, eight in all. The interpreters are added on one OS rather
+than on all three because what differs between them is the language, not the platform; nine
+backend legs would buy the same answer three times.
+
+Lint runs once, on ubuntu and on 3.14 — it reads the same files everywhere. So does the
+coverage upload, which additionally *has* to be pinned to one interpreter: three ubuntu legs
+racing to upload one artifact name is an error, not a duplicate.
 
 **Coverage** is measured but not gated:
 

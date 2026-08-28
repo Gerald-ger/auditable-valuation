@@ -17,6 +17,112 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-28 (c) - The floor was two minor versions higher than anything required
+
+`requires-python = ">=3.14"` had a stated reason and it was an honest one: the floor matched
+the only configuration this project had ever run on. The README said so, and added that
+`pandas==3.0.5` ships wheels back to cp311 and `numpy==2.5.1` back to cp312, so 3.12 or 3.13
+"may well work — nobody has tried".
+
+Somebody has now tried. **The analysis was exactly right and the conclusion was two versions
+too cautious.** The floor is `>=3.12`, which is where numpy puts it.
+
+### What was measured, before anything was edited
+
+| | 3.11.3 | 3.12.13 | 3.13.14 | 3.14.6 | 3.15.0b4 |
+|---|---|---|---|---|---|
+| 33 backend sources compile | ✅ | ✅ | ✅ | ✅ | — |
+| 107 runtime pins install | ❌ | ✅ 25 s | ✅ 9 s | ✅ | ❌ |
+| `import backend.main` | — | ✅ 3.29 s | ✅ 2.69 s | ✅ | — |
+| `from openbb import obb` | — | ✅ 13.06 s | ✅ 10.47 s | ✅ | — |
+| offline suite | — | **667 passed** 16.9 s | **667 passed** 15.3 s | **667 passed** 21.3 s | — |
+
+Both ends fail for reasons outside this repository. **3.11** stops at
+`numpy==2.5.1 depends on Python>=3.12` — not on anything this project wrote. **3.15.0b4** stops
+because eight pins have no cp315 wheel yet (`pydantic-core`, `aiohttp`, `pyyaml`, `pandas`,
+`cachebox`, `httptools`, `watchfiles`, `lxml`) and pip halts on the first that needs MSVC. That
+is the ecosystem catching up and it stops being true on its own, so **no upper bound is
+declared**: an artificial `<3.15` would become false the day wheels land and would need a
+release to undo.
+
+### The numbers are the same, and that was checked rather than assumed
+
+A suite passing proves the assertions hold. It does not prove two interpreters agree on a
+figure nothing asserts. So three demo-mode servers were run at once — 3.12 on 8312, 3.13 on
+8313, 3.14 on 8314 — and five endpoints were driven across all eight fixtures and compared
+field by field:
+
+| endpoint | fields compared | differing |
+|---|---|---|
+| `/api/score/{t}` × 8 | 792 | **0** |
+| `/api/stock/{t}/dcf` × 8 | 956 | **0** |
+| `/api/stock/{t}/analysis` × 2 | 404 | **0** |
+| `/api/stock/{t}/comps` × 2 | 136 | **0** |
+| **total** | **2,288** | **0** |
+
+`0002.HK` did read as different on the first pass. Of its 104 fields the one that differed was
+`as_of`, by one second: the measurement had crossed a second boundary, not the engine. Worth
+recording because a one-field difference in a cross-currency fixture is exactly the shape of a
+real finding, and treating it as one for a minute was the right response.
+
+Even the refusals match: `JPM` and `RIVN` return the same single-sentence
+`No positive free cash flow available` on all three, so the paths that decline to compute
+agree as well as the paths that compute.
+
+### Changed
+
+| | before | after |
+|---|---|---|
+| `requires-python` | `>=3.14` | **`>=3.12`** |
+| CI legs | 6 (3 OS × 2 jobs) | **8** — backend gains 3.12 and 3.13 on ubuntu |
+| `runtime-install.yml` legs | 1 | **3** — the 107-pin set resolved on each |
+| README badge | `python 3.14` | `python 3.12 \| 3.13 \| 3.14` |
+
+The interpreters are added on ubuntu only. What differs between them is the language, not the
+platform, so nine backend legs would buy the same answer three times. `runtime-install.yml`
+gets all three because it is the only job that installs `requirements.txt` — without it the
+lowered floor would be backed by the six-entry test set and one local measurement, which is
+the exact shape of claim that file was created to stop making.
+
+Both once-only steps needed a second condition: `matrix.os == 'ubuntu-latest'` alone now
+matches three legs, and for the coverage upload that is not a duplicate but an error — three
+legs racing for one artifact name.
+
+### Eleven other places said 3.14, and all of them were present tense
+
+The floor was stated in the badge, the Prerequisites table, two Dockerfiles' comments, a
+comment in `data_provider.py`, two rows of `docs/release-readiness.md`, two entries in
+`TODOLIST.md`, and the CI descriptions in both `README.md` and `docs/testing.md`. Every one
+was a claim about today, so every one was updated.
+
+Two of them were *deferred items whose trigger had fired*.
+`docs/release-readiness.md`'s "Relaxing Python below 3.14" said: *reopen when someone is
+actually blocked — then test on 3.12 and 3.13 and lower the floor to what passes.* That is
+what was done, in that order. Its neighbour, "CI OS / version matrix", had been stale since
+the morning's OS matrix landed and is now closed too.
+
+### One measurement had to be retaken
+
+The README quoted a rejection message and a timing: *8.8 s to
+`ERROR: ... 3.11.3 not in '>=3.14'`*. Lowering the floor changes that string. Editing the
+quote to say `'>=3.12'` would have turned a measurement into a guess, so it was re-run: three
+times on 3.11.3, identical message every time, **5.7 s median (5.2–6.0)**.
+
+### And the README's own path was walked, not just the tests
+
+A clean 3.12.13 venv, following the Install section literally: `pip install -e .`, then
+`pip install -r backend/requirements.txt` (**2 min 48 s** under real pip, against 25 s under
+uv), then the test set, then `pytest` — **667 passed**.
+
+### Why it is worth doing at all
+
+Python 3.14 was released in October 2025. **Ubuntu 24.04 LTS ships 3.12 as its `python3`.**
+The old floor asked the most common Linux base to install a second interpreter before seeing
+anything, on the strength of a README claim — and the measurements say it never needed to.
+
+No runtime behaviour changed: 667 backend and 189 frontend still pass, ruff and oxlint clean,
+bundle unchanged at 478.64 kB.
+
 ## 2026-08-28 (b) - A README nobody would read to the end of, and a name nobody would remember
 
 Two problems with the same cause: everything true about this project was written down, and all

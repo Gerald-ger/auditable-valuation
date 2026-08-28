@@ -15,16 +15,33 @@ jobs:
     # fail-fast is off on purpose. The default cancels the remaining legs on the
     # first failure, which turns "macOS fails" into "we do not know about
     # Windows" — the opposite of what a matrix is for.
+    #
+    # Three interpreters since 2026-08-28, and only on ubuntu. The floor moved
+    # from 3.14 to 3.12 that day because 3.12 and 3.13 were measured rather than
+    # guessed at, and a floor nothing exercises goes stale the same way a number
+    # in a README does. What differs between interpreters is the language, not
+    # the platform, so running 3.12 on all three OSes would buy the same answer
+    # three times: five backend legs rather than nine.
+    #
+    # `include` adds combinations rather than merging here, because each entry
+    # would have to overwrite `python` on an existing one — the documented way to
+    # extend a matrix along one axis only.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.14"]
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python }}
           cache: pip
           # Deliberate: the default glob would also match backend/requirements.txt
           # (the runtime freeze) and root pyproject.toml, neither of which CI
@@ -36,10 +53,10 @@ jobs:
         # ruff's pin lives in requirements-test.txt, not inline here.
         run: pip install -r backend/requirements-test.txt && pip install -e .
       - name: Lint
-        # Once, not three times: ruff reads the same files and reports the same
-        # findings on every OS, so the other two legs would be paying for a
-        # duplicate answer.
-        if: matrix.os == 'ubuntu-latest'
+        # Once, not five times: ruff reads the same files and reports the same
+        # findings on every OS and every interpreter, so the other four legs
+        # would be paying for a duplicate answer.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         run: ruff check backend/
       # Network tests are deselected by pytest.ini addopts; the suite runs
       # entirely against the committed fixtures in backend/tests/fixtures/.
@@ -47,9 +64,11 @@ jobs:
       - name: Test
         run: python -m pytest -q --cov --cov-report=term-missing --cov-report=xml
       - name: Upload coverage
-        # Also once. The three legs run the same tests over the same source, so
-        # three reports would be one answer stored three times.
-        if: matrix.os == 'ubuntu-latest'
+        # Also once. The five legs run the same tests over the same source, so
+        # five reports would be one answer stored five times. Pinned to 3.14 as
+        # well as to ubuntu, or three of them would race for the same artifact
+        # name and the upload would fail.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage

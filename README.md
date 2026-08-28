@@ -3,7 +3,7 @@
 [![CI](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml)
 [![856 offline tests](https://img.shields.io/badge/tests-856%20offline-brightgreen.svg)](#tests)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
-[![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](#prerequisites)
+[![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](#prerequisites)
 
 **Investment-banking valuation models as auditable code.** A two-stage FCFF DCF, trading
 comps and a deterministic 0–100 scorecard, for US and Hong Kong listings. Everything runs on
@@ -92,7 +92,7 @@ shown are fabricated for the screenshot.
 
 | | |
 |---|---|
-| **Python 3.14** | Enforced by `requires-python = ">=3.14"` in `pyproject.toml`, so `pip install -e .` stops with a clear version message rather than failing obscurely later. The floor is deliberate but *not* dependency-imposed: it matches the only configuration this project is ever run on (3.14.6 locally, 3.14 in CI). The heaviest pins are looser than that — `pandas==3.0.5` publishes wheels back to cp311 and `numpy==2.5.1` back to cp312 — so 3.12 or 3.13 may well work. Nobody has tried, which is exactly why the declared floor does not pretend otherwise. |
+| **Python 3.12, 3.13 or 3.14** | The floor is `requires-python = ">=3.12"` in `pyproject.toml`, so `pip install -e .` stops with a clear version message rather than failing obscurely later. **3.12 is where `numpy==2.5.1` stops** — it declares `Python>=3.12`, so on 3.11 the resolve fails on that pin, not on anything this project wrote. All three are exercised on every push ([ci.yml](.github/workflows/ci.yml)), and the 107-pin runtime set is resolved under all three weekly ([runtime-install.yml](.github/workflows/runtime-install.yml)), so the floor cannot quietly stop being true. **No upper bound is declared**, but 3.15.0b4 does not work today: eight of the pins have no cp315 wheel yet and pip stops on the first that needs a C compiler. That is the ecosystem catching up, and it will stop being true on its own. Until 2026-08-28 this said `>=3.14` and hedged that 3.12 and 3.13 "may well work"; the analysis was right and [the measurement](CHANGELOG.md) has replaced it. |
 | **Node 20.19+ or 22.12+** | The odd-looking floor is the toolchain's own, not a preference: Vite 8, oxlint and `@vitejs/plugin-react` all declare `^20.19.0 \|\| >=22.12.0`. Mirrored in `engines` in [frontend/package.json](frontend/package.json). npm warns rather than refuses unless you set `engine-strict`, so on 22.0–22.11 `npm install` still reports success and you find out later, if at all. Nobody has run that range — developed on 24, CI on 22 (which resolves to a 22.12+ release), so it is untested rather than known-broken. |
 | Ollama | Optional. The AI features disable cleanly without it and everything else works — see [Install guidance](#install-guidance). |
 | FMP API key | Optional, free tier. Without one you lose automatic peer discovery and nothing else — see [Credentials](#credentials). |
@@ -138,8 +138,9 @@ runs the whole suite on Linux.
 than only from inside the directory. Without it the app still runs, but only from the repo root.
 
 **Why it goes first:** `requires-python` is the version gate, and `-e .` is the step that reads
-it. Run first, a wrong interpreter is rejected in seconds — measured on 3.11, 8.8 s to
-`ERROR: Package 'finance-analysis-platform' requires a different Python: 3.11.3 not in '>=3.14'`.
+it. Run first, a wrong interpreter is rejected in seconds — measured on 3.11.3, a **5.7 s**
+median of three runs (5.2–6.0) to
+`ERROR: Package 'finance-analysis-platform' requires a different Python: 3.11.3 not in '>=3.12'`.
 Run last, you pay the whole 107-package install before that same message arrives. It needs
 nothing from `requirements.txt` to build: into an empty venv it installs exactly one
 distribution, itself. (The *package* is still named `finance-analysis-platform` in
@@ -293,8 +294,9 @@ cd frontend; npm test                                   # 189 tests
 
 **856 of those run offline**, against eight companies' real financial statements committed to
 this repo — 667 backend, 189 frontend, seconds. 27 more are `network`-marked and deselected by
-default. CI runs both jobs on **ubuntu, Windows and macOS** with `fail-fast: false`, and gates
-lint and the frontend build as well as the tests.
+default. CI runs both jobs on **ubuntu, Windows and macOS** with `fail-fast: false`, the backend
+one additionally on **Python 3.12 and 3.13** — eight legs — and gates lint and the frontend build
+as well as the tests.
 
 Coverage is measured and deliberately **not** gated — first reading 2026-08-28, **82%** backend
 and **69.8%** frontend. What the suite is for, what it is structurally blind to, and why
