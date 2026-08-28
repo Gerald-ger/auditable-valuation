@@ -1945,6 +1945,18 @@ def revenue_trend(f: dict) -> list[dict]:
             for p, v in statements.series(f["income_statement"], "Total Revenue")]
 
 
+def _classify(f: dict) -> str:
+    """This company's profile, from the statement-verified free cash flow.
+
+    `info["freeCashflow"]` is reported annually for some issuers and quarterly
+    for others, so `classify` asks for the figure the caller already verified —
+    see its docstring. Kept here so `full_analysis` and the comps endpoint
+    cannot drift into classifying the same company differently.
+    """
+    statement = statements.statement_fcf(f.get("cash_flow", {}))
+    return sector_weights.classify(f["info"], statement[1] if statement else None)
+
+
 def full_analysis(f: dict, peers: list[dict] | None = None,
                   market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
     return {
@@ -1954,5 +1966,24 @@ def full_analysis(f: dict, peers: list[dict] | None = None,
                      "targetMeanPrice", "recommendationKey", "numberOfAnalystOpinions"]},
         "ratios": ratio_analysis(f),
         "dcf": dcf_valuation(f, peers=peers, market_bars=market_bars),
+        # Alongside `dcf`, never in place of it. The Financial Models tab reads
+        # `dcf` for a panel built entirely on WACC, terminal growth and an
+        # equity bridge; handing it an excess-return result under that key would
+        # have it call a residual-income number a DCF, print "NaN" into the WACC
+        # box, and crash on `sensitivity.terminal_growth_cols`. Separate keys
+        # keep the existing panel correct and untouched.
+        #
+        # Gated on the classification, the same way the comps endpoint gates it,
+        # and the gate is the whole point rather than an optimisation. The model
+        # runs happily on an ordinary industrial and the answer is nonsense:
+        # buybacks leave AAPL with 73.7bn of book equity against its earnings,
+        # so return on equity reads 167% and the fair value comes out at
+        # 10,249.75 against a price of 311. Arithmetically right, categorically
+        # wrong — and shipping it in the payload unguarded is a number waiting
+        # for a future panel to render it. Measured 2026-08-29.
+        "excess_return": (
+            excess_returns_valuation(f, peers=peers, market_bars=market_bars)
+            if sector_weights.valuation_model_for(_classify(f)) == "excess_return"
+            else None),
         "revenue_trend": revenue_trend(f),
     }

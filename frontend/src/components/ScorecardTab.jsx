@@ -432,9 +432,9 @@ function FootballField({ ranges, currentPrice, triangulation }) {
           )}
           {t.conviction === 'LOW' && (
             <span className="muted-note">
-              {' '}A discounted cash flow and trading comps measure different things, so LOW is
-              the usual reading here rather than a warning about this company in particular.
-              The figures below are the ones that vary.
+              {' '}{t.anchors?.low_method} and {t.anchors?.high_method} measure different
+              things, so LOW is the usual reading here rather than a warning about this
+              company in particular. The figures below are the ones that vary.
             </span>
           )}
           {/* Separate axis of uncertainty: conviction says whether the methods

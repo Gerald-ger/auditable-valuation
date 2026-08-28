@@ -238,15 +238,52 @@ def get_profile(classification: str) -> dict:
     }
 
 
+# Which intrinsic model, if any, values a company of each type. Stated rather
+# than derived, and that is a deliberate change made on 2026-08-29.
+#
+# `dcf_applies` used to read this off the scoring metric list — true exactly
+# when `dcf_upside_pct` was one of the V-pillar metrics. That was elegant while
+# there was one model, and it silently tied two separable things together: a
+# valuation can appear on the football field long before the scorecard scores
+# it, and tying them meant the bar could not be drawn until the metric existed.
+# The invariant test in test_sector_weights.py pins this table against the
+# answers the old derivation gave, so the split cannot quietly change any of
+# them.
+#
+# `None` is a real answer, not a gap. A pre-profit company has neither positive
+# free cash flow nor a return on equity worth compounding, so both models
+# decline and the chart says so rather than drawing a confident bar.
+VALUATION_MODELS = {
+    "financials_bank": "excess_return",
+    "financials_insurance": "excess_return",
+    "real_estate_reit": None,
+    "pre_profit_growth": None,
+}
+DEFAULT_VALUATION_MODEL = "fcff_dcf"
+
+
+def valuation_model_for(classification: str) -> str | None:
+    """Which intrinsic model values this company type, or None if none does."""
+    return VALUATION_MODELS.get(classification, DEFAULT_VALUATION_MODEL)
+
+
 def dcf_applies(classification: str) -> bool:
-    """Whether a discounted-cash-flow valuation means anything for this type.
+    """Whether a *discounted-cash-flow* valuation means anything for this type.
+
+    Deliberately narrower than "is there a valuation at all", and the two
+    stopped being the same question on 2026-08-29 when banks gained an excess
+    return model. A bank now has an intrinsic valuation and still answers False
+    here, because everything this flag gates is DCF machinery specifically:
+    `reconcile_to_price` back-solves a growth rate, `price_gap_bridge` walks an
+    enterprise-value bridge, and the Financial Models tab's panel is built on
+    WACC and terminal growth. None of those mean anything for a model that
+    values equity directly off book value.
 
     Decided by the profile, never by whether the model happened to return a
     number: a REIT produces a complete DCF from `CFO - CapEx` and it is
     meaningless, because capex *is* a REIT's acquisitions. `scoring.py` exports
-    this as `dcf_applicable` and `comps.football_field` refuses to draw a DCF
-    bar without it — one rule, read from one place, so the Scorecard and the
-    Financial Models tab cannot disagree about the same company.
+    this as `dcf_applicable` and `comps.football_field` reads it for the same
+    reason, so the Scorecard and the Financial Models tab cannot disagree about
+    the same company.
     """
-    return any("dcf_upside_pct" in metrics
-               for metrics in get_profile(classification)["metrics"].values())
+    return valuation_model_for(classification) == DEFAULT_VALUATION_MODEL

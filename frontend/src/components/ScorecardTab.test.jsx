@@ -195,4 +195,41 @@ describe('ScorecardTab', () => {
       .toContain('Banks are valued on equity');
     expect(container.querySelector('.ff-bar')).toBeNull();
   });
+
+  it('names the two methods that actually disagreed, rather than assuming a DCF', async () => {
+    // The note under a LOW verdict used to read "A discounted cash flow and
+    // trading comps measure different things". That was safe while a DCF was
+    // the only intrinsic model — a bank could not reach a conviction verdict at
+    // all, because peer multiples were the only method that scored and one
+    // method is not a triangulation. Since 2026-08-29 a bank gets an excess
+    // return bar, so the sentence became reachable for a company whose
+    // triangulation contains no DCF at all.
+    const { container } = await mount({
+      compsBody: comps({
+        classification: 'financials_bank',
+        dcf_applicable: false,
+        football_field: [
+          { method: 'DCF', not_applicable: true, reason: 'Does not apply to a financials bank.' },
+          { method: 'Excess return (ROE x cost of equity, 25th-75th)', low: 285, high: 385, mid: 331 },
+          { method: 'Peer multiples (implied)', low: 240, high: 260, mid: 250 },
+        ],
+        triangulation: {
+          conviction: 'LOW', midpoint_spread: 0.32, diverged: true,
+          methods_scored: ['Excess return (ROE x cost of equity, 25th-75th)',
+                           'Peer multiples (implied)'],
+          anchors: {
+            low_method: 'Peer multiples (implied)', low_mid: 250,
+            high_method: 'Excess return (ROE x cost of equity, 25th-75th)', high_mid: 331,
+          },
+        },
+      }),
+    });
+
+    const note = container.querySelector('.muted-note')?.textContent ?? '';
+    expect(note).toContain('measure different things');
+    expect(note).toContain('Excess return');
+    expect(note).toContain('Peer multiples');
+    // The claim that would have been false for this company.
+    expect(note).not.toContain('discounted cash flow');
+  });
 });

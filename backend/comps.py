@@ -817,8 +817,36 @@ def _clamped_mid(mid, low: float, high: float):
     return None if mid is None else min(max(mid, low), high)
 
 
+def _excess_return_band(valuation: dict) -> tuple[float, float, str] | None:
+    """(low, high, basis) for an excess return bar, or None on an empty grid.
+
+    The 25th-75th percentile of the sensitivity grid, exactly as `_dcf_band`
+    takes it, and for the same reason: the corners are two assumptions moved
+    together and reading them as the band doubles its width.
+
+    What this does *not* do is union in the one-dimensional sweep, and that is
+    a measured decision rather than an omission. `_dcf_band` has to, because the
+    DCF's grid stresses WACC and terminal growth while the first-order growth
+    rate sits fixed outside it. Here the grid already sweeps both first-order
+    inputs — return on equity across the columns, cost of equity down the rows —
+    and `roe_sensitivity` is the middle row of that same grid. Verified on the
+    JPM fixture 2026-08-29: the five values are identical to `rows[2]["values"]`
+    element for element, so unioning them in is provably a no-op. Calling
+    `_dcf_band` on this shape would have worked and quietly done nothing, which
+    is worse than not calling it.
+    """
+    vals = sorted(v for row in valuation.get("sensitivity", {}).get("rows", [])
+                  for v in row.get("values", []) if v is not None)
+    if not vals:
+        return None
+    if len(vals) >= 4:
+        return quantiles(vals, n=4)[0], quantiles(vals, n=4)[2], "ROE x cost of equity, 25th-75th"
+    return min(vals), max(vals), "ROE x cost of equity"
+
+
 def football_field(target_fund: dict, dcf: dict, comps: dict,
-                   classification: str | None = None) -> list[dict]:
+                   classification: str | None = None,
+                   excess_return: dict | None = None) -> list[dict]:
     """Valuation ranges from each method, for the range chart.
 
     `classification` gates the DCF row. Without it the only test available was
@@ -832,12 +860,22 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
     info = target_fund["info"]
     ranges = []
 
+    model = (sector_weights.valuation_model_for(classification)
+             if classification is not None else None)
+    er_band = (_excess_return_band(excess_return)
+               if model == "excess_return" and excess_return
+               and not excess_return.get("error") else None)
+
     if classification is not None and not sector_weights.dcf_applies(classification):
-        ranges.append({
-            "method": "DCF", "not_applicable": True,
-            "reason": f"A discounted-cash-flow valuation does not apply to a "
-                      f"{classification.replace('_', ' ')}.",
-        })
+        # Still named and struck out rather than dropped, even when another
+        # model does draw a bar below — "the DCF does not apply here" and "there
+        # is no valuation here" are different sentences, and before 2026-08-29
+        # this row could only say the second one.
+        reason = (f"A discounted-cash-flow valuation does not apply to a "
+                  f"{classification.replace('_', ' ')}.")
+        if er_band:
+            reason += " The excess return bar values it instead."
+        ranges.append({"method": "DCF", "not_applicable": True, "reason": reason})
     elif dcf and not dcf.get("error"):
         band = _dcf_band(dcf)
         if band:
@@ -846,6 +884,20 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
                            "mid": _clamped_mid(dcf.get("fair_value_per_share"), low, high),
                            "independent": dcf.get("assumptions", {}).get("growth_source")
                            != "analyst_consensus_fwd"})
+
+    if er_band:
+        low, high, basis = er_band
+        # Deliberately not named "DCF (...)". `dcf_drawn` further down keys on
+        # that prefix to attach an equity-basis note explaining why the peer bar
+        # bridges to equity differently from the DCF's — an asymmetry that does
+        # not exist for a model which never computes an enterprise value. The
+        # name keeps that note switched off by construction rather than by a
+        # second condition someone could forget to update.
+        ranges.append({
+            "method": f"Excess return ({basis})", "low": low, "high": high,
+            "mid": _clamped_mid(excess_return.get("fair_value_per_share"), low, high),
+            "independent": True,
+        })
 
     imp = comps.get("implied_values", {})
     if imp:

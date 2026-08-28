@@ -562,10 +562,21 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
         f["info"], statement_fcf[1] if statement_fcf else None)
     result["classification"] = classification
     result["dcf_applicable"] = sector_weights.dcf_applies(classification)
+    # Which intrinsic model this type gets, which since 2026-08-29 is a
+    # different question from whether a DCF applies: a bank answers False above
+    # and "excess_return" here. Everything gated on `dcf_applicable` below is
+    # DCF machinery specifically — a growth-rate back-solve, an enterprise-value
+    # bridge — and none of it means anything for a model that values equity
+    # directly off book value, so those gates stay exactly as they were.
+    result["valuation_model"] = sector_weights.valuation_model_for(classification)
+    excess_return = (
+        financial_models.excess_returns_valuation(f, peers=peer_betas, market_bars=bars)
+        if result["valuation_model"] == "excess_return" else None)
     # Resolved before the triangulation rather than after it: the gap bridge
     # below measures against this price, so it has to exist by then.
     result["current_price"] = f["info"].get("currentPrice") or f["info"].get("regularMarketPrice")
-    result["football_field"] = comps.football_field(f, dcf, result, classification)
+    result["football_field"] = comps.football_field(
+        f, dcf, result, classification, excess_return=excess_return)
     result["triangulation"] = comps.triangulate(result["football_field"])
     # Why the DCF and the price differ, named. Only where a DCF applies at all —
     # for a bank or a REIT there is no gap to explain, there is no model.

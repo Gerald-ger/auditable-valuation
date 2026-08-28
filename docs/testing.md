@@ -13,12 +13,12 @@ the README on 2026-08-28; the three commands to run it are still
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 693 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 714 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 189 tests
 ```
 
-Of the 720 collected, 27 are `network`-marked and deselected by default. One more skips
+Of the 741 collected, 27 are `network`-marked and deselected by default. One more skips
 unless OpenBB is installed — it checks that the settings path `comps.py` computes still
 matches OpenBB’s own constant, which is unanswerable without it, so CI reports 656 and a skip.
 
