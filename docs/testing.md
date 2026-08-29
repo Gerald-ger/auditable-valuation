@@ -15,7 +15,7 @@ backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
 backend\.venv\Scripts\python.exe -m pytest          # 779 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 206 tests
+cd frontend; npm test                                   # 207 tests
 ```
 
 Of the 803 collected, 27 are `network`-marked and deselected by default. One more skips

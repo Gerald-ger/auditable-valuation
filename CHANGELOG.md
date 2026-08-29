@@ -17,6 +17,31 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 - The one border on the scorecard that meant nothing
+
+A design hook flagged 's left edge as a decorative side-tab. The framing
+was weak — this stylesheet is hand-written and the rule dates to 2026-08-06 — but
+it pointed at something real underneath. The scorecard uses the left edge of a
+block to *say* things: gold where the valuation methods diverge, red and green
+for the reconciliation verdict, all at 2px.  was 3px of fixed accent
+blue, the thickest left border in the file and the only one carrying no
+information. Decoration sitting among signals.
+
+It now takes its colour from , the map the tier badge eight pixels
+above is already filled with. A is , which is , so the change
+is pixel-identical on an A and only diverges on S, B, C and D; a card with no
+tier falls back to the neutral border rather than asserting a grade it does not
+have.
+
+The first draft of the test passed  where the route helper reads
+, so all three tiers silently fell back to the default card's A and
+two colours that had to differ were the same one. It failed rather than matched,
+which is the only reason it was not a sixth placebo. Kept on the record in the
+test docstring. Both mutations — a fixed accent again, and a missing tier
+defaulting to a grade — are caught.
+
+206 -> **207 frontend**, 986 offline. Bundle 488.95 -> 489.00 kB.
+
 ## 2026-08-29 (f) - One screen was making two opposite claims about one number
 
 The overall verification of P1-P5. Full suite twice, both lints, the build, a 23-mutation

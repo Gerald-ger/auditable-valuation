@@ -1236,7 +1236,11 @@ nav button.active {
 .verdict {
   font-size: 14.5px;
   line-height: 1.6;
-  border-left: 3px solid var(--accent);
+  /* Neutral here on purpose: the colour is set inline in ScorecardTab from
+     TIER_COLORS, so this value is what shows when there is no tier to report.
+     See the comment at that call site for why the edge stopped being a fixed
+     accent blue. */
+  border-left: 3px solid var(--border);
   max-width: 90ch;
 }
 

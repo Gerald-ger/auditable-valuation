@@ -19,6 +19,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ScorecardTab from './ScorecardTab';
+import { TIER_COLORS } from '../format';
 import { render, flush } from '../test-utils';
 
 /**
@@ -106,6 +107,42 @@ beforeEach(() => {
 });
 
 describe('ScorecardTab', () => {
+  it('colours the verdict edge by tier rather than by decoration', async () => {
+    // The left edge used to be a fixed accent blue: the thickest left border in
+    // the stylesheet and the only one carrying no information, while its
+    // neighbours on this same tab use that edge for meaning. It now repeats the
+    // tier the badge above states, from the same TIER_COLORS map.
+    // jsdom normalises an inline hex to `rgb(...)`, so the expectation is
+    // converted rather than the actual — comparing a hex against a hex here
+    // would pass on a stylesheet that never applied it.
+    const rgb = (hex) => `rgb(${[1, 3, 5]
+      .map((i) => parseInt(hex.slice(i, i + 2), 16))
+      .join(', ')})`;
+    const shown = async (tier) => {
+      const { container } = await mount({ scoreBody: card({ tier }) });
+      return container.querySelector('.verdict').style.borderLeftColor;
+    };
+
+    // Distinct tiers must give distinct edges, or the border is still decoration
+    // wearing a tier's name. The first draft of this test passed `score:` where
+    // the route helper reads `scoreBody:`, so every case silently fell back to
+    // the default card's A and the two colours were the same one — caught only
+    // because the equality assertion below failed rather than matched.
+    const top = await shown('S');
+    const bottom = await shown('D');
+    expect(top).not.toBe(bottom);
+    expect(top).toBe(rgb(TIER_COLORS.S));
+    expect(bottom).toBe(rgb(TIER_COLORS.D));
+
+    // A is #3b82f6, which is --accent, so the change is a no-op on an A. Pinned
+    // because that is the reason this was safe to ship, not a coincidence.
+    expect(await shown('A')).toBe(rgb('#3b82f6'));
+
+    // No tier to report falls back to the neutral border, never to a colour
+    // that would assert a grade the card does not have.
+    expect(await shown(null)).toBe('var(--border)');
+  });
+
   it('survives a card where no pillar is scored, instead of throwing past the guard', async () => {
     // scoring.py produces this deliberately for a ticker whose coverage is too
     // thin: every pillar `insufficient`, so `verdict()`'s `scored` array is

@@ -686,7 +686,23 @@ export default function ScorecardTab({ ticker, aiOnline }) {
         </div>
       </div>
 
-      {verdict(card) && <div className="panel verdict">{verdict(card)}</div>}
+      {/* The left edge carries the tier, from the same map the badge above is
+          filled with. It was a fixed accent blue until 2026-08-30, which made
+          it the thickest left border in the stylesheet and the only one saying
+          nothing — while its neighbours on this same tab use that edge for
+          meaning: gold where the valuation methods diverge, red and green for
+          the reconciliation verdict. A design hook flagged it as a decorative
+          side-tab; the sharper objection was that it was decoration sitting
+          among signals. A's colour is #3b82f6, which is `--accent`, so this
+          changes nothing on an A and only diverges on S, B, C and D. */}
+      {verdict(card) && (
+        <div
+          className="panel verdict"
+          style={{ borderLeftColor: TIER_COLORS[card.tier] ?? 'var(--border)' }}
+        >
+          {verdict(card)}
+        </div>
+      )}
 
       {narrative !== null && (
         <div className="panel outlook-text">
