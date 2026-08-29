@@ -628,8 +628,30 @@ def _score_and_record(ticker: str, fresh_price: bool = True) -> dict:
     # beta the Financial Models tab shows; score_company would otherwise compute
     # its own with the raw reported beta
     bars = _market_bars(f["ticker"])
-    dcf = financial_models.dcf_valuation(f, peers=_peer_beta_inputs(f), market_bars=bars)
-    card = scoring.score_company(f, dcf=dcf, market_bars=bars)
+    peers = _peer_beta_inputs(f)
+    dcf = financial_models.dcf_valuation(f, peers=peers, market_bars=bars)
+    # And the same for whichever intrinsic model fits a company the DCF cannot
+    # value. Resolved here rather than left to `score_company`'s fallback so the
+    # pillar reports the same valuation the chart drew, from one resolution
+    # rather than two that merely ought to agree.
+    #
+    # The peers are the part the fallback cannot reproduce — it has no `peers`
+    # parameter to be given any. They bind rarely: `resolve_beta` prefers a
+    # regression when bars exist and a credible reported beta when they do not,
+    # so on JPM the peer set changes nothing and passing it here is provably a
+    # no-op. It is not a no-op for an issuer whose reported beta is missing or
+    # outside the credibility band and whose series is too thin to regress,
+    # which is the case this argument is actually about.
+    #
+    # Resolved for every ticker rather than only for the profiles that score it,
+    # so a REIT pays for a dividend discount model whose answer the scorecard
+    # then discards. Deliberate symmetry rather than an oversight: the line
+    # above resolves a DCF for every ticker too, including the banks whose
+    # profile has no `dcf_upside_pct` to spend it on. Both are cheap beside the
+    # fetches that precede them, and gating either would put a second copy of
+    # the profile's metric list here, where it could disagree with the first.
+    valuation = financial_models.intrinsic_valuation(f, peers=peers, market_bars=bars)
+    card = scoring.score_company(f, dcf=dcf, market_bars=bars, valuation=valuation)
     # attached to the card, deliberately outside score_company: these are
     # reported beside the composite, never folded into it (see forensics.py)
     card["forensics"] = forensics.forensic_checks(f, card["classification"])

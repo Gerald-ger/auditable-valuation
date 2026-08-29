@@ -13,6 +13,18 @@ from backend import market_series
 from backend import sector_weights
 from backend import statements
 
+# How far above or below its intrinsic value a share trades, scored. One curve
+# for every intrinsic model rather than one per model, and shared by reference
+# so a recalibration cannot reach `dcf_upside_pct` and miss the other.
+#
+# The same curve is the honest default because upside is upside: 0% means the
+# model agrees with the market and scores 50, which is the neutral point of the
+# whole table. Giving the excess return model its own curve would mean claiming
+# its errors are distributed differently from the DCF's, and nothing in this
+# repository measures that — the objection the `analyst_upside` note in
+# sector_weights raises against inventing a curve, applied to itself.
+UPSIDE_ANCHORS = [(-40, 0), (-15, 30), (0, 50), (15, 70), (40, 90), (80, 100)]
+
 # Anchor tables: ascending x, linear interpolation, clipped at the ends.
 # Values grounded in financial-models-reference.md §4.1 / Appendix B.
 # Non-monotonic lists deliberately penalize "too much of a good thing".
@@ -23,7 +35,12 @@ METRIC_ANCHORS = {
     "ev_ebitda":          [(4, 100), (7, 90), (10, 70), (14, 50), (20, 25), (30, 0)],
     "p_b":                [(0.6, 100), (1.0, 90), (1.5, 75), (2.5, 55), (4, 35), (8, 10)],
     "ev_sales":           [(1.5, 100), (3, 85), (6, 60), (10, 40), (15, 20), (25, 0)],
-    "dcf_upside_pct":     [(-40, 0), (-15, 30), (0, 50), (15, 70), (40, 90), (80, 100)],
+    "dcf_upside_pct":     UPSIDE_ANCHORS,
+    # The same question asked of the model that fits a company a DCF cannot
+    # value. Deliberately a second name rather than a rename: `dcf_applies` is
+    # pinned against the derivation `any("dcf_upside_pct" in metrics ...)`, and
+    # that invariant is the record of what the 2026-08-29 split preserved.
+    "valuation_upside_pct": UPSIDE_ANCHORS,
     "dividend_yield":     [(0.0, 20), (0.01, 40), (0.025, 65), (0.04, 85), (0.06, 100), (0.09, 70)],
     "ffo_yield":          [(0.0, 10), (0.03, 40), (0.05, 60), (0.07, 80), (0.10, 100)],
     # Quality
@@ -325,7 +342,8 @@ def extract_metrics(f: dict,
 
 
 def score_company(f: dict, dcf: dict | None = None,
-                  market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
+                  market_bars: tuple[list[dict], list[dict]] | None = None,
+                  valuation: dict | None = None) -> dict:
     info = f["info"]
     # The profile decides which metrics are scored and how they are weighted, so
     # the classifier must not read info["freeCashflow"] — see classify's docstring.
@@ -344,6 +362,22 @@ def score_company(f: dict, dcf: dict | None = None,
         # beta from the one the Models tab shows for the same company.
         dcf = dcf if dcf is not None else fm.dcf_valuation(f, market_bars=market_bars)
         raw["dcf_upside_pct"] = None if dcf.get("error") else dcf.get("upside_pct")
+    # The same shape as the DCF branch above and for the same reason. A caller
+    # that already ran the model passes it in — `main._score_and_record` does,
+    # with the peers the Financial Models tab used — and the fallback here at
+    # least keeps the bars, so the scorecard cannot score a valuation built on a
+    # different beta from the one the chart draws.
+    #
+    # `None` when the model refuses, which is a real gap rather than a zero: it
+    # drops out of the pillar mean and lowers `available_fraction`, so the card
+    # reports less coverage rather than a worse valuation.
+    if "valuation_upside_pct" in active:
+        if valuation is None:
+            valuation = fm.intrinsic_valuation(f, classification,
+                                               market_bars=market_bars)
+        raw["valuation_upside_pct"] = (
+            None if not valuation or valuation.get("error")
+            else valuation.get("upside_pct"))
     if "ffo_yield" in active and raw.get("ffo_yield") is not None:
         flags.append("ffo_yield_is_proxy")
     # Only where the metric counts: every non-payer would otherwise carry this,

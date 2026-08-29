@@ -103,10 +103,85 @@ SECTOR_PROFILES = {
         },
         "anchor_overrides": {"net_debt_ebitda": RELAXED_ND_EBITDA},
     },
+    # `valuation_upside_pct` joins V for both financial profiles on 2026-08-29.
+    # Until then a bank had no intrinsic valuation in its score at all: the
+    # excess return model drew a bar on the chart and the pillar could not see
+    # it, so JPM trading 8% above its own fair value was invisible to the grade.
+    #
+    # Held against the three tests the `analyst_upside` note above sets out, in
+    # its own words:
+    #
+    #   1. Double counting. Passes on that note's own criterion, which is about
+    #      the *numerator*: "every other V metric divides a reported figure or
+    #      this platform's own model by price, while this one divides someone's
+    #      forecast of price by price." This one is the model. The source is the
+    #      company's own statements, not a forecast that also moves another
+    #      metric.
+    #
+    #      What is worth stating rather than leaving to be discovered: for a
+    #      bank this metric is algebraically `justified P/B / P/B - 1`, and `p_b`
+    #      sits beside it in the same pillar. Verified on JPM 2026-08-29 —
+    #      justified 2.5660 against an actual 2.7890 gives -7.995%, against the
+    #      -8.0 the model reports to its one decimal place. Justified P/B does
+    #      not move with price, so the two metrics are monotone transforms of the
+    #      same ratio and move in the same direction on every price change.
+    #      Measured at +/-20% on JPM's price:
+    #
+    #          price      p_b       upside
+    #          0.8x        62         70
+    #          1.0x        52         39
+    #          1.2x        45         20
+    #
+    #      This one is roughly three times the more price-sensitive of the two,
+    #      so keeping both does weight that direction twice.
+    #
+    #      They are kept apart anyway, and the cost of doing so is now stated
+    #      rather than denied: replacing `p_b` gives JPM **V 56 and composite
+    #      71** against **55 and 70** for keeping both, so the redundancy costs a
+    #      point of each. What it buys is a valuation pillar that still has a
+    #      metric when the model refuses — a negative-equity bank, or the beta
+    #      inversion that already silences this model on the REIT fixture.
+    #
+    #      (An earlier version of this note claimed replacing `p_b` gave the
+    #      identical 55 and 70. That was measured off the *rounded* metric
+    #      scores; the pillar mean uses the unrounded ones. Corrected in
+    #      adversarial review 2026-08-29 — the one quantitative claim offered in
+    #      defence of this decision was wrong, which is worth leaving on the
+    #      record beside the corrected one.)
+    #
+    #   2. An undeclared level bias. **Not cleared, and not claimed to be.** That
+    #      note measured seven fixtures and still called the size unsettled. Here
+    #      there is one bank fixture, no insurer, and the one REIT refuses — a
+    #      single observation, which cannot establish where these models' upside
+    #      sits relative to a curve centred at zero. What holds the risk down is
+    #      that the curve is not new: it is `dcf_upside_pct`'s, unchanged and
+    #      already in use.
+    #
+    #      That sibling is the only evidence available, and it is worth reading
+    #      rather than citing. Its five fixtures score -60.7 / -55.0 / +3.7 /
+    #      +12.0 / +200.5, so the **median is +3.7%** — close to the curve's
+    #      neutral point — while the **mean is +20.1%**, carried entirely by one
+    #      name. What that shows is not a level bias but a wide, fat-tailed
+    #      distribution: **three of the five sit at the curve's rails**, scoring
+    #      0 or 100, so most of the time this curve is not interpolating at all.
+    #      A metric that saturates on 60% of the companies it scores is a
+    #      separate concern from a biased one, and neither is settled here.
+    #
+    #   3. The chart answering differently. Passes, and inverts the analyst case:
+    #      `comps.triangulate` *excludes* analyst targets from voting, which is
+    #      what made scoring them a contradiction, and it *includes* the excess
+    #      return bar. Scoring it is the consistent choice; not scoring it was
+    #      the contradiction.
+    #
+    # REITs were deliberately left out. `real_estate_reit` routes to the dividend
+    # discount model, which refuses on O — the only REIT fixture — once real
+    # market bars are supplied, so adding the metric there would ship one this
+    # repository has never once observed produce a value.
     "financials_bank": {  # EV-, FCF- and working-capital metrics invalid
         "weights": {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10},
         "metrics": {
-            "V": ["earnings_yield_fwd", "p_b", "dividend_yield"],
+            "V": ["earnings_yield_fwd", "p_b", "dividend_yield",
+                  "valuation_upside_pct"],
             "Q": ["roe", "roa"],
             "H": ["equity_assets"],
             "G": ["revenue_growth", "earnings_growth", "pe_gap"],
@@ -116,7 +191,12 @@ SECTOR_PROFILES = {
     "financials_insurance": {
         "weights": {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10},
         "metrics": {
-            "V": ["earnings_yield_fwd", "p_b", "dividend_yield"],
+            # No insurer fixture exists, so every claim above is measured on a
+            # bank and inherited here on the strength of the two sharing a
+            # valuation model. Stated because it is weaker evidence than the
+            # bank's, not because it is a different argument.
+            "V": ["earnings_yield_fwd", "p_b", "dividend_yield",
+                  "valuation_upside_pct"],
             "Q": ["roe", "roa"],
             "H": ["equity_assets"],
             "G": ["revenue_growth", "earnings_growth", "pe_gap"],

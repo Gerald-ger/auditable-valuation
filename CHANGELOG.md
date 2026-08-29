@@ -17,6 +17,77 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-29 (c) - A bank's scorecard could not see its own valuation
+
+The excess return model shipped this morning drew a bar on the football field and the
+valuation pillar could not read it. So JPM, trading **8% above its own fair value**, was
+graded by three metrics none of which could express that — earnings yield, price-to-book
+and dividend yield — while one tab across, its own chart said it was expensive.
+
+`valuation_upside_pct` now joins the V pillar for `financials_bank` and
+`financials_insurance`, on the same anchor curve `dcf_upside_pct` already uses, shared by
+reference so a recalibration cannot reach one and miss the other.
+
+**The whole golden diff is four lines, all JPM:**
+
+| | before | after |
+|---|---|---|
+| valuation pillar | 60 | **55** |
+| composite | 72 | **70** |
+| tier | A | A — the floor is 65, so 70.3 is not close |
+| coverage / confidence | 100 / HIGH | unchanged |
+
+No other fixture moved, because no other fixture is a bank or an insurer.
+
+### What had to be argued before it could be added
+
+`sector_weights.py` carries a long note explaining why `analyst_upside` was **removed** from
+every pillar, and it sets three tests for any upside metric that wants back in. Two are
+cleared:
+
+- **Double counting** passes on that note's own criterion, which is about the numerator:
+  every other V metric divides a reported figure *or this platform's own model* by price,
+  while an analyst target divides someone's forecast of price by price. This one is the
+  model.
+- **The chart answering differently** passes, and inverts the analyst case: `triangulate`
+  *excludes* analyst targets from voting, which is what made scoring them a contradiction,
+  and it *includes* the excess return bar.
+
+The third is **not cleared and is not claimed to be.** That note measured seven fixtures
+and still called the size of the bias unsettled; this metric has one bank, no insurer, and
+the one REIT refuses. It ships on an argument, not a measurement, and the profile comment
+says so in those words.
+
+### REITs were left out on purpose
+
+`real_estate_reit` routes to the dividend discount model and still gets no scored metric.
+On O — the only REIT fixture — that model refuses once real market bars are supplied,
+because a beta regression of 0.4263 (R² 0.148) puts its cost of equity at 6.20% against a
+7.30% pre-tax cost of debt. Scoring a metric this repository has never once observed
+produce a value would be adding an unmeasurable input. The bar still gets drawn: the chart
+and the scorecard answer separate questions.
+
+### Two things the review caught that a green suite did not
+
+- **The one quantitative claim defending the design was wrong.** The profile comment said
+  replacing `p_b` with this metric gives JPM "the identical V of 55 and composite of 70".
+  It gives **56 and 71** — the earlier figure was computed off the *rounded* metric scores
+  when the pillar mean uses the unrounded ones. So keeping both metrics does cost a point
+  of each, and the comment now states that cost and what it buys: a valuation pillar that
+  still has a metric when the model refuses.
+- **A third placebo test.** `test_the_helper_routes_each_company_to_its_own_model` read its
+  expected value out of `INTRINSIC_MODELS`, the same table the dispatcher reads. Swapping
+  the two entries moves both sides together, so JPM could be valued by the REIT model with
+  the test still green — demonstrated, then fixed by naming the function instead.
+
+Also corrected: a comment claiming the peer set was what kept the scorecard and the chart
+on one beta. Measured, the peers are a **no-op for JPM** — `resolve_beta` prefers a
+regression when bars exist and a credible reported beta when they do not, so peers bind
+only for an issuer with neither. The injection still matters, for the narrower reason that
+one resolution cannot disagree with itself.
+
+742 -> **761 backend tests**, 951 offline. Twelve mutations, twelve caught.
+
 ## 2026-08-29 (b) - Seventeen mutations all caught was not evidence of coverage
 
 The two models shipped earlier today were mutation-tested: seventeen deliberate breakages

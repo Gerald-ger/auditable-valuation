@@ -2354,6 +2354,34 @@ def _classify(f: dict) -> str:
     return sector_weights.classify(f["info"], statement[1] if statement else None)
 
 
+# Which function implements each model in `sector_weights.VALUATION_MODELS`.
+# The table lives here rather than there because that module must not import
+# this one — it is the classifier, and this is what the classification selects.
+INTRINSIC_MODELS = {
+    "excess_return": excess_returns_valuation,
+    "dividend_discount": dividend_discount_valuation,
+}
+
+
+def intrinsic_valuation(f: dict, classification: str | None = None, **kwargs) -> dict | None:
+    """The intrinsic valuation that fits this company type, or None where none does.
+
+    Added 2026-08-29 for the scorecard, which needs the *answer* and not the
+    model's name. `full_analysis` and the comps endpoint keep their explicit
+    branches on purpose: each has to know which model ran, one to choose the
+    payload key and the other to choose which `football_field` argument to fill,
+    so routing through here would only make them ask again.
+
+    `classification` is accepted so a caller that has already classified does not
+    pay for it twice — `score_company` has, and re-deriving it there would let
+    the scorecard and the chart disagree about what a company is.
+    """
+    model = sector_weights.valuation_model_for(
+        _classify(f) if classification is None else classification)
+    model_fn = INTRINSIC_MODELS.get(model)
+    return model_fn(f, **kwargs) if model_fn else None
+
+
 def full_analysis(f: dict, peers: list[dict] | None = None,
                   market_bars: tuple[list[dict], list[dict]] | None = None) -> dict:
     return {

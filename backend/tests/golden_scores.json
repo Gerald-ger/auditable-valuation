@@ -184,7 +184,7 @@
  },
  "JPM": {
   "classification": "financials_bank",
-  "composite_score": 72,
+  "composite_score": 70,
   "confidence": "HIGH",
   "coverage_pct": 100,
   "flags": [],
@@ -227,9 +227,10 @@
     "metrics": {
      "dividend_yield": 51,
      "earnings_yield_fwd": 76,
-     "p_b": 52
+     "p_b": 52,
+     "valuation_upside_pct": 39
     },
-    "score": 60
+    "score": 55
    }
   },
   "tier": "A"

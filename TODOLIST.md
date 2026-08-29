@@ -38,6 +38,44 @@ against itself.
 
 ## Now
 
+### 🔵 The valuation-upside metric is scored on one observation *(2026-08-29)*
+
+`valuation_upside_pct` joined the V pillar for `financials_bank` and
+`financials_insurance`. The `analyst_upside` note at the top of `sector_weights.py`
+sets three tests for adding a scored upside metric. Two are cleared and stated there.
+The third is not:
+
+> An undeclared level bias. The curve in scoring.METRIC_ANCHORS scores 0% upside at 45
+> [...] the seven fixtures came out at 96/53/52/72/62/83/65 — mean **69** against a
+> centred 50. Seven names do not settle the size of the bias [...]
+
+Seven was called insufficient. This metric has **one** — JPM. There is no insurer
+fixture, and the one REIT refuses once real market bars are supplied, so the dividend
+discount model contributes nothing to the question either. What holds the risk down is
+that the curve is `dcf_upside_pct`'s, unchanged and already in use, and that unlike a
+published target an intrinsic model has no known reason to sit off-centre. That is an
+argument for proceeding, not a measurement.
+
+**Trigger:** a second bank or any insurer fixture. Two observations do not settle it
+either, but they are the first point at which the question can be asked at all.
+
+### ⚪ REITs route to a valuation model their scorecard cannot use *(2026-08-29)*
+
+`real_estate_reit` routes to `dividend_discount`, draws its bar on the football field,
+and is deliberately **not** given `valuation_upside_pct` in its scoring profile. On O —
+the only REIT fixture — the model refuses once `market_bars` are supplied, because a
+beta regression of 0.4263 (R² 0.148) puts the cost of equity at 6.20% against a 7.30%
+pre-tax cost of debt. Scoring a metric this repository has never observed produce a
+value would be adding an unmeasurable input.
+
+Not a defect in the model and not a gap in the routing: the chart and the scorecard
+answer separate questions, which is the distinction `VALUATION_MODELS` versus
+`SECTOR_PROFILES` exists to keep.
+
+**Reopening condition:** a REIT fixture whose cost of equity clears its own cost of
+debt, or a resolution of the CAPM inversion question recorded against the DCF's
+`cost_of_equity_below_debt` diagnostic. Both are decisions made elsewhere.
+
 ### 🟡 Four things the demo-mode review left open *(2026-08-27)*
 
 The review that produced demo mode found six defects in it; four were fixed in the same

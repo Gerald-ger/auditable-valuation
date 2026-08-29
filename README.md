@@ -1,7 +1,7 @@
 # Auditable Valuation
 
 [![CI](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml)
-[![932 offline tests](https://img.shields.io/badge/tests-932%20offline-brightgreen.svg)](#tests)
+[![951 offline tests](https://img.shields.io/badge/tests-951%20offline-brightgreen.svg)](#tests)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](#prerequisites)
 
@@ -54,7 +54,7 @@ this yourself, is in [docs/release-readiness.md](docs/release-readiness.md).
 | [Prerequisites](#prerequisites) · [Install](#install) · [Run it](#run-it) | getting it going |
 | [Demo mode](#demo-mode--no-api-key-no-network-no-ollama) | eight companies, no key, no network |
 | [Architecture](#architecture) | how the pieces fit |
-| [Tests](#tests) | 932 offline, and what they are for |
+| [Tests](#tests) | 951 offline, and what they are for |
 | [Project structure](#project-structure) | where everything lives |
 | [Licence and data provenance](#licence-and-data-provenance) | AGPL-3.0, and what it does not cover |
 
@@ -287,13 +287,13 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 742 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 761 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 190 tests
 ```
 
-**932 of those run offline**, against eight companies' real financial statements committed to
-this repo — 742 backend, 190 frontend, seconds. 27 more are `network`-marked and deselected by
+**951 of those run offline**, against eight companies' real financial statements committed to
+this repo — 761 backend, 190 frontend, seconds. 27 more are `network`-marked and deselected by
 default. CI runs both jobs on **ubuntu, Windows and macOS** with `fail-fast: false`, the backend
 one additionally on **Python 3.12 and 3.13** — eight legs — and gates lint and the frontend build
 as well as the tests.
@@ -424,7 +424,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 742-test suite runs entirely offline against them. Provenance and capture dates in
+  the 761-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.
