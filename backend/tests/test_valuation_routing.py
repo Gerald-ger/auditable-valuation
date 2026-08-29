@@ -108,6 +108,15 @@ def test_a_bank_gets_a_bar_where_it_used_to_get_only_a_strike_out():
     bar = bars[0]
     assert bar["low"] < bar["mid"] < bar["high"]
     assert bar["mid"] == pytest.approx(337.55, abs=0.01)
+    # The width too, not just the tick. Only the midpoint was pinned until
+    # 2026-08-29, and narrowing `EXCESS_ROE_STEPS` to a quarter of its span left
+    # every test passing while the bar a reader sees shrank fourfold — the bar
+    # *is* the output here, so its edges are the thing to pin.
+    assert (bar["low"], bar["high"]) == pytest.approx((290.655, 392.48), abs=0.01)
+    cols = fm.excess_returns_valuation(load_fundamentals("JPM"))["sensitivity"]["roe_cols"]
+    assert cols[-1] - cols[0] == pytest.approx(
+        fm.EXCESS_ROE_STEPS[-1] - fm.EXCESS_ROE_STEPS[0], abs=1e-9)
+    assert cols[-1] - cols[0] == pytest.approx(0.04, abs=1e-9)
 
 
 def test_the_struck_out_dcf_row_survives_and_names_its_replacement():

@@ -17,6 +17,44 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-29 (b) - Seventeen mutations all caught was not evidence of coverage
+
+The two models shipped earlier today were mutation-tested: seventeen deliberate breakages
+applied to the finished code, seventeen caught by the suite. That reads like a coverage
+result and it is not one. **Every one of those seventeen was aimed at code written minutes
+earlier, so they landed where the tests were.**
+
+Aimed somewhere else — a branch no fixture reaches, the width of a sweep, a multiplier that
+happens to equal 1.0 on the only fixture that exercises it — seventeen more mutations found
+**six that survived a green suite**:
+
+| | what could be broken with nothing turning red | exposure |
+|---|---|---|
+| excess return | the terminal growth cap deleted outright | every fixture's risk-free rate is above the 2.5% anchor, so `min` never picks the other argument |
+| excess return | its "capped at the risk-free rate" label hardcoded to the other value | same branch, never executed |
+| excess return | the ROE sweep narrowed to a quarter of its width | JPM's bar silently shrinks from 290.66-392.48 to a quarter of that; only its midpoint was pinned |
+| dividend discount | **the FX conversion removed from the fair value** | O reports and trades in USD, so the multiplier is 1.0 there. On a CNY reporter it is worth 1.10x, and the DCF pins this in eight places to this model's zero |
+| dividend discount | the trailing yield swapped to next year's dividend | 4.99% becomes 5.21%, pinned by nothing |
+| dividend discount | `terminal_value_high`'s 0.75 threshold moved to 0.95 | O sits at 62.7%, so the flag is False either way and had never fired |
+
+### What closed them
+
+Five tests and one rename, no change to any valuation. The cap now has a witness that does
+not need monkeypatching: a CNY reporter discounts at ChinaBond's rate, which `conftest`
+already pins below the anchor, so the capped branch runs through the same currency-consistent
+path the DCF takes for 0700.HK. The FX multiplier is checked against the 1.10 CNY/HKD rate
+the fixtures pin, with the cost of equity and terminal growth both overridden so the currency
+change moves exactly one thing.
+
+`dividend_yield_on_price` is now **`trailing_dividend_yield`**. Three numbers on O have a
+claim to the name "dividend yield" — trailing 4.99%, forward 5.21%, and yfinance's own 5.17%
+— and a field named for none of them was all three at once. Nothing consumed it yet, which
+is the only reason renaming was free.
+
+737 -> **742 backend tests**, 932 offline. The eighteen mutations that now exist are all
+caught. That is still not a coverage result, and the honest version of the claim is narrower
+than it looks: it says those eighteen places are pinned.
+
 ## 2026-08-29 - Three company types the DCF was never going to value, and the two models that do
 
 A discounted cash flow needs free cash flow to discount. For a bank there is none to speak

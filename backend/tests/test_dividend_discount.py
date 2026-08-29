@@ -390,6 +390,119 @@ def test_the_terminal_carries_most_of_the_answer_and_says_so(valued):
         valued["fair_value_per_share"], abs=0.01)
 
 
+# ── currency, which the only REIT fixture cannot exercise ─────────────
+
+def test_a_statement_currency_that_differs_from_the_traded_one_is_converted():
+    """Dividends per share are a reporting-currency figure and the price is a
+    traded one. O reports and trades in USD, so `conv` is 1.0 on the only REIT
+    in the fixture set and **deleting the conversion entirely leaves the whole
+    suite green** — found by mutation 2026-08-29. For reference, the DCF's tests
+    pin the FX basis in eight places and the excess return model's in one; this
+    model's in none.
+
+    Driven here as CNY reporting against an HKD listing, the pair `conftest`
+    already pins at 1.10, so the multiplier is checked against a rate no part of
+    this test computed. Cost of equity and terminal growth are both overridden
+    so that the currency change moves exactly one thing: without that, switching
+    the reporting currency also re-points the risk-free rate at ChinaBond and
+    the two effects arrive together.
+    """
+    plain = fm.dividend_discount_valuation(
+        load_fundamentals("O"), cost_of_equity_override=0.10, terminal_growth=0.025)
+
+    crossed = load_fundamentals("O")
+    crossed["info"]["financialCurrency"] = "CNY"
+    crossed["info"]["currency"] = "HKD"
+    converted = fm.dividend_discount_valuation(
+        crossed, cost_of_equity_override=0.10, terminal_growth=0.025)
+
+    assert plain["assumptions"]["fx_basis"] == "single_currency"
+    assert plain["assumptions"]["fx_rate_used"] is None
+    assert converted["assumptions"]["fx_basis"] == "converted"
+    assert converted["assumptions"]["fx_rate_used"] == pytest.approx(1.10)
+
+    # Both legs scale by the rate exactly, so the conversion is applied once to
+    # the whole valuation rather than to whichever line someone remembered.
+    assert converted["dividend_pv"] / plain["dividend_pv"] == pytest.approx(1.10, abs=1e-6)
+    assert converted["terminal_value_pv"] / plain["terminal_value_pv"] == pytest.approx(1.10, abs=1e-6)
+    assert converted["fair_value_per_share"] == pytest.approx(
+        plain["fair_value_per_share"] * 1.10, abs=0.01)
+
+    # The dividend itself stays in reporting units — it is an input, not an
+    # answer, and converting it twice is the other way to get this wrong.
+    assert converted["assumptions"]["dividend_per_share"] == pytest.approx(
+        plain["assumptions"]["dividend_per_share"], abs=1e-9)
+
+
+def test_without_a_rate_every_cross_currency_comparison_is_withheld():
+    """Not converted at a guessed rate and not compared across two units. The
+    per-share figure is still reported, because it is a valid answer in the
+    reporting currency; everything that puts it beside the traded price is not.
+    """
+    stranded = load_fundamentals("O")
+    stranded["info"]["financialCurrency"] = "USD"
+    stranded["info"]["currency"] = "HKD"   # no USD->HKD rate is pinned
+    out = fm.dividend_discount_valuation(stranded)
+
+    assert out["assumptions"]["fx_basis"] == "rate_unavailable"
+    assert out["fair_value_per_share"] == pytest.approx(69.51, abs=0.01)
+    assert out["upside_pct"] is None
+    assert out["diagnostics"]["implied_cost_of_equity"] is None
+    assert out["diagnostics"]["trailing_dividend_yield"] is None
+
+
+def test_the_terminal_growth_cap_binds_for_a_reporter_in_a_low_rate_currency():
+    """The cap reached without monkeypatching anything, which is the better
+    witness: a CNY reporter discounts at ChinaBond's rate, and `conftest` pins
+    that low enough that `min(TERMINAL_GROWTH, rf)` picks the rate rather than
+    the platform anchor."""
+    crossed = load_fundamentals("O")
+    crossed["info"]["financialCurrency"] = "CNY"
+    crossed["info"]["currency"] = "HKD"
+    a = fm.dividend_discount_valuation(crossed)["assumptions"]
+
+    assert a["risk_free_rate"] == pytest.approx(0.011, abs=1e-6)
+    assert a["terminal_growth"] == pytest.approx(0.011, abs=1e-6)
+    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
+    assert a["terminal_growth"] < a["terminal_growth_anchor"]
+
+
+def test_the_yield_names_which_dividend_it_divides_by(valued):
+    """Three different numbers have a claim to the name "dividend yield" on this
+    company: the trailing 4.99%, the forward 5.21%, and yfinance's own 5.17%.
+    The field was called `dividend_yield_on_price` and was pinned by nothing —
+    swapping it to the forward figure left the suite green.
+    """
+    a = valued["assumptions"]
+    trailing = a["dividend_per_share"] / valued["current_price"]
+    forward = a["dividend_per_share"] * (1 + a["growth_rate_explicit"]) / valued["current_price"]
+
+    assert valued["diagnostics"]["trailing_dividend_yield"] == pytest.approx(
+        trailing, abs=1e-6)
+    assert valued["diagnostics"]["trailing_dividend_yield"] != pytest.approx(
+        forward, abs=1e-4)
+    assert trailing == pytest.approx(0.0499, abs=0.0001)
+    assert forward == pytest.approx(0.0521, abs=0.0001)
+
+
+def test_the_terminal_weight_flag_has_a_threshold_that_something_crosses(reit, valued):
+    """62.7% on the base case, so the flag is False — and it is False whether
+    the line reads 0.75 or 0.95, which is how the threshold shipped pinned by
+    nothing. Pushed over it here by raising terminal growth alone.
+
+    Lowering the cost of equity would have been the obvious lever and cannot be
+    used: below 7.30% the inversion refusal fires first, so on this company
+    there is no cost of equity that produces a terminal-heavy valuation at all.
+    """
+    assert valued["diagnostics"]["terminal_value_share"] == pytest.approx(0.6271, abs=1e-4)
+    assert valued["diagnostics"]["terminal_value_high"] is False
+
+    heavy = fm.dividend_discount_valuation(reit, terminal_growth=0.05)
+    assert heavy["diagnostics"]["terminal_value_share"] == pytest.approx(0.7883, abs=1e-4)
+    assert heavy["diagnostics"]["terminal_value_high"] is True
+    assert heavy["fair_value_per_share"] == pytest.approx(127.50, abs=0.01)
+
+
 # ── the envelope ──────────────────────────────────────────────────────
 
 def test_it_returns_no_aggregate_it_never_computed(reit, valued):

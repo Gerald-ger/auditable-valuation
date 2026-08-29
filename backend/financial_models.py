@@ -1895,7 +1895,12 @@ def dividend_discount_valuation(f: dict, growth_rate: float | None = None,
             "cost_of_equity_below_debt": ke < cost_of_debt_pre_tax,
             "cost_of_equity_headroom": round(ke - cost_of_debt_pre_tax, 4),
             "implied_cost_of_equity": implied_ke,
-            "dividend_yield_on_price": round(base_dps * conv / price, 6)
+            # Trailing, and named so. This is the newest *reported fiscal
+            # year's* cash dividends per share over today's price, which is
+            # neither the forward yield nor the vendor's `dividendYield` — on O
+            # the three read 4.99%, 5.21% and 5.17%. A field called
+            # `dividend_yield` would have been all three at once.
+            "trailing_dividend_yield": round(base_dps * conv / price, 6)
                                        if comparable else None,
         },
         "sensitivity": {

@@ -111,10 +111,35 @@ def test_retention_growth_alone_would_make_the_terminal_value_negative(valued):
 
 
 def test_terminal_growth_is_the_same_cap_the_dcf_uses(valued):
+    """Rewritten 2026-08-29 because the first version could not fail.
+
+    It asserted `terminal_growth == min(fm.TERMINAL_GROWTH, risk_free_rate)`,
+    which restates the source line — change one and the other changes with it —
+    and then `terminal_growth_source in (both possible values)`, which cannot
+    distinguish the branches. Deleting the `min` outright left all 737 tests
+    green, found by mutation.
+
+    Every fixture in the set reports a currency whose risk-free rate is above
+    the 2.5% anchor, so the capped branch never runs on any of them. A CNY
+    reporter does: `conftest` pins ChinaBond low enough that the rate wins, and
+    that is the same currency-consistent discounting path the DCF already takes
+    for 0700.HK — so this exercises production behaviour rather than a
+    monkeypatched stand-in.
+    """
     a = valued["assumptions"]
-    assert a["terminal_growth"] == min(fm.TERMINAL_GROWTH, a["risk_free_rate"])
-    assert a["terminal_growth_source"] in ("platform_default",
-                                           "capped_at_risk_free_rate")
+    assert a["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert a["terminal_growth_source"] == "platform_default"
+    assert a["risk_free_rate"] > fm.TERMINAL_GROWTH, "or the cap is not the untested one"
+
+    crossed = load_fundamentals("JPM")
+    crossed["info"]["financialCurrency"] = "CNY"
+    crossed["info"]["currency"] = "HKD"
+    capped = fm.excess_returns_valuation(crossed)["assumptions"]
+
+    assert capped["risk_free_rate"] == pytest.approx(0.011, abs=1e-6)
+    assert capped["terminal_growth"] == pytest.approx(0.011, abs=1e-6)
+    assert capped["terminal_growth_source"] == "capped_at_risk_free_rate"
+    assert capped["terminal_growth"] < capped["terminal_growth_anchor"]
 
 
 # ── the assumption, printed rather than buried ───────────────────────
