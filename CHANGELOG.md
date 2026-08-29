@@ -17,6 +17,83 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-29 (e) - A valuation you can read, and now one you can argue with
+
+The DCF has had a what-if endpoint since long before the excess return and dividend discount
+models existed. They had none, so the Financial Models tab could show a bank its valuation
+and not let anyone ask what it would be at a different return on equity — which is most of
+what a valuation is for.
+
+`POST /api/stock/{ticker}/intrinsic` mirrors `custom_dcf`, and the panel gains three inputs
+and a Recalculate button. Blank means measured, so a blank form recalculates to exactly the
+figures already on screen.
+
+**For a REIT this is the only route to a valuation at all.** O's dividend model declines on
+the production path — a beta regression of 0.4263 puts its cost of equity at 6.20% against a
+7.30% pre-tax cost of debt — so the controls are rendered *above* the refusal branch rather
+than after it. A reader who thinks 0.4263 is an artefact of a low-R² fit rather than a risk
+measure can say so, in a number, and watch what the model does with it. Had the inputs sat
+below that branch, the one company type that most needs them would have been the only one
+never shown them.
+
+### What an override may and may not do
+
+| | holds against a user? |
+|---|---|
+| `Ke ≤ terminal growth` | **yes** — a Gordon terminal has no meaning divided by zero |
+| REIT `Ke < pre-tax cost of debt` | **yes** — 7.29% refuses, 7.31% does not |
+| `GROWTH_VALIDITY_RANGE` on the dividend series | **no**, by design |
+
+The third is the interesting one. That band rejects a *measured* series compounding at an
+impossible rate — a judgement about vendor data — and it is skipped entirely when the caller
+supplies the rate, because a figure someone typed is not a measurement. The first draft of
+this endpoint's docstring claimed overrides bypass nothing, which was overstated against the
+repository's own P3 test comment saying exactly the opposite.
+
+### No bounds on the numbers, and the reason is measured
+
+A cost of equity of 2.51% — one basis point above the refusal — values JPM at **256,233.12**
+a share against a price of 359.24. That is not a typo-proof input, and it was tempting to
+bound it. What stopped it was measuring what the model already says:
+
+| cost of equity | fair value | terminal share | flagged |
+|---|---|---|---|
+| 2.51% | 256,233.12 | **99.87%** | yes |
+| 4.00% | 1,617.30 | 81.07% | yes |
+| 5.00% | 936.83 | 69.85% | no |
+| 8.77% (measured) | 330.52 | 36.12% | no |
+
+The platform's conventional 75% terminal-share line fires on exactly the region that blows
+up. A ceiling would have had to invent a constant to do worse, and `custom_dcf` has none
+either — `wacc_override` has the identical `1/(w − g)` shape.
+
+### Three things the review caught
+
+- **A field left out on a false premise.** `tax_rate` was omitted with the stated reason that
+  neither model reads it — measured at 21% against 45%, not one output moves. That
+  measurement was taken **without peers**. `resolve_beta` unlevers a peer beta as
+  `Bu = Bl / (1 + (1 − Tc) × D/E)`, so the tax rate sets the beta whenever the peer ladder is
+  reached, which this endpoint reaches for any issuer whose reported beta is outside the
+  credibility band. Measured with three peers and an incredible beta: at 21% the beta
+  relevers to 1.7855 and the fair value is 192.13; at 45%, 1.5937 and 215.41. **Twenty-three
+  points a share** from the field that "could not move the answer." It is now in the model.
+- **Copy that named a company it was not looking at.** The panel's note illustrated the
+  unbounded inputs with JPM's figures and the words "this bank" — rendered unconditionally,
+  so every REIT was told, in the platform's own voice, a fact about a different company. It
+  now points at the terminal share on screen and names no one.
+- **A fifth placebo.** The test for "the growth band does not bind a supplied rate" used
+  30%, which sits *inside* the −50%..200% band, so it would have passed whether the skip
+  existed or not. A test of an escape has to stand outside what it claims to escape; it uses
+  250% now, and asserts the band still binds a corrupt measured series.
+
+Also pinned: the endpoint classifies off the statement-verified free cash flow rather than
+`info["freeCashflow"]`. Swapping them left all 774 tests green — no committed fixture flips
+— but RIVN with a positive vendor figure does, from `pre_profit_growth` to `consumer`, whose
+DCF applies and whose refusal would have sent the caller somewhere else entirely.
+
+762 -> **776 backend** and 200 -> **205 frontend**, 981 offline. Bundle 486.90 -> 488.44 kB.
+Sixteen mutations, sixteen caught.
+
 ## 2026-08-29 (d) - The Financial Models tab had a panel for the model that does not apply
 
 Since this morning a bank has had an excess return valuation and a REIT a dividend discount

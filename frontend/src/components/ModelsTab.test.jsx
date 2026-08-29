@@ -18,7 +18,8 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ModelsTab from './ModelsTab';
-import { render, flush } from '../test-utils';
+import { act } from 'react';
+import { render, flush, click } from '../test-utils';
 
 /**
  * `get` and `post` only. This component's import line is
@@ -358,6 +359,114 @@ describe('ModelsTab', () => {
     expect(titles.some((t) => t.includes('aggregate'))).toBe(false);
   });
 
+  /**
+   * React skips `onChange` when the value it last wrote matches the one being
+   * assigned, so setting `.value` directly is swallowed on a controlled input.
+   * Going through the prototype setter is what makes it see the change — the
+   * same helper `PortfolioTab.test.jsx` needs, for the same reason.
+   */
+  const setValue = (input, value) => {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value').set;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+
+  const recalcWith = async (container, values) => {
+    const inputs = [...container.querySelectorAll('.intrinsic-panel input')];
+    values.forEach((v, i) => v !== null && setValue(inputs[i], v));
+    await act(async () => {
+      click(container.querySelector('.intrinsic-panel button'));
+    });
+  };
+
+  it('sends a bank its own driver, as a fraction, and omits the other model\'s', async () => {
+    const { container } = await mount({
+      analysisBody: analysis({ excess_return: EXCESS_RETURN }),
+    });
+    post.mockResolvedValue({ ...EXCESS_RETURN, fair_value_per_share: 401.5 });
+
+    // Driver, terminal growth, cost of equity — the third left blank.
+    await recalcWith(container, ['18', '2', null]);
+
+    expect(post).toHaveBeenCalledWith('/stock/AAPL/intrinsic', {
+      roe: 0.18,
+      terminal_growth: 0.02,
+      // Blank means measured, the convention the DCF controls already use.
+      cost_of_equity: null,
+    });
+    // `growth_rate` is the other model's input and the endpoint refuses a body
+    // carrying it, so it must not be sent at all rather than sent as null.
+    expect(Object.keys(post.mock.calls[0][1])).not.toContain('growth_rate');
+    // And the answer on screen is the one that came back, not the one loaded.
+    expect(container.querySelector('.intrinsic-panel').textContent).toContain('401.5');
+  });
+
+  it('sends a REIT dividend growth rather than a return on equity', async () => {
+    const { container } = await mount({
+      analysisBody: analysis({ dividend_discount: DIVIDEND_DISCOUNT }),
+    });
+    post.mockResolvedValue(DIVIDEND_DISCOUNT);
+
+    await recalcWith(container, ['6', null, '9']);
+
+    expect(post).toHaveBeenCalledWith('/stock/AAPL/intrinsic', {
+      growth_rate: 0.06, terminal_growth: null, cost_of_equity: 0.09,
+    });
+    expect(Object.keys(post.mock.calls[0][1])).not.toContain('roe');
+  });
+
+  it('keeps the controls on a refusal, which is the only way out of one', async () => {
+    // O's model declines at its regressed beta. If the inputs lived below the
+    // refusal branch the one company type that most needs them would be the
+    // only one never shown them — so the escape hatch is asserted, not assumed.
+    const { container } = await mount({
+      analysisBody: analysis({ dividend_discount: REFUSED_DDM }),
+    });
+    expect(container.querySelector('.intrinsic-panel .notice-banner')).not.toBeNull();
+    expect(container.querySelectorAll('.intrinsic-panel input')).toHaveLength(3);
+
+    post.mockResolvedValue(DIVIDEND_DISCOUNT);
+    await recalcWith(container, [null, null, '9']);
+
+    expect(post).toHaveBeenCalledWith('/stock/AAPL/intrinsic', {
+      growth_rate: null, terminal_growth: null, cost_of_equity: 0.09,
+    });
+    // The refusal is replaced by the valuation it was standing in for.
+    const panel = container.querySelector('.intrinsic-panel');
+    expect(panel.querySelector('.notice-banner')).toBeNull();
+    expect(panel.textContent).toContain('69.51');
+  });
+
+  it('shows a rejected request instead of blanking the panel', async () => {
+    // The endpoint 400s a body that names the wrong model's input. That has to
+    // read as an answer, not as an empty tab — the same treatment a model's own
+    // refusal gets, and the failure `ErrorBoundary` would otherwise turn into an
+    // unmounted tab.
+    const { container } = await mount({
+      analysisBody: analysis({ excess_return: EXCESS_RETURN }),
+    });
+    post.mockRejectedValue(new Error('roe is not an input to the dividend discount model'));
+
+    await recalcWith(container, ['18', null, null]);
+
+    const panel = container.querySelector('.intrinsic-panel');
+    expect(panel.querySelector('.notice-banner').textContent).toContain('roe is not an input');
+    expect(panel.querySelectorAll('input')).toHaveLength(3);
+  });
+
+  it('offers the measured figures as placeholders so blank is not blank', async () => {
+    const { container } = await mount({
+      analysisBody: analysis({ excess_return: EXCESS_RETURN }),
+    });
+    const inputs = [...container.querySelectorAll('.intrinsic-panel input')];
+
+    expect(inputs.map((el) => el.placeholder)).toEqual(['15.80', '2.50', '8.77']);
+    expect(inputs.every((el) => el.value === '')).toBe(true);
+  });
+
   it('renders no intrinsic panel for a company whose DCF applies', async () => {
     // The AAPL shape: `full_analysis` gates both keys to null off their own
     // company type, and the mock leaves them undefined, which is the same
@@ -382,9 +491,12 @@ describe('ModelsTab', () => {
     // Above, not below. The DCF panel carries the banner saying it does not
     // apply here, so meeting it first would answer the reader's question with
     // the model that has no answer.
+    // Keyed on `.dcf-panel` rather than on `.dcf-controls`: this panel now
+    // carries controls of its own, styled by the same class, so the input row
+    // stopped being the thing that identifies the DCF.
     const panels = [...container.querySelectorAll('.panel')];
     expect(panels.indexOf(panel)).toBeLessThan(
-      panels.findIndex((el) => el.querySelector('.dcf-controls')),
+      panels.findIndex((el) => el.classList.contains('dcf-panel')),
     );
 
     // Aggregate, and abbreviated as such — the other model's bridge is per share

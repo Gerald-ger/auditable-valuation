@@ -538,6 +538,124 @@ def custom_dcf(ticker: str, assumptions: DcfAssumptions):
     )
 
 
+# Which override each model calls its first-order driver. They are not
+# interchangeable and the endpoint below refuses to treat them as such: a return
+# on equity and a dividend growth rate are different quantities, and a body that
+# quietly dropped the one that did not apply would let a caller believe it had
+# changed something.
+INTRINSIC_DRIVERS = {"excess_return": "roe", "dividend_discount": "growth_rate"}
+
+
+class IntrinsicAssumptions(BaseModel):
+    """What-ifs for the two models a DCF cannot build. `None` means "measured".
+
+    Same convention as `DcfAssumptions`: an omitted field is the platform's own
+    figure, and sending one overrides it. `terminal_growth` sent as a number
+    overrides both ceilings, which is what a what-if is for.
+
+    `tax_rate` looks inert here and is not. Neither model discounts at WACC, so
+    the tax shield on debt reaches nothing they compute — measured on the JPM
+    and O fixtures 2026-08-29, 21% against 45% changes not one output, only the
+    reported `tax_rate`, `cost_of_debt_after_tax` and `wacc`.
+
+    That measurement was taken without peers, and it is why the first draft of
+    this model left the field out on the stated grounds that neither model reads
+    it. **That was false.** `resolve_beta` unlevers a peer beta as
+    `Bu = Bl / (1 + (1 - Tc) x D/E)` and relevers it to the target, so the tax
+    rate sets the beta whenever the peer ladder is reached — which this endpoint
+    reaches through `_peer_beta_inputs` for any issuer whose own reported beta
+    is outside the credibility band, a condition the beta comment records
+    hitting an entire sector at once. Measured on a JPM fixture with an
+    incredible beta and three peers: at 21% the beta relevers to 1.7855 and the
+    fair value is 192.13; at 45% it is 1.5937 and 215.41. Twenty-three points a
+    share, from the field that "could not move the answer". Found in
+    adversarial review 2026-08-29.
+    """
+
+    # Excess return only: the return on equity whose spread over the cost of
+    # equity is the whole valuation.
+    roe: float | None = None
+    # Dividend discount only: the rate the dividend per share compounds at
+    # through the explicit stage.
+    growth_rate: float | None = None
+    terminal_growth: float | None = None
+    # Named for what it is rather than `wacc_override`. These models never form
+    # a WACC — there is no debt weighting in either — so borrowing the DCF's
+    # field name would invite a reader to think the two mean the same thing.
+    cost_of_equity: float | None = None
+    # None => statutory rate for the listing's jurisdiction (HKD 16.5%, USD 21%),
+    # exactly as `DcfAssumptions` has it. See the note above for why it is here.
+    tax_rate: float | None = None
+
+
+@app.post("/api/stock/{ticker}/intrinsic")
+def custom_intrinsic(ticker: str, assumptions: IntrinsicAssumptions):
+    """Re-run whichever intrinsic model fits this company, with overrides.
+
+    Mirrors `custom_dcf` above, including its error convention: a model that
+    refuses returns its `{"error": ...}` with a 200, because a refusal is a
+    result the panel renders rather than a failure of the request. The 400s
+    below are different — they mean the request itself does not describe
+    anything this company has.
+
+    **The two inequality refusals stand against a user; the data-quality band
+    does not, and the difference is the point.** Both models assign the supplied
+    cost of equity before their guards run, so a rate at or below terminal
+    growth still refuses and, for a REIT, a rate below its own pre-tax cost of
+    debt still refuses. Those are statements about arithmetic and seniority: a
+    user is no more entitled to divide by a negative spread than the platform
+    is. `GROWTH_VALIDITY_RANGE` is a different kind of check — it rejects a
+    *measured* dividend series compounding at an impossible rate, which is a
+    judgement about vendor data — and it is skipped entirely when the caller
+    supplies the rate, because a figure someone typed is not a measurement.
+
+    So nothing here bounds the magnitude of `roe` or `growth_rate`, and that is
+    deliberate rather than missing. A cost of equity of 2.51% — one basis point
+    above the refusal — values JPM at 256,233.12 a share against a price of
+    359.24, and no invented ceiling would have been the right way to say so.
+    What says so is the model's own `terminal_value_share`: 99.87% at that rate,
+    against the conventional 75% line the panel already flags, and 81.07% at a
+    4% cost of equity. The diagnostic that exists catches the region that blows
+    up, measured across the sweep 2026-08-29; a bound would have had to invent
+    a number to do worse.
+    """
+    f = _guard(_fundamentals, ticker)
+    # Classified the same two lines `comps_endpoint` uses, off the
+    # statement-verified free cash flow rather than `info["freeCashflow"]` —
+    # see `sector_weights.classify`. Passed into the model below so one request
+    # cannot classify the same company twice and disagree with itself.
+    statement_fcf = statements.statement_fcf(f["cash_flow"])
+    classification = sector_weights.classify(
+        f["info"], statement_fcf[1] if statement_fcf else None)
+    model = sector_weights.valuation_model_for(classification)
+    driver = INTRINSIC_DRIVERS.get(model)
+    if driver is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No intrinsic model applies to a {classification.replace('_', ' ')}"
+                   + (". A discounted cash flow does — POST to /dcf instead."
+                      if model else ". Neither this nor a discounted cash flow does."))
+
+    supplied = {k: v for k in INTRINSIC_DRIVERS.values()
+                if (v := getattr(assumptions, k)) is not None}
+    if wrong := set(supplied) - {driver}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{', '.join(sorted(wrong))} is not an input to the "
+                   f"{model.replace('_', ' ')} model this company uses; it takes "
+                   f"{driver}.")
+
+    return financial_models.intrinsic_valuation(
+        f, classification,
+        terminal_growth=assumptions.terminal_growth,
+        cost_of_equity_override=assumptions.cost_of_equity,
+        tax_rate=assumptions.tax_rate,
+        peers=_peer_beta_inputs(f),
+        market_bars=_market_bars(ticker),
+        **supplied,
+    )
+
+
 @app.get("/api/stock/{ticker}/peers")
 def peers(ticker: str):
     return {"suggested": comps.suggest_peers(ticker)}

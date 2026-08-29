@@ -838,7 +838,7 @@ function TrustFlagBadge({ dcf }) {
  * and nesting them would invite the comparison the football field deliberately
  * declines to draw.
  */
-function IntrinsicPanel({ analysis }) {
+function IntrinsicPanel({ analysis, ticker }) {
   // Exactly one of the two is non-null for any company: `full_analysis` gates
   // each on `valuation_model_for(classification)`, and that returns one model.
   // An errored model is still an object, so it is picked here and its refusal
@@ -849,13 +849,89 @@ function IntrinsicPanel({ analysis }) {
     : analysis.dividend_discount
       ? 'dividend_discount'
       : null;
+
+  // Declared before the early return below: hooks cannot be called
+  // conditionally, and this component renders for companies that have no
+  // intrinsic model at all.
+  const [driver, setDriver] = useState('');
+  const [termGrowth, setTermGrowth] = useState('');
+  const [ke, setKe] = useState('');
+  const [override, setOverride] = useState(null);
+  const [busy, setBusy] = useState(false);
+
   if (!model) return null;
 
-  const v = analysis[model];
   const bank = model === 'excess_return';
+  // A recalculation replaces what the page loaded with, refusals included. That
+  // is the escape hatch the endpoint exists for: O's model declines at its
+  // regressed beta of 0.4263, and a reader who thinks that is an artefact of a
+  // low-R-squared fit rather than a risk measure can supply a rate and watch
+  // what the model does with it — which is the whole difference between a
+  // valuation you can read and one you can argue with.
+  const v = override ?? analysis[model];
   const title = bank
     ? 'Excess return: residual income on book equity'
     : 'Dividend discount: two-stage, per share';
+
+  async function recalc() {
+    setBusy(true);
+    try {
+      // Empty means "use the measured figure", the convention the DCF controls
+      // beneath this panel already use. Sending the displayed number instead
+      // would make every recalculation look like a deliberate override.
+      const rate = (x) => (x === '' ? null : Number(x) / 100);
+      setOverride(await post(`/stock/${ticker}/intrinsic`, {
+        [bank ? 'roe' : 'growth_rate']: rate(driver),
+        terminal_growth: rate(termGrowth),
+        cost_of_equity: rate(ke),
+      }));
+    } catch (e) {
+      setOverride({ error: e.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Built once and rendered in both branches below. Putting them after the
+  // refusal branch would leave a REIT that declines at its own cost of equity
+  // with no way to supply a different one — the company type that most needs
+  // these inputs would be the only one never shown them.
+  const controls = (
+    <div className="dcf-controls">
+      <label>
+        {bank ? 'Return on equity %' : 'Dividend growth %'}
+        <input
+          value={driver}
+          placeholder={v.assumptions
+            ? ((bank ? v.assumptions.roe : v.assumptions.growth_rate_explicit) * 100)
+              .toFixed(2)
+            : ''}
+          onChange={(e) => setDriver(e.target.value)}
+        />
+      </label>
+      <label>
+        Terminal growth %
+        <input
+          value={termGrowth}
+          placeholder={v.assumptions ? (v.assumptions.terminal_growth * 100).toFixed(2) : ''}
+          onChange={(e) => setTermGrowth(e.target.value)}
+        />
+      </label>
+      <label>
+        Cost of equity %
+        <input
+          value={ke}
+          placeholder={v.assumptions
+            ? (v.assumptions.cost_of_equity_used * 100).toFixed(2)
+            : ''}
+          onChange={(e) => setKe(e.target.value)}
+        />
+      </label>
+      <button className="primary" onClick={recalc} disabled={busy}>
+        {busy ? 'Calculating…' : 'Recalculate'}
+      </button>
+    </div>
+  );
 
   if (v.error) {
     return (
@@ -864,10 +940,12 @@ function IntrinsicPanel({ analysis }) {
         <div className="notice-banner">{v.error}</div>
         <div className="chart-note">
           A discounted cash flow does not apply to this company type either, so there is
-          no intrinsic fair value on this tab for it. The peer multiples and the football
-          field on the Scorecard are what remain — a refusal is a result here, not a gap
-          waiting to be filled.
+          no intrinsic fair value on this tab for it — a refusal is a result here, not a
+          gap waiting to be filled. The inputs below re-run the model on assumptions you
+          supply; what it refuses about arithmetic and seniority it goes on refusing
+          whatever you type.
         </div>
+        {controls}
       </div>
     );
   }
@@ -900,6 +978,8 @@ function IntrinsicPanel({ analysis }) {
           ? 'A bank’s book equity is regulatory capital rather than an accounting artefact, so what a share is worth is what its return on equity earns above the cost of that equity, compounded. Deposits are raw material; there is no free cash flow here to discount.'
           : 'A REIT distributes by statute rather than by choice, so the dividend is the cash flow rather than a residual left after one. Per share throughout — REITs fund acquisitions by issuing equity, and the aggregate dividend grows with the share count as well as with the business.'}
       </div>
+
+      {controls}
 
       <div className="dcf-result">
         <div>
@@ -1127,9 +1207,12 @@ function IntrinsicPanel({ analysis }) {
       )}
 
       <div className="chart-note">
-        Read-only. The DCF panel below recalculates from its inputs through an endpoint
-        this model does not have yet, and controls that cannot recalculate would say less
-        than none.
+        Every input is empty by default and empty means measured, so recalculating a blank
+        form returns exactly the figures already on screen. Nothing bounds what you may
+        type, and the terminal share above is what says when a figure has stopped meaning
+        anything: a cost of equity near the terminal growth rate puts almost the whole
+        valuation in the perpetuity, and the model flags that past 75% rather than
+        refusing it. An invented ceiling would only have hidden the same arithmetic.
         {a.fx_basis === 'converted' && (
           <>
             {' '}Every figure above is converted from {a.reporting_currency} at{' '}
@@ -1240,7 +1323,7 @@ export default function ModelsTab({ ticker }) {
       {/* Above the DCF panel, not below it: for these company types the DCF
           panel's own banner says it does not apply, and the model that does
           apply should be the one the reader meets first. */}
-      <IntrinsicPanel analysis={analysis} />
+      <IntrinsicPanel analysis={analysis} ticker={ticker} />
 
       <div className="panel dcf-panel">
         <div className="panel-title">

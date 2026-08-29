@@ -13,14 +13,14 @@ the README on 2026-08-28; the three commands to run it are still
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 762 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 776 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 200 tests
+cd frontend; npm test                                   # 205 tests
 ```
 
-Of the 789 collected, 27 are `network`-marked and deselected by default. One more skips
+Of the 803 collected, 27 are `network`-marked and deselected by default. One more skips
 unless OpenBB is installed — it checks that the settings path `comps.py` computes still
-matches OpenBB’s own constant, which is unanswerable without it, so CI reports 761 and a skip.
+matches OpenBB’s own constant, which is unanswerable without it, so CI reports 775 and a skip.
 
 The frontend suite runs in vitest's default `node` environment; seven component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
