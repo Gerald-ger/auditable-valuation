@@ -142,6 +142,34 @@ def test_the_grid_marks_every_rate_the_headline_would_refuse(reit):
         assert all(v is not None for v in row["values"])
 
 
+def test_the_refused_rows_are_reachable_on_the_path_a_reit_reader_takes(reit):
+    """Where the grid contradiction was actually live.
+
+    The test above measures without market bars, and production never does that:
+    with them O's beta regresses to 0.4263 and the model refuses outright — no
+    grid, no band, nothing to mark. Presenting the band movement as a published
+    bar that moved was wrong about the only REIT fixture in the set, corrected in
+    the changelog 2026-08-30.
+
+    The reachable case is the one P5b built for exactly this company. A reader
+    who supplies a cost of equity gets a valuation, and the grid still sweeps
+    +/-1pp around *their* rate — so it can still cross the floor underneath them.
+    That is the screen the refusal banner sends them to, which makes it the one
+    place the mark has to work.
+    """
+    bars = load_market_bars("O")
+    assert "pre-tax cost of debt" in fm.dividend_discount_valuation(
+        reit, market_bars=bars)["error"], "production refuses, or this proves nothing"
+
+    for supplied, fair_value, refused_rows in ((0.075, 69.65, 2), (0.08, 63.26, 1)):
+        out = fm.dividend_discount_valuation(
+            reit, cost_of_equity_override=supplied, market_bars=bars)
+        assert out["fair_value_per_share"] == pytest.approx(fair_value)
+        rows = out["sensitivity"]["rows"]
+        assert sum(r["below_cost_of_debt"] for r in rows) == refused_rows
+        assert len(rows) == 5
+
+
 def test_a_period_whose_dividend_is_not_an_outflow_is_dropped(reit):
     """The filter that makes the `dps <= 0` guard below it dead.
 

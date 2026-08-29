@@ -142,8 +142,15 @@ is that range, and rendering it as an agreement zone would show agreement nobody
 Run in order. Most reads stop before the end.
 
 **1 — Does the method apply?** A struck-out row is a finding, not missing data. Banks,
-insurers and REITs get no DCF; there is no substitute model in this project, and that is
-recorded rather than papered over.
+insurers and REITs get no DCF — and since 2026-08-29 they get a substitute drawn beside the
+struck row: **excess return** for banks and insurers, **two-stage per-share dividend discount**
+for REITs, each quartiled from its own sensitivity grid the way the DCF row is. "This method
+does not apply" and "nothing here can be valued" are now different findings, and the chart says
+which one it means.
+
+*(Until that date this paragraph ended "there is no substitute model in this project, and that
+is recorded rather than papered over." Left on the record because the reasoning was right and
+only the fact changed: the absence was worth stating plainly while it lasted.)*
 
 **2 — Is each bar built from inputs that transfer?** Check `suppressed_multiples` and the
 faint envelope behind each core. A core much narrower than its envelope means the individual

@@ -56,6 +56,7 @@ Five core pillars, plus one optional AI-assisted pillar. All core metrics are co
 | P/B | `info.priceToBook` | lower = better | Weighted up for financials; pair with ROE (justified P/B, ref §1.3) |
 | EV/Sales | `info.enterpriseToRevenue` | lower = better | Only used for PRE_PROFIT type (ref §2.1.2) |
 | DCF upside % | existing `dcf_valuation()` output `upside_pct` | higher = better | Only when DCF is applicable per §7.1 (skip banks/REITs/pre-profit). **Known limitation:** the anchor floors at −40%, and a two-stage FCFF DCF puts several quality mega-caps past it (AAPL −53.7% as of 2026-08-06), so they all score 0 and the metric stops discriminating among them. That is the model's honest verdict — a 2.2% FCF yield discounted at ~9.6% is expensive on FCFF — not a data fault, so it is scored rather than suppressed. Read it alongside the DCF's implied exit multiple: AAPL's terminal value assumes exiting at 8.5× EV/EBITDA against 27.2× today, i.e. severe multiple compression |
+| Intrinsic upside % | `financial_models.intrinsic_valuation()` output `upside_pct` | higher = better | **Added 2026-08-29.** The same `UPSIDE_ANCHORS` curve `dcf_upside_pct` uses, shared by reference in `scoring.METRIC_ANCHORS` rather than copied. Active for `financials_bank` and `financials_insurance` only — the model behind it is the excess return one, and on JPM it is algebraically the justified-P/B gap (2.5660 / 2.7890 − 1 = −8.0%), which is why the V pillar can finally see a bank being expensive against its own book rather than only against its peers'. **Deliberately not given to `real_estate_reit`:** its model refuses on the one REIT fixture, so scoring it would add an input this repository has never observed produce a value. `None` when the model errors — never 0, which would read as "no upside" rather than "no answer" |
 | Dividend yield | `info.dividendYield` | higher = better | Only for MATURE_PAYER / utilities / REITs; gated by payout sustainability |
 
 ⬆ OpenBB: NTM consensus multiples, peer-median comparison (peer-relative percentile mode, §2.2 below), P/AFFO for REITs.
@@ -233,9 +234,9 @@ SECTOR_WEIGHTS = {
   "real_estate_reit":   {"V": 0.30, "Q": 0.20, "H": 0.25, "G": 0.10, "M": 0.15,
                          "notes": "DROP P/E and EV/EBITDA-standard; V = dividend yield + P/B + FFO-proxy yield ((NI + D&A)/marketCap as P/FFO stand-in until OpenBB); ND/EBITDA bands relaxed as utilities; payout vs FFO < 90% gate (ref §7.1)"},
   "financials_bank":    {"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10,
-                         "notes": "DROP EV/EBITDA, EV/Sales, FCF yield, current ratio, ND/EBITDA, DCF upside (all invalid, ref §7.1). V = P/B + earnings yield + dividend yield. Q = ROE (justified-P/B pairing) + ROA (>1% good). H = equity/assets"},
+                         "notes": "DROP EV/EBITDA, EV/Sales, FCF yield, current ratio, ND/EBITDA, DCF upside (all invalid, ref §7.1). V = P/B + earnings yield + dividend yield + valuation_upside_pct (added 2026-08-29 — the excess return model's own upside, on the DCF's anchor curve). Q = ROE (justified-P/B pairing) + ROA (>1% good). H = equity/assets"},
   "financials_insurance":{"V": 0.30, "Q": 0.30, "H": 0.20, "G": 0.10, "M": 0.10,
-                         "notes": "Same drops as banks; P/B vs ROE is the axis (ref §7.1)"},
+                         "notes": "Same drops as banks, and the same valuation_upside_pct addition; P/B vs ROE is the axis (ref §7.1)"},
   "pre_profit_growth":  {"V": 0.15, "Q": 0.25, "H": 0.25, "G": 0.25, "M": 0.10,
                          "notes": "V = EV/Sales ONLY; Q = gross margin + margin trend (path to profit); H = cash runway + debt/equity (survival, ref §7.1: runway = cash/quarterly burn); conviction hard-capped at MEDIUM"},
 }

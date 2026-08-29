@@ -1,11 +1,12 @@
 # Auditable Valuation
 
 [![CI](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml)
-[![986 offline tests](https://img.shields.io/badge/tests-986%20offline-brightgreen.svg)](#tests)
+[![987 offline tests](https://img.shields.io/badge/tests-987%20offline-brightgreen.svg)](#tests)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](#prerequisites)
 
-**Investment-banking valuation models as auditable code.** A two-stage FCFF DCF, trading
+**Investment-banking valuation models as auditable code.** A two-stage FCFF DCF, an excess
+return model for banks and insurers, a per-share dividend discount model for REITs, trading
 comps and a deterministic 0–100 scorecard, for US and Hong Kong listings. Everything runs on
 your own machine; an optional local LLM explains the numbers without sending them anywhere.
 
@@ -54,7 +55,7 @@ this yourself, is in [docs/release-readiness.md](docs/release-readiness.md).
 | [Prerequisites](#prerequisites) · [Install](#install) · [Run it](#run-it) | getting it going |
 | [Demo mode](#demo-mode--no-api-key-no-network-no-ollama) | eight companies, no key, no network |
 | [Architecture](#architecture) | how the pieces fit |
-| [Tests](#tests) | 986 offline, and what they are for |
+| [Tests](#tests) | 987 offline, and what they are for |
 | [Project structure](#project-structure) | where everything lives |
 | [Licence and data provenance](#licence-and-data-provenance) | AGPL-3.0, and what it does not cover |
 
@@ -72,6 +73,26 @@ carries the source it came from, down to the vintage of the equity risk premium.
 checks then turn the model on itself: how much of the value sits in the terminal year, what
 exit multiple that implies, and what perpetual growth rate today's price would require — the
 7.3% above, highlighted in the trust-checks row.
+
+**And the DCF is not the only model on this tab.** A discounted cash flow does not fit every
+company: a bank has no `CFO - CapEx` to discount, and a REIT's capital expenditure is
+acquisition rather than maintenance. Those types get the model that does fit, chosen from the
+same classification the scorecard uses - **excess return** (book equity plus the present value
+of the spread between return on equity and cost of equity) for banks and insurers, and a
+**two-stage dividend discount, computed per share**, for REITs. Per share rather than in
+aggregate because REITs fund acquisitions by issuing equity: on `O` the share count grew 41.4%
+over four years, so the aggregate dividend compounds at 17.22% against 4.43% for the dividend
+per share, and valuing the aggregate would credit today's holder with dividends somebody else
+paid for.
+
+Each carries the same editable assumptions the DCF does - the driver, terminal growth and cost
+of equity - through `POST /api/stock/{ticker}/intrinsic`. **And each may refuse.** On `O` the
+dividend model declines outright: a beta regression of 0.4263 (R-squared 0.148) puts the cost
+of equity at 6.20% against a 7.30% pre-tax cost of debt, and a lender ranks ahead of a
+shareholder, so no fair value is reported rather than one built on a rate the company could
+not raise equity at. The inputs sit above that refusal rather than below it, so a reader who
+thinks the regression is an artefact of a weak fit can supply a rate and see what the model
+does with it.
 
 ![Tracker tab: price chart with indicators, SEC filing markers and news](docs/images/tracker.png)
 
@@ -287,13 +308,13 @@ Your data lives in `backend/data/app.db` and is gitignored.
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 779 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 780 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 207 tests
 ```
 
-**986 of those run offline**, against eight companies' real financial statements committed to
-this repo — 779 backend, 207 frontend, seconds. 27 more are `network`-marked and deselected by
+**987 of those run offline**, against eight companies' real financial statements committed to
+this repo — 780 backend, 207 frontend, seconds. 27 more are `network`-marked and deselected by
 default. CI runs both jobs on **ubuntu, Windows and macOS** with `fail-fast: false`, the backend
 one additionally on **Python 3.12 and 3.13** — eight legs — and gates lint and the frontend build
 as well as the tests.
@@ -424,7 +445,7 @@ source of the served work. Running it locally for yourself carries no such oblig
 under attribution rather than owned:
 
 - `backend/tests/fixtures/` — captured Yahoo Finance responses for ten symbols, kept because
-  the 779-test suite runs entirely offline against them. Provenance and capture dates in
+  the 780-test suite runs entirely offline against them. Provenance and capture dates in
   [backend/tests/fixtures/PROVENANCE.md](backend/tests/fixtures/PROVENANCE.md).
 - `backend/market_risk_premiums.json` — three values derived from Aswath Damodaran's country
   risk premium table, reproduced with attribution and an as-of date.

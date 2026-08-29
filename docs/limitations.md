@@ -212,10 +212,25 @@ it is a bug in this file.
   a written expectation rather than adding evidence; and `score_history`'s pre-profit
   series is **discontinuous at that date** — old rows come from the old formula, there is
   no backfill, and a future calibration study has to segment across it.
-- **A DCF is not shown as an answer for company types it does not fit.** Banks have no
-  `CFO − CapEx` at all, and a REIT's capex is property acquisition rather than
-  maintenance, so the model still returns a number (O: −63%) that means nothing. Both the
-  Scorecard's valuation pillar and the Financial Models tab now say so instead.
+- **A DCF is not shown as an answer for company types it does not fit — and since
+  2026-08-29 they are given the model that does fit instead.** Banks have no `CFO − CapEx`
+  at all, and a REIT's capex is property acquisition rather than maintenance, so the DCF
+  still returns a number (O: −56.9% on the production path, which regresses beta from
+  market bars; −73.5% from the reported beta alone) that means nothing, and both the
+  Scorecard's valuation pillar and the Financial Models tab say so. What is no longer true
+  is the sentence this entry used to end on. Banks and insurers now route to an
+  **excess return** model and REITs to a **two-stage per-share dividend discount**, each
+  drawing its own football-field bar. *(The −63% here was measured before the beta
+  regression changed which path production takes; corrected 2026-08-30.)*
+- **A model that fits is not the same as a model that answers.** On `O` — the only REIT
+  fixture — the dividend model **refuses**: its regressed beta of 0.4263 (R² 0.148) puts
+  the cost of equity at 6.20% against a 7.30% pre-tax cost of debt, and no fair value is
+  reported rather than one discounted at a rate below the lender ranking ahead of the
+  shareholder. So a REIT's default screen still carries no intrinsic number, and
+  `valuation_upside_pct` is deliberately withheld from the REIT scoring profile for the
+  same reason: this repository has never observed the metric produce a value. The
+  assumption controls sit above the refusal so a reader can supply their own rate, which
+  is the only path to a REIT valuation here today.
 - Free cash flow for both the DCF and the two FCF scoring metrics comes from the cash-flow
   statement. `info["freeCashflow"]` is only a fallback and raises the
   `fcf_from_info_unverified_period` flag when used, because yfinance reports it annually

@@ -287,6 +287,34 @@ Terminal: Gordon Growth on stable dividend.
 - Mature, high-payout companies: utilities, telecoms, consumer staples, pipeline/midstream (with distribution coverage checks).
 - REITs: use AFFO-based variant — substitute AFFO/share for DPS capacity; cross-check with dividend coverage (AFFO payout < 90%).
 
+> **As implemented** (`financial_models.dividend_discount_valuation`, 2026-08-29) — this model
+> shipped for REITs and diverges from the section above in three ways, each deliberate.
+>
+> **It discounts declared dividends per share, not AFFO per share.** A REIT distributes by
+> statute, so the dividend *is* the distributable cash rather than a proxy for it, and the
+> AFFO variant needs a maintenance-versus-growth capex split that no free filing discloses —
+> inventing that split would be an assumption made because nobody wired up a source. AFFO
+> survives as a **coverage check only**: `diagnostics.payout_of_ffo_proxy` reports the payout
+> against `(net income + D&A)`, 81.5% on `O` against the 90% ceiling this section names.
+>
+> **Growth is the compound rate of the company's own dividends per share, not
+> `ROE x (1 - payout)`.** The retention identity assumes book value compounds internally, which
+> is how the excess return model in §1.3 grows and why it uses that formula there. A REIT
+> retains almost nothing and funds acquisitions by issuing equity, so retention growth would
+> read near zero for a company whose dividend has in fact compounded at 4.4%.
+>
+> **Per share throughout, never aggregate.** On `O` the share count grew 41.4% over four
+> years: the aggregate dividend compounds at 17.22% against 4.43% per share. Valuing the
+> aggregate would credit today's holder with dividends bought by somebody else's money.
+>
+> **And it refuses more than this section anticipates.** Beyond `g < Re`, it declines when the
+> cost of equity falls below the company's own **pre-tax cost of debt** — a lender ranks ahead
+> of a shareholder, so that discount rate is not one the company could raise equity at. This
+> fires on `O` in production (regressed beta 0.4263, R² 0.148 → 6.20% against 7.30%). Rows of
+> the sensitivity grid that fall under the same floor are marked `below_cost_of_debt`, struck
+> through in the UI and skipped by the football-field band, added 2026-08-30 after the grid was
+> found pricing rates the headline refuses to price.
+
 ### Limitations
 - Useless for non-payers or token payers (value sits in retained growth, not distributions).
 - `Re - g` denominator hypersensitivity: a 0.5% change can move value 15–30%.
@@ -321,6 +349,29 @@ Equity Value = B0 + SUM_{t=1..n} [ RI_t / (1 + Re)^t ] + Terminal RI term
 ```
 
 Terminal RI: assume excess returns fade to zero (competition) — `TV = RI_n * ω / (1 + Re - ω)` with persistence factor `ω ∈ [0,1]` (0 = immediate fade, 1 = perpetual); or Gordon on RI with `g < Re`.
+
+> **As implemented** (`financial_models.excess_returns_valuation`, 2026-08-29) — the engine
+> takes the second branch and **holds ROE flat rather than fading it**. There is no `ω` in the
+> codebase. This is the single largest assumption in the model and it is the more aggressive
+> one: it assumes the moat survives forever.
+>
+> The fade was considered and rejected because `ω` would be a constant nothing in this
+> repository can calibrate — the same reason the beta regression publishes its R² instead of
+> applying a "fit too weak" threshold. What the engine does instead is **print the assumption**:
+> `diagnostics.excess_spread` is the permanent gap being claimed (7.14 points on JPM) and
+> `diagnostics.implied_terminal_payout` is the payout the terminal phase requires for that ROE
+> and that growth to be mutually consistent (84.2% against a current 30.5%). A reader can
+> disagree with a number on the screen; they cannot disagree with an `ω` buried in arithmetic.
+>
+> Terminal growth is capped at `min(TERMINAL_GROWTH, risk-free rate)` exactly as the DCF caps
+> it, and for a measured reason: `ROE x (1 - payout)` for a profitable bank routinely exceeds
+> its own cost of equity — 11.09% against 8.66% on JPM — so an uncapped Gordon terminal value
+> is not merely large, it is **negative**.
+>
+> ROE is the **mean across reported periods**, not the newest year: JPM runs 13.55 / 15.89 /
+> 17.51 / 16.26%, and feeding the newest of those into a perpetuity compounds a 4-point error
+> forever. The newest year's own fair value is reported beside it as
+> `diagnostics.fair_value_latest_roe`.
 
 **EVA (firm-level twin):**
 
@@ -821,6 +872,17 @@ Never trust one model. Assemble a football field: each method contributes a valu
 | Trading comps — P/E (NTM) | Peer 25th–75th | 15–25% |
 | Precedent transactions | Deal quartiles | 0–15% (only if M&A plausible; label as control value) |
 | 52-week range / analyst targets | Context only | 0% weight — display, don't average |
+| **Excess return** (banks, insurers) | Sensitivity grid 25th–75th | replaces the DCF row |
+| **Dividend discount** (REITs) | Grid 25th–75th, unioned with the dividend-growth sweep, eligible rows only | replaces the DCF row |
+
+> **As implemented** (`comps.football_field`, 2026-08-29) — a bank, insurer or REIT gets the
+> struck-out DCF row **and** the row above it, not one or the other: "this method does not
+> apply here" and "nothing here can be valued" are different findings and the chart says which
+> one it means. The dividend row's band skips grid cells whose cost of equity falls below the
+> company's own pre-tax cost of debt, since a bar is a published valuation and the model
+> declines to publish one there. The excess-return band takes no union with its own
+> one-dimensional sweep because that model's grid already sweeps both first-order inputs, so
+> the sweep is literally a row of the grid — verified element for element on JPM.
 
 ### Weighting procedure
 

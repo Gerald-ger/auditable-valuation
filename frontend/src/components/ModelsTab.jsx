@@ -1179,8 +1179,10 @@ function IntrinsicPanel({ analysis, ticker }) {
           The struck-through rows sit below this company&rsquo;s own pre-tax cost of debt.
           The model computes them so you can see which way the answer moves, and refuses
           to report them as a fair value for the reason it gives when you type one in:
-          a lender ranks ahead of a shareholder. The bar on the Scorecard is drawn from
-          the remaining rows only.
+          a lender ranks ahead of a shareholder. Wherever this model draws a football
+          field bar, that bar is built from the remaining rows only &mdash; though not from
+          the figures on this screen, which are yours: the Scorecard runs the model on
+          its own measured inputs.
         </div>
       )}
 

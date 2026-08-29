@@ -17,6 +17,85 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (c) - The documentation still described a DCF-only platform
+
+An audit of all seventeen markdown files against the code — three independent agents on
+disjoint scopes plus my own pass. P1-P5 shipped five commits of new valuation machinery and
+the prose almost entirely missed it.
+
+**The front door was the worst of it.** README.md described the platform as "a two-stage FCFF
+DCF, trading comps and a deterministic 0-100 scorecard" and the Financial Models tab as "a
+two-stage FCFF DCF you can audit rather than trust" — two commits after a bank or REIT started
+getting a different model on that same tab. Grepping the file for "REIT", "excess return",
+"dividend discount" or "intrinsic" returned one incidental hit inside a scoring sentence. For a
+repository whose stated audience includes people deciding whether to spend time on it, the page
+they land on described the previous version.
+
+**Three documents carried claims the work had falsified.** `valuation-triangulation-review.md`
+said in its protocol that banks, insurers and REITs "get no DCF; there is no substitute model
+in this project". `limitations.md` left a reader believing those types get no valuation at all.
+`quant-review-2026-08-06.md` still listed "Excess Returns model" and "AFFO two-stage model" as
+competitive gaps against Simply Wall St, with this project scored "DCF not applicable" — the
+exact two things P1 and P3 built. Each corrected in that document's own convention: a dated
+strikethrough with the original left visible.
+
+**`scoring-system-design.md` was in breach of its own rule.** Its header makes a disagreement
+with `sector_weights.py` a *finding*, requiring the table updated and a dated note saying what
+changed. The `valuation_upside_pct` metric had been in the bank and insurer V pillars since
+2026-08-29, carrying a seventy-line justification in the source, and the document did not
+mention it existed.
+
+**`financial-models-reference.md` is a specification, not a description**, and its header
+forbids editing it to match the engine. So the engine's divergences are recorded beside the
+rules instead, in the `> **As implemented**` form the document already uses: the dividend model
+discounts declared dividends per share rather than the AFFO variant the spec names, grows them
+at their own compound rate rather than by the retention identity, and refuses below the pre-tax
+cost of debt; the excess return model holds ROE flat where the spec fades it to zero, and has
+no persistence factor at all. Two live models had never been reconciled against the reference
+the local AI reads as its knowledge base. All three notes sit past character 16,000, so the AI
+prompt budget is untouched — measured, not assumed.
+
+**Four line anchors in `currency-consistent-discounting.md` pointed at unrelated code.**
+`financial_models.py` grew by roughly 500 lines and every link drifted while the prose around
+them stayed correct. They now name the function as well as the range, so the next drift is
+survivable by a reader before anyone fixes the number.
+
+**Two stale test counts, each contradicted elsewhere in its own file set.** PROVENANCE.md said
+667, off by 113. `docs/testing.md` said 803 collected and "775 and a skip" five lines below its
+own correct figure.
+
+779 -> **780 backend**, 987 offline: the entry above asserts 69.65 and 63.26 for the reachable
+grid case, and this repository pins the measurements it writes down.
+
+## 2026-08-30 (b) - The bar I said moved is a bar O never draws
+
+Correcting yesterday's entry rather than editing it, which is what the rule at the top of
+this file is for.
+
+That entry says the football field bar on O moves 61.08-79.89 to 58.80-78.97 when the band
+stops counting the grid rows below the pre-tax cost of debt. Both numbers are real and the
+gating is right, but they come from a call that withholds `market_bars`, and production
+never makes that call: `main.py:693` passes them, and with them O's beta regresses to
+0.4263 (R-squared 0.148), the cost of equity lands at 6.20% against a 7.30% pre-tax cost of
+debt, and **the model refuses**. No grid, no band, nothing to gate. Presenting it as a
+published bar that moved was wrong about the one REIT fixture in the set.
+
+What is actually reachable is narrower and more interesting: the path P5b built for exactly
+this company. A reader who thinks 0.4263 is an artefact of a weak fit supplies a cost of
+equity, the model values, and its grid still sweeps +/-1pp around *their* rate — so it can
+still cross the floor underneath them. Measured on O through the production path with
+`market_bars` supplied: at a typed 7.5% the model returns 69.65 with **two of five** rows
+below the cost of debt, at 8.0% it returns 63.26 with **one of five**. That is where the
+contradiction was live, and it is the screen the refusal banner sends a REIT reader to.
+
+So the honest summary of that change is the same one the FX boundary fix carries: a real
+defect, no movement on any committed fixture's default output, and reachable only down the
+path a user takes deliberately. The panel's own note claimed the Scorecard's bar was drawn
+from the rows on screen; it is not — the Scorecard runs the model on its own measured
+inputs — and that sentence is corrected here too.
+
+Found while auditing the documentation against the code, one day after shipping it.
+
 ## 2026-08-30 - The one border on the scorecard that meant nothing
 
 A design hook flagged 's left edge as a decorative side-tab. The framing

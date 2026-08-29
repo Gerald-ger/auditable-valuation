@@ -60,8 +60,15 @@ code changes.
 
 ## 1. What the code does today
 
+> **Line numbers here name the function too, added 2026-08-30.** Every anchor in this document
+> had drifted: `financial_models.py` grew by roughly 500 lines when the excess return and
+> dividend discount models landed, so all four links pointed at unrelated code while the prose
+> around them stayed correct. A document whose stated verification method is following its own
+> links cannot afford that silently, and naming the function makes the next drift survivable by
+> a reader even before anyone fixes the number.
+
 Inside one function, four inputs sit on three different bases
-([financial_models.py:628-682](../backend/financial_models.py#L628-L682)):
+([financial_models.py:518-654 (`_wacc`)](../backend/financial_models.py#L518-L654)):
 
 | Input | Keyed on | Currency |
 |---|---|---|
@@ -100,7 +107,7 @@ rate in Method A, through the forward curve in Method B. Applying a forward rate
 local-currency discount rate would apply it twice.
 
 The platform already uses Method A: everything in the projection is reporting-currency, and `conv`
-is applied at the output boundary only ([financial_models.py:841-851](../backend/financial_models.py#L841-L851)).
+is applied at the output boundary only ([financial_models.py:853-858 (`dcf_valuation`)](../backend/financial_models.py#L853-L858)).
 **Method A with spot is the right shape. The defect is not the conversion — it is that the
 discount rate is not in the cash-flow currency.**
 
@@ -182,7 +189,7 @@ One older correction still stands:
 ## 5. Why the second leg cancels most of the first
 
 `terminal_growth = min(TERMINAL_GROWTH, rf)`
-([financial_models.py:775-779](../backend/financial_models.py#L775-L779)) — perpetual growth is
+([financial_models.py:806-810 (`dcf_valuation`)](../backend/financial_models.py#L806-L810)) — perpetual growth is
 capped at the risk-free rate. Lower the rate and the cap binds, so **both** ends of the terminal
 spread fall together:
 
@@ -291,7 +298,7 @@ Recorded now so the estimate does not have to be rebuilt later.
 - [test_valuation.py:355](../backend/tests/test_valuation.py#L355) pins AAPL's fair value at
   ≈146.49. AAPL reports USD and must not move — that test becomes the regression guard proving the
   change touches only non-USD issuers.
-- The in-code comment at [financial_models.py:636-641](../backend/financial_models.py#L636-L641)
+- The in-code comment at [financial_models.py:538-545 (`_wacc`)](../backend/financial_models.py#L538-L545)
   and the TODOLIST entry both describe the current state and would need rewriting.
 
 ## 9. Where this leaves the item

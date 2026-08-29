@@ -106,6 +106,18 @@ What each of the six tabs does and why it does it that way. Split out of the REA
   (near-range baseline, so its shape is visible) above **year-on-year change as
   zero-centred bars**, because bars scaled from zero made a mature company's four years
   look identical.
+  **The DCF is not the only model here.** A bank has no `CFO - CapEx` and a REIT's capital
+  expenditure is acquisition rather than maintenance, so those types get the model that fits,
+  chosen from the same classification the scorecard uses: **excess return** for banks and
+  insurers (book equity plus the present value of the return-on-equity spread over the cost of
+  equity, with the spread and the payout ratio the terminal phase implies both printed as the
+  assumption they are), and a **two-stage dividend discount computed per share** for REITs -
+  per share because REITs issue equity to buy property, so on `O` the aggregate dividend
+  compounds at 17.22% against 4.43% per share. Both carry editable assumptions through
+  `POST /api/stock/{ticker}/intrinsic`, and both may **refuse**: `O`'s cost of equity regresses
+  to 6.20% against a 7.30% pre-tax cost of debt, and a model that discounts a shareholder's
+  cash flow at less than the lender ahead of them reports nothing rather than a number. The
+  inputs are rendered above that refusal, not below it, so the refusal is arguable.
 - **Tab 3 — Scorecard**: deterministic 0–100 score and S/A/B/C/D tier per company, built
   from five pillars (Valuation, Quality, Health, Growth, Momentum) weighted by a sector
   library ([backend/sector_weights.py](../backend/sector_weights.py) — banks, REITs,
@@ -115,7 +127,10 @@ What each of the six tabs does and why it does it that way. Split out of the REA
   "football field" — one price rule across all methods, a labelled axis, and a
   `price above` / `price below` / `in range` read per method. The chart **refuses to draw
   a method that does not apply** (a bank or REIT gets a struck-out DCF row with the
-  reason, not a confident wrong number), suppresses an EV/Revenue multiple whose peer
+  reason, not a confident wrong number) while drawing the model that *does* apply beside
+  it - an excess-return or dividend-discount bar quartiled from its own sensitivity grid,
+  so "the DCF does not fit here" and "there is no valuation here" stay different
+  sentences, suppresses an EV/Revenue multiple whose peer
   margins are not comparable, treats analyst targets as context rather than a vote, and
   leads with a **bridge** decomposing the distance from the model's value to the price
   into named steps ending in an explicitly unexplained residual. Below it sit an editable
