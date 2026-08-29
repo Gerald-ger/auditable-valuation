@@ -1249,7 +1249,7 @@ nav button.active {
      the reconciliation verdict), and this is the summary block stating its
      tier. Removing it would make the one block that grades the company look
      like every other panel. */
-  border-left: 3px solid var(--border);
+  border-left: 3px solid var(--border); /* impeccable-disable-line side-tab */
   max-width: 90ch;
 }
 
