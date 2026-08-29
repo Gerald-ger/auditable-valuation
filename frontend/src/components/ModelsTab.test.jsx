@@ -183,8 +183,15 @@ const DIVIDEND_DISCOUNT = {
   sensitivity: {
     terminal_growth_cols: [0.02, 0.0225, 0.025, 0.0275, 0.03],
     rows: [
-      { cost_of_equity: 0.0651, values: [78.63, 82.57, 87.01, 92.03, 97.76] },
-      { cost_of_equity: 0.0701, values: [70.7, 73.82, 77.29, 81.16, 85.51] },
+      // The two rows production marks refused on O — their cost of equity sits
+      // under the 7.30% pre-tax cost of debt above — and one that clears it, so
+      // a test can tell the two renderings apart.
+      { cost_of_equity: 0.0651, below_cost_of_debt: true,
+        values: [78.63, 82.57, 87.01, 92.03, 97.76] },
+      { cost_of_equity: 0.0701, below_cost_of_debt: true,
+        values: [70.7, 73.82, 77.29, 81.16, 85.51] },
+      { cost_of_equity: 0.0751, below_cost_of_debt: false,
+        values: [64.21, 66.73, 69.51, 72.57, 75.98] },
     ],
   },
   growth_sensitivity: {
@@ -465,6 +472,41 @@ describe('ModelsTab', () => {
 
     expect(inputs.map((el) => el.placeholder)).toEqual(['15.80', '2.50', '8.77']);
     expect(inputs.every((el) => el.value === '')).toBe(true);
+  });
+
+  it('strikes out the rates the model refuses instead of pricing them', async () => {
+    // The grid sweeps +/-1pp around a cost of equity that clears this REIT's
+    // pre-tax cost of debt by 21bp, so two of its rows land under it. They were
+    // painted green-and-red like any other answer while the panel's own refusal
+    // banner said the model will not price at such a rate — one screen, two
+    // opposite claims about one number.
+    const { container } = await mount({
+      analysisBody: analysis({ dividend_discount: DIVIDEND_DISCOUNT }),
+    });
+    // Scoped twice over: the DCF panel below draws a sensitivity table of its
+    // own, and this panel draws a second one for the growth sweep.
+    const grid = container.querySelector('.intrinsic-panel .sens-table');
+    const rows = [...grid.querySelectorAll('tbody tr')];
+    expect(rows).toHaveLength(3);
+
+    const voided = rows.filter((r) => r.className.includes('sens-row-void'));
+    expect(voided.map((r) => r.querySelector('td').textContent)).toEqual(['6.51%', '7.01%']);
+
+    // Struck out, not hidden: the numbers are still readable, they just stop
+    // claiming the company is cheap. 78.63 is above the 62.70 price and would
+    // otherwise be painted as upside.
+    expect(voided[0].textContent).toContain('78.63');
+    voided.forEach((r) => [...r.querySelectorAll('td')].forEach((td) => {
+      expect(td.className).not.toContain('cell-up');
+      expect(td.className).not.toContain('cell-down');
+    }));
+
+    // And the row that clears the cost of debt is still coloured, or this test
+    // would pass just as well against a table that never colours anything.
+    const live = rows.find((r) => !r.className.includes('sens-row-void'));
+    expect(live.querySelectorAll('.cell-up, .cell-down').length).toBe(5);
+
+    expect(container.textContent).toContain('own pre-tax cost of debt');
   });
 
   it('renders no intrinsic panel for a company whose DCF applies', async () => {

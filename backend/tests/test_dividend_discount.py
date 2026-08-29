@@ -17,6 +17,8 @@ set and because both failure modes are live in it rather than hypothetical.
 """
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from conftest import load_fundamentals, load_market_bars
@@ -106,6 +108,66 @@ def test_the_growth_rate_is_per_share_and_the_difference_is_enormous(reit, value
 
     ke = valued["assumptions"]["cost_of_equity_used"]
     assert aggregate_cagr > ke, "otherwise this test proves nothing about why"
+
+
+def test_the_grid_marks_every_rate_the_headline_would_refuse(reit):
+    """One screen must not make two opposite claims about one number.
+
+    The grid sweeps +/-1pp around a cost of equity that clears this company's
+    pre-tax cost of debt by 21bp, so two of its five rows land under it. Until
+    2026-08-29 those rows were drawn as valuations and unioned into the football
+    field bar — while a reader typing the same 6.51% into the panel was refused,
+    with a sentence about lenders ranking ahead of shareholders. Found in the
+    overall verification of P1-P5.
+
+    The mark is asserted against the headline's *actual* behaviour at each rate
+    rather than against a recomputed comparison, so the two can never drift
+    apart: if the refusal moves and the mark does not, this fails.
+    """
+    out = fm.dividend_discount_valuation(reit)
+    rows = out["sensitivity"]["rows"]
+
+    assert any(row["below_cost_of_debt"] for row in rows), \
+        "the sweep has to cross the inversion on O or this test proves nothing"
+    assert any(not row["below_cost_of_debt"] for row in rows)
+
+    for row in rows:
+        typed = fm.dividend_discount_valuation(
+            reit, cost_of_equity_override=row["cost_of_equity"])
+        refused_when_typed = "pre-tax cost of debt" in typed.get("error", "")
+        assert row["below_cost_of_debt"] == refused_when_typed, (
+            f"the grid and the headline disagree at "
+            f"{row['cost_of_equity']:.2%}")
+        # Marked, not deleted: the row still says which way the answer moves.
+        assert all(v is not None for v in row["values"])
+
+
+def test_a_period_whose_dividend_is_not_an_outflow_is_dropped(reit):
+    """The filter that makes the `dps <= 0` guard below it dead.
+
+    `dividend_per_share_history` admits a period only when the dividend is
+    strictly negative — a cash outflow — and the share count strictly positive.
+    The comment above that guard argues from exactly this, and until now the
+    argument had no test under it: deleting `shares <= 0 or dividends >= 0` left
+    all 776 green, because no committed fixture has a period that trips either
+    half. Found by mutation in the overall verification 2026-08-29.
+
+    A positive figure on the dividend row is a *received* dividend, and `abs()`
+    two lines down would silently record it as one paid.
+    """
+    period = sorted(reit["cash_flow"])[-1]
+    baseline = len(fm.dividend_per_share_history(reit))
+
+    flipped = copy.deepcopy(reit)
+    for row in ("Common Stock Dividend Paid", "Cash Dividends Paid"):
+        if row in flipped["cash_flow"][period]:
+            flipped["cash_flow"][period][row] = abs(
+                flipped["cash_flow"][period][row])
+    assert len(fm.dividend_per_share_history(flipped)) == baseline - 1
+
+    negative_shares = copy.deepcopy(reit)
+    negative_shares["balance_sheet"][period]["Ordinary Shares Number"] *= -1
+    assert len(fm.dividend_per_share_history(negative_shares)) == baseline - 1
 
 
 def test_the_dividend_row_is_the_common_one_not_the_total(reit, valued):

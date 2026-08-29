@@ -1925,7 +1925,25 @@ def dividend_discount_valuation(f: dict, growth_rate: float | None = None,
         "sensitivity": {
             "terminal_growth_cols": [round(terminal_growth + d, 4)
                                      for d in DDM_TERMINAL_GROWTH_STEPS],
+            # `below_cost_of_debt` marks the rows this model refuses to
+            # publish a headline at. The grid sweeps +/-1pp around a cost of
+            # equity that on the O fixture clears the pre-tax cost of debt by
+            # 21bp, so two of its five rows land under it — and until
+            # 2026-08-29 they were drawn as answers. The same 6.51% that a
+            # reader typing it into the panel is refused at, with a sentence
+            # about lenders ranking ahead of shareholders, was printed here as
+            # 78.63 to 97.76. One screen, two opposite claims about one number.
+            #
+            # Marked rather than removed, and the distinction is the point. A
+            # sensitivity grid exists to show which way the answer moves, and
+            # deleting the rows would answer "what if the discount rate were
+            # lower" with a blank instead of with the model's actual objection.
+            # What changes is that the row no longer passes for a valuation:
+            # `comps._dividend_discount_band` skips it, so the published bar
+            # stops being built partly out of rates the model rejects, and the
+            # Models tab strikes it through.
             "rows": [{"cost_of_equity": round(ke + dk, 6),
+                      "below_cost_of_debt": ke + dk < cost_of_debt_pre_tax,
                       "values": [_converted(ke + dk, terminal_growth + dg)
                                  for dg in DDM_TERMINAL_GROWTH_STEPS]}
                      for dk in DDM_KE_STEPS],

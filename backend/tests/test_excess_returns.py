@@ -383,6 +383,54 @@ def test_price_to_book_is_withheld_when_the_two_are_in_different_currencies(jpm,
     assert out["diagnostics"]["price_to_book"] is None
 
 
+def test_price_to_book_survives_a_conversion_it_has_to_make(jpm, monkeypatch):
+    """The other half of the FX rule, and the half nothing was testing.
+
+    The test above pins `price_to_book` when the rate is *unavailable* — it is
+    withheld. Nothing pinned its value when the rate is available, and the
+    ratio is the one figure here that converts its denominator rather than
+    itself: price is traded, book is reported, so the unit-free answer needs
+    exactly one `conv` and it belongs on the book. Multiplying the numerator by
+    it as well left all 776 tests green while moving the published ratio from
+    2.789 to 2.535 — off by precisely 1/1.10, the same shape of defect P5a fixed
+    everywhere else. Found by mutation in the overall verification 2026-08-29.
+
+    The first draft of this test asserted the wrong invariant — that relabelling
+    a fixture's reporting currency must leave a unit-free ratio unmoved — and
+    failed on the real code, correctly. Relabelling is not unit-neutral: the
+    same magnitudes now mean CNY, and one CNY of book is 1.10 HKD of book, so
+    the company genuinely is cheaper against its book measured in the currency
+    it trades in. 2.789 becomes 2.535 and should. What the mutant does is
+    convert the numerator too, which cancels and hands back 2.789 — the ratio
+    of a HKD price to a CNY book, the mismatch the sibling test above exists to
+    prevent. So the assertion is pinned to the converted book that the payload
+    itself publishes, and against the plain fixture in the one direction that
+    separates the two.
+    """
+    monkeypatch.setattr(fm, "fx_rate",
+                        lambda a, b: 1.10 if (a, b) == ("CNY", "HKD") else None)
+    crossed = copy.deepcopy(jpm)
+    crossed["info"]["financialCurrency"] = "CNY"
+    crossed["info"]["currency"] = "HKD"
+
+    out = fm.excess_returns_valuation(crossed)
+    assert out["assumptions"]["fx_basis"] == "converted"
+    assert out["assumptions"]["fx_rate_used"] == 1.1
+
+    # One currency on both legs: the price the market pays over the book this
+    # same payload reports, which is the converted one.
+    assert out["diagnostics"]["price_to_book"] == pytest.approx(
+        out["current_price"] * jpm["info"]["sharesOutstanding"]
+        / out["book_value_of_equity"], rel=1e-3)
+
+    # And that is not the unconverted ratio. Converting the numerator as well
+    # cancels the rate and lands exactly here, which is why equality with the
+    # plain fixture is the failure rather than the expectation.
+    plain = fm.excess_returns_valuation(jpm)["diagnostics"]["price_to_book"]
+    assert out["diagnostics"]["price_to_book"] != plain
+    assert out["diagnostics"]["price_to_book"] == pytest.approx(plain / 1.10, rel=1e-3)
+
+
 def test_every_currency_output_is_converted_and_no_ratio_is(jpm):
     """The output-boundary rule, which this model did not follow until P5a.
 

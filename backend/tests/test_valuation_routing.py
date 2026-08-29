@@ -230,18 +230,32 @@ def test_the_dividend_band_unions_the_sweep_the_grid_cannot_reach():
     """The opposite decision from `_excess_return_band`, which declines the union
     because that model's grid already contains its one-dimensional sweep.
 
-    On O the union binds on one side: grid quartiles 61.49-79.89 against a
-    dividend growth sweep of 61.08-78.97, so the floor moves to 61.08 and the
-    ceiling does not. That exercises one of the three wordings on real data. The
-    other two are unreachable from the only REIT fixture in the set, so synthetic
-    grids are fed for each of them below — without that, two branches would ship
-    having never run.
+    On O the union binds on one side: the eligible grid's quartiles are
+    58.80-66.73 against a dividend growth sweep of 61.08-78.97, so the ceiling
+    moves to 78.97 and the floor does not. That exercises one of the three
+    wordings on real data. The other two are unreachable from the only REIT
+    fixture in the set, so synthetic grids are fed for each of them below —
+    without that, two branches would ship having never run.
+
+    It bound the opposite side until 2026-08-29, when the band stopped counting
+    the grid rows whose cost of equity sits below the company's own pre-tax cost
+    of debt. Two of the five rows go, the quartiles narrow from 61.49-79.89 to
+    58.80-66.73, and the sweep that had been reaching *under* the grid is now
+    reaching *over* it. The bar moves 61.08-79.89 to 58.80-78.97.
     """
     valuation = fm.dividend_discount_valuation(load_fundamentals("O"))
     low, high, basis = comps._dividend_discount_band(valuation)
-    assert (low, high) == (61.08, 79.89)
-    assert basis.endswith("+ dividend growth (downside only)")
-    assert min(valuation["growth_sensitivity"]["values"]) == low,         "the sweep has to be what moved the floor or this proves nothing"
+    assert (low, high) == (58.8, 78.97)
+    assert basis.endswith("+ dividend growth (upside only)")
+    assert max(valuation["growth_sensitivity"]["values"]) == high, \
+        "the sweep has to be what moved the ceiling or this proves nothing"
+
+    # And the refused rows are what is missing, rather than the numbers having
+    # drifted: every value the band saw comes from a row the model stands behind.
+    refused = [r for r in valuation["sensitivity"]["rows"] if r["below_cost_of_debt"]]
+    assert len(refused) == 2
+    assert max(v for r in refused for v in r["values"]) == 97.76 > high, \
+        "the dropped rows reached above the published bar, which is why this matters"
 
     grid = {"sensitivity": {"rows": [{"values": [90.0, 100.0, 110.0, 120.0]}]}}
     low, high, basis = comps._dividend_discount_band(grid)

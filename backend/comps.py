@@ -856,11 +856,18 @@ def _dividend_discount_band(valuation: dict) -> tuple[float, float, str] | None:
     literally a row of the grid and unioning it is provably a no-op. This grid
     sweeps terminal growth against cost of equity and holds the dividend growth
     rate fixed outside it, exactly as the DCF's does — so the sweep reaches
-    values the grid cannot. Measured on the O fixture 2026-08-29: the grid spans
-    54.22-97.76 and its quartiles 61.49-79.89, against a dividend growth sweep of
-    61.08-78.97 — so the union pulls the floor down to 61.08 and leaves the
-    ceiling where it was, and the basis reads "+ dividend growth (downside
-    only)". Naming only the side that moved is the rule `_dcf_band` follows for
+    values the grid cannot. Measured on the O fixture 2026-08-29, after the two
+    refused rows stopped being counted: the eligible grid spans 54.22-75.98 and
+    its quartiles 58.80-66.73, against a dividend growth sweep of 61.08-78.97 —
+    so the union pushes the ceiling up to 78.97 and leaves the floor where it
+    was, and the basis reads "+ dividend growth (upside only)".
+
+    The union bound the *other* side before that gate existed: with the refused
+    rows in, the quartiles were 61.49-79.89 and the sweep pulled the floor down
+    to 61.08. Recorded because it is the more interesting half of the change —
+    dropping two rows moved the published bar by 1.2% at the ceiling, but it
+    reversed which side of it the growth sweep was doing any work on at all.
+    Naming only the side that moved is the rule `_dcf_band` follows for
     the same reason: a flat "+ growth" reads as a symmetric stress even where the
     sweep reached one end and nothing at the other.
 
@@ -872,7 +879,17 @@ def _dividend_discount_band(valuation: dict) -> tuple[float, float, str] | None:
     dividend to union, and reaching for `_dcf_band` here would have silently
     skipped that block on a missing key rather than declining it on purpose.
     """
-    rows = valuation.get("sensitivity", {}).get("rows", [])
+    # Rows the model would refuse a headline at are skipped rather than
+    # quartiled. A bar on the football field is a published valuation, and one
+    # built partly from a cost of equity below the company's own pre-tax cost of
+    # debt is asserting a number the model declines to assert three panels away.
+    # Measured on the O fixture 2026-08-29: the grid's lowest two rows sit under
+    # the 7.30% pre-tax cost of debt and dropping them moves the bar from
+    # 61.08-79.89 to 58.80-78.97 — a 1.2% ceiling and a 3.7% floor, which is
+    # small, and is the whole reason it survived until an independent review
+    # went looking for the contradiction rather than for a wrong number.
+    rows = [row for row in valuation.get("sensitivity", {}).get("rows", [])
+            if not row.get("below_cost_of_debt")]
     vals = sorted(v for row in rows for v in row.get("values", []) if v is not None)
     if not vals:
         return None

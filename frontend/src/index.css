@@ -1130,6 +1130,14 @@ nav button.active {
   font-weight: 600;
 }
 
+/* A cost of equity the model refuses to publish a headline at. Struck through
+   rather than hidden: the row is still evidence about the shape of the answer,
+   it is just not itself an answer. */
+.sens-row-void td {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .cell-up {
   color: var(--up);
   background: rgba(46, 189, 133, 0.07);

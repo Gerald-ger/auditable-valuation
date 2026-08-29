@@ -17,6 +17,79 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-29 (f) - One screen was making two opposite claims about one number
+
+The overall verification of P1-P5. Full suite twice, both lints, the build, a 23-mutation
+battery across all five phases, and three independent agents on disjoint scopes. It found
+one shipped contradiction and two coverage gaps, and the contradiction is the interesting
+one because nothing about it was a wrong number.
+
+**The dividend model refuses a cost of equity below the company's own pre-tax cost of debt
+— and its sensitivity grid was pricing two rows underneath it.** O's cost of equity clears
+that floor by 21bp, so a +/-1pp sweep crosses it. A reader who typed 6.51% into the panel
+was refused, with a sentence about lenders ranking ahead of shareholders. The grid three
+inches above printed 78.63 to 97.76 at the same 6.51%, in the same green the model uses
+for upside, and `comps._dividend_discount_band` unioned those cells into the bar published
+on the Scorecard.
+
+Marked rather than deleted. A sensitivity grid exists to say which way the answer moves,
+and blanking the rows would answer "what if the rate were lower" with silence instead of
+with the model's actual objection. So the rows still compute, `below_cost_of_debt` says
+which they are, the tab strikes them through and stops colouring them, and the band skips
+them.
+
+The bar on O moves **61.08-79.89 to 58.80-78.97** - a 1.2% ceiling and a 3.7% floor. Small,
+and that is the point: this survived seven commits of adversarial review because nobody was
+looking for a number that was *wrong*. What actually changed is which side the growth sweep
+does any work on at all: the union used to pull the floor down and now pushes the ceiling
+up, so the published basis flips from "(downside only)" to "(upside only)".
+
+An independent agent found this and quantified the ceiling at 68.35, a 17% move. That was
+wrong - it quartiled the gated grid without the growth-sweep union that actually binds the
+bar. Re-measured to 78.97. The contradiction was real and the magnitude was not.
+
+**Two mutations survived the battery, and both were real gaps.**
+
+`price_to_book` is the one figure in the excess return model that converts its *denominator*
+rather than itself - price is traded, book is reported, so the unit-free answer needs
+exactly one `conv` and it belongs on the book. Converting the numerator as well cancels the
+rate and hands back a HKD price over a CNY book: 2.535 becomes 2.789, off by exactly 1/1.10,
+the same defect P5a fixed everywhere else in the same function. All 776 tests stayed green.
+The sibling test pinned the ratio when the rate is *unavailable*; nothing pinned it when the
+rate is there.
+
+`dividend_per_share_history` drops a period whose dividend is not a cash outflow, and the
+comment above the `dps <= 0` guard argues that guard is dead *from* this filter. Deleting
+`shares <= 0 or dividends >= 0` left all 776 green - no committed fixture trips either half,
+so the argument had nothing under it. A positive figure on the dividend row is a dividend
+*received*, and `abs()` two lines down would have recorded it as one paid.
+
+The first draft of the `price_to_book` test asserted the wrong invariant - that relabelling
+a fixture's reporting currency leaves a unit-free ratio unmoved - and failed against correct
+code. Relabelling is not unit-neutral: one CNY of book is 1.10 HKD of book, so the company
+genuinely is cheaper against a book measured in the currency it trades in. Kept in the
+docstring, because the mutant is precisely the version that makes the ratio hold still.
+
+Three independent Sonnet 5 agents on disjoint scopes: the models and comps, the scoring and
+endpoint integration, and a placebo sweep across all 29 test files. The sweep found **no
+sixth placebo**. The integration agent could not bypass the endpoint's 400 guards with seven
+adversarial bodies, and re-derived `tax_rate`'s peer-beta reachability with different numbers
+than the committed test - beta -3.5 and two peers, 144.46 against 172.42.
+
+Suite integrity checked by exit code rather than by printed summary, the trap this repo has
+been bitten by: pytest 0 twice, vitest 0, ruff 0, oxlint 0, build 0. The 27 network tests are
+excluded by an explicit `-m "not network"` marker - reversing it collects exactly 27 - rather
+than passing silently. Coverage on the files these phases touched: scoring 99%, financial
+models 97%, sector weights 94%, comps 92%.
+
+776 -> **779 backend** and 205 -> **206 frontend**, 985 offline. Mutation score 24/26 before,
+**8/8 after** on the repaired code, both former survivors included. Bundle 488.44 -> 488.95 kB.
+
+Two findings left open by decision, recorded rather than fixed: the intrinsic panel's
+placeholders keep echoing the last override instead of returning to the measured figure once
+a field is blanked (the value sent and the answer shown are both correct), and the excess
+return docstring says JPM's current payout is 29.9% where it measures 30.5%.
+
 ## 2026-08-29 (e) - A valuation you can read, and now one you can argue with
 
 The DCF has had a what-if endpoint since long before the excess return and dividend discount

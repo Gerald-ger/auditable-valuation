@@ -1146,13 +1146,24 @@ function IntrinsicPanel({ analysis, ticker }) {
         </thead>
         <tbody>
           {v.sensitivity.rows.map((row) => (
-            <tr key={row.cost_of_equity}>
+            <tr
+              key={row.cost_of_equity}
+              className={row.below_cost_of_debt ? 'sens-row-void' : ''}
+            >
               <td>{(row.cost_of_equity * 100).toFixed(2)}%</td>
+              {/* A row the model would refuse is not painted up or down. The
+                  colour says "cheap" or "expensive" against today's price, and
+                  a rate the company could not raise equity at has no business
+                  making that claim. */}
               {row.values.map((cell, i) => (
                 <td
                   key={i}
                   className={
-                    cell === null ? '' : cell >= v.current_price ? 'cell-up' : 'cell-down'
+                    cell === null || row.below_cost_of_debt
+                      ? ''
+                      : cell >= v.current_price
+                        ? 'cell-up'
+                        : 'cell-down'
                   }
                 >
                   {cell === null ? '—' : num(cell)}
@@ -1162,6 +1173,16 @@ function IntrinsicPanel({ analysis, ticker }) {
           ))}
         </tbody>
       </table>
+
+      {v.sensitivity.rows.some((row) => row.below_cost_of_debt) && (
+        <div className="chart-note">
+          The struck-through rows sit below this company&rsquo;s own pre-tax cost of debt.
+          The model computes them so you can see which way the answer moves, and refuses
+          to report them as a fair value for the reason it gives when you type one in:
+          a lender ranks ahead of a shareholder. The bar on the Scorecard is drawn from
+          the remaining rows only.
+        </div>
+      )}
 
       {/* Only the dividend model reaches this, and the condition is the data
           rather than a check on which model ran: `growth_sensitivity` is a key
