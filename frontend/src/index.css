@@ -1239,7 +1239,16 @@ nav button.active {
   /* Neutral here on purpose: the colour is set inline in ScorecardTab from
      TIER_COLORS, so this value is what shows when there is no tier to report.
      See the comment at that call site for why the edge stopped being a fixed
-     accent blue. */
+     accent blue.
+
+     A design linter flags any 3px single-side border as a decorative side-tab
+     and still flags this one, correctly on its own terms: the rendered edge is
+     3px and it is coloured. The exception is deliberate and recorded in
+     .impeccable/config.json rather than argued away — on this tab a block's
+     left edge is how meaning is carried (gold for divergence, red and green for
+     the reconciliation verdict), and this is the summary block stating its
+     tier. Removing it would make the one block that grades the company look
+     like every other panel. */
   border-left: 3px solid var(--border);
   max-width: 90ch;
 }
