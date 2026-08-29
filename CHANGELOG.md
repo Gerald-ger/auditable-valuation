@@ -17,6 +17,105 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-29 - Three company types the DCF was never going to value, and the two models that do
+
+A discounted cash flow needs free cash flow to discount. For a bank there is none to speak
+of — deposits are raw material, not capital awaiting reinvestment, and JPM's gross property
+and equipment is 36.2bn against 4,424.9bn of assets, 0.8%. For a REIT there is cash flow but
+the earnings it is struck against are fiction: buildings are depreciated as though they wear
+out, so dividends run **261.2% of net income** on the O fixture and every payout-based
+formula reads as a company distributing nearly three times what it earns.
+
+Until today the platform said so and stopped there. `dcf_applicable` was false, the football
+field drew a struck-out row, and the reader got the true sentence "a DCF does not apply here"
+in place of the one they came for. **Three of the eight fixtures had no intrinsic valuation
+at all.** Two of them do now.
+
+### What replaced it
+
+**Banks and insurers get an excess return model.** `Value = book equity + PV((ROE − Ke) ×
+book equity)` — the residual-income form, which is what Damodaran recommends for financial
+institutions and which works precisely because book equity *is* regulatory capital for a
+bank rather than an accounting artefact. Return on equity is normalised across the reported
+periods rather than taken from the newest, because provisioning is procyclical: JPM's four
+years run 13.55 / 15.89 / 17.51 / 16.26%, a 3.96-point spread, and feeding the newest of
+those into a perpetuity compounds a 4-point error forever.
+
+**REITs get a dividend discount model**, per share and never in aggregate. That distinction
+is the whole model: O's share count ran 660.3m → 934.0m across four years, so the aggregate
+dividend compounds at **17.22%** while the dividend *per share* compounds at **4.43%**. The
+12.79-point gap is not growth, it is the new shareholders who brought the capital — and at
+17.22% against a 7.51% cost of equity the Gordon terminal value is not merely too large, it
+is negative.
+
+**A third thing changed to make room for both:** `dcf_applies` used to be derived from the
+scoring metric list, which quietly tied "is there a valuation here" to "is it a DCF". Those
+are separate questions now. `VALUATION_MODELS` states which model values which type, and a
+bank answers `False` to `dcf_applies` while carrying a full intrinsic valuation.
+
+### What each one says, measured on the fixtures
+
+| | before | after |
+|---|---|---|
+| JPM | struck-out row, no bar | **290.66 – 392.48**, mid 337.55 |
+| O | struck-out row, no bar | **61.08 – 79.89**, mid 69.51 against a price of 62.70 |
+| O, analyst target range | 61.50 – 72.00 | unchanged — and the new bar lands on top of it |
+| RIVN | struck-out row | unchanged, permanently: no cash flow, no ROE worth compounding, no dividend |
+
+O's bar and the analyst range agreeing to within a cent at the floor is the only
+out-of-sample corroboration this fixture set can offer, and it is worth exactly as much as
+one company.
+
+### The refusal that matters more than the valuation
+
+The dividend discount model **declines to price O at all on the path production takes.**
+With market bars supplied, O's beta is regressed to 0.4263 against an R² of 0.148, which
+puts its cost of equity at **6.20% — below its own 7.30% pre-tax cost of debt.** A lender
+ranks ahead of a shareholder, so that is not a rate this company could raise equity at.
+
+`dcf_valuation` has reported the same inequality as `cost_of_equity_below_debt` since
+2026-08-26 and deliberately never corrects it, because a WACC blends the inverted cost of
+equity with the debt cost that overtook it and damps the error. A dividend discount model
+discounts every cash flow at the cost of equity alone and then divides by `Ke − g`. The same
+110-basis-point input error is worth **94.35 against a price of 62.70, +50.5%**, with 70.7%
+of it in the terminal. Refusing was chosen over correcting: flooring the cost of equity
+belongs to both models or to neither, and doing it here alone would leave one company
+discounted two ways by one platform. The open CAPM question stays in TODOLIST where the
+DCF's comment left it.
+
+### Both models refuse off their own type, and that had to be built before anything read them
+
+Run on the wrong company the answers are not imprecise, they are meaningless in opposite
+directions. Buybacks leave AAPL with 73.7bn of book equity, so the excess return model reads
+a 167% ROE and values it at **10,249.75** against a price of 311; the dividend discount
+model reads Apple's dividend as though it were a statutory distribution and values the same
+company at **17.07**. Nothing renders either key today, which is the argument for gating
+them now rather than after a panel starts reading one.
+
+### What the tests found that the tests did not catch
+
+667 → **737 backend tests**, 927 offline in total. Seventeen deliberate mutations were
+applied to the finished code and all seventeen failed the suite — but three defects reached
+that stage by surviving it first, and each was found by something other than a green run:
+
+- **A test that read its expected value out of the constant it was testing.** Reversing
+  `COMMON_DIVIDEND_ROWS` changed the model and the expectation together, so the suite stayed
+  green with the wrong row order live. Found only because the mutation runner asserts its
+  target actually matched — the mutation reported "not applied", which is how the reversal
+  was noticed at all.
+- **A bisection bracketed at one end.** Where the price sits below what any discount rate can
+  reach, the search returned its own upper bound, 1.0, as the implied cost of equity. A
+  number at the edge of a search band is the search failing, not answering.
+- **A guard that could not fire.** `dps <= 0` was unreachable because the history filter
+  already admits only strictly positive dividends.
+
+Four "measured" figures written into comments were also wrong, three of them computed before
+the dividend row order was corrected — including one that propped up a false argument, that a
+±2pp growth sweep was "already wider than the company's recent history" when O's own
+year-on-year moves deviate by up to 3.13 points. The sweep is ±3pp now, and the claim is
+true. A codebase that asks to be trusted because it measured things has to be right about the
+measurements.
+
 ## 2026-08-28 (c) - The floor was two minor versions higher than anything required
 
 `requires-python = ">=3.14"` had a stated reason and it was an honest one: the floor matched

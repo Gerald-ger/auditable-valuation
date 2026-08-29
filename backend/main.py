@@ -572,11 +572,15 @@ def comps_endpoint(ticker: str, peer_list: str = ""):
     excess_return = (
         financial_models.excess_returns_valuation(f, peers=peer_betas, market_bars=bars)
         if result["valuation_model"] == "excess_return" else None)
+    dividend_discount = (
+        financial_models.dividend_discount_valuation(f, peers=peer_betas, market_bars=bars)
+        if result["valuation_model"] == "dividend_discount" else None)
     # Resolved before the triangulation rather than after it: the gap bridge
     # below measures against this price, so it has to exist by then.
     result["current_price"] = f["info"].get("currentPrice") or f["info"].get("regularMarketPrice")
     result["football_field"] = comps.football_field(
-        f, dcf, result, classification, excess_return=excess_return)
+        f, dcf, result, classification, excess_return=excess_return,
+        dividend_discount=dividend_discount)
     result["triangulation"] = comps.triangulate(result["football_field"])
     # Why the DCF and the price differ, named. Only where a DCF applies at all —
     # for a bank or a REIT there is no gap to explain, there is no model.

@@ -251,12 +251,18 @@ def get_profile(classification: str) -> dict:
 # them.
 #
 # `None` is a real answer, not a gap. A pre-profit company has neither positive
-# free cash flow nor a return on equity worth compounding, so both models
-# decline and the chart says so rather than drawing a confident bar.
+# free cash flow, nor a return on equity worth compounding, nor a dividend, so
+# every model declines and the chart says so rather than drawing a confident bar.
 VALUATION_MODELS = {
     "financials_bank": "excess_return",
     "financials_insurance": "excess_return",
-    "real_estate_reit": None,
+    # A REIT distributes by statute rather than by choice, which makes the
+    # dividend the cash flow rather than a residual left after one. The excess
+    # return model next door cannot value it and refuses in as many words:
+    # dividends run 261.2% of net income on the O fixture, because GAAP earnings
+    # for a REIT are struck after depreciating buildings that are not
+    # economically wasting.
+    "real_estate_reit": "dividend_discount",
     "pre_profit_growth": None,
 }
 DEFAULT_VALUATION_MODEL = "fcff_dcf"

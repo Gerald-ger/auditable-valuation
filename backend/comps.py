@@ -844,9 +844,62 @@ def _excess_return_band(valuation: dict) -> tuple[float, float, str] | None:
     return min(vals), max(vals), "ROE x cost of equity"
 
 
+def _dividend_discount_band(valuation: dict) -> tuple[float, float, str] | None:
+    """(low, high, basis) for a dividend discount bar, or None on an empty grid.
+
+    Quartiles of the grid, then the explicit growth sweep unioned in — the shape
+    `_dcf_band` uses rather than the one `_excess_return_band` uses, and the
+    difference between the two is measured rather than stylistic.
+
+    `_excess_return_band` declines the union because that model's grid already
+    sweeps both of its first-order inputs, so the one-dimensional sweep is
+    literally a row of the grid and unioning it is provably a no-op. This grid
+    sweeps terminal growth against cost of equity and holds the dividend growth
+    rate fixed outside it, exactly as the DCF's does — so the sweep reaches
+    values the grid cannot. Measured on the O fixture 2026-08-29: the grid spans
+    54.22-97.76 and its quartiles 61.49-79.89, against a dividend growth sweep of
+    61.08-78.97 — so the union pulls the floor down to 61.08 and leaves the
+    ceiling where it was, and the basis reads "+ dividend growth (downside
+    only)". Naming only the side that moved is the rule `_dcf_band` follows for
+    the same reason: a flat "+ growth" reads as a symmetric stress even where the
+    sweep reached one end and nothing at the other.
+
+    No base-year term. `_dcf_band`'s third block unions a normalised base-year
+    free cash flow, which exists because a single year's cash conversion can be
+    unrepresentative. A declared dividend is the most deliberately smoothed
+    figure a listed company publishes — O's four years compound at 4.4256%
+    against a mean year-on-year of 4.4504% — so there is no normalised base
+    dividend to union, and reaching for `_dcf_band` here would have silently
+    skipped that block on a missing key rather than declining it on purpose.
+    """
+    rows = valuation.get("sensitivity", {}).get("rows", [])
+    vals = sorted(v for row in rows for v in row.get("values", []) if v is not None)
+    if not vals:
+        return None
+    if len(vals) >= 4:
+        low, high = quantiles(vals, n=4)[0], quantiles(vals, n=4)[2]
+        basis = "cost of equity x terminal growth, 25th-75th"
+    else:
+        low, high = min(vals), max(vals)
+        basis = "cost of equity x terminal growth"
+    growth = [v for v in (valuation.get("growth_sensitivity") or {}).get("values", [])
+              if v is not None]
+    if growth:
+        extended_low, extended_high = min(growth) < low, max(growth) > high
+        low, high = min(low, *growth), max(high, *growth)
+        if extended_low and extended_high:
+            basis += " + dividend growth"
+        elif extended_low:
+            basis += " + dividend growth (downside only)"
+        elif extended_high:
+            basis += " + dividend growth (upside only)"
+    return round(low, 2), round(high, 2), basis
+
+
 def football_field(target_fund: dict, dcf: dict, comps: dict,
                    classification: str | None = None,
-                   excess_return: dict | None = None) -> list[dict]:
+                   excess_return: dict | None = None,
+                   dividend_discount: dict | None = None) -> list[dict]:
     """Valuation ranges from each method, for the range chart.
 
     `classification` gates the DCF row. Without it the only test available was
@@ -865,6 +918,9 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
     er_band = (_excess_return_band(excess_return)
                if model == "excess_return" and excess_return
                and not excess_return.get("error") else None)
+    dd_band = (_dividend_discount_band(dividend_discount)
+               if model == "dividend_discount" and dividend_discount
+               and not dividend_discount.get("error") else None)
 
     if classification is not None and not sector_weights.dcf_applies(classification):
         # Still named and struck out rather than dropped, even when another
@@ -875,6 +931,8 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
                   f"{classification.replace('_', ' ')}.")
         if er_band:
             reason += " The excess return bar values it instead."
+        elif dd_band:
+            reason += " The dividend discount bar values it instead."
         ranges.append({"method": "DCF", "not_applicable": True, "reason": reason})
     elif dcf and not dcf.get("error"):
         band = _dcf_band(dcf)
@@ -896,6 +954,18 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
         ranges.append({
             "method": f"Excess return ({basis})", "low": low, "high": high,
             "mid": _clamped_mid(excess_return.get("fair_value_per_share"), low, high),
+            "independent": True,
+        })
+
+    if dd_band:
+        low, high, basis = dd_band
+        # Not "DCF (...)" either, and for the same reason spelled out above: a
+        # model that discounts dividends per share never forms an enterprise
+        # value, so the peer row's equity-basis note would be explaining a
+        # difference that does not exist.
+        ranges.append({
+            "method": f"Dividend discount ({basis})", "low": low, "high": high,
+            "mid": _clamped_mid(dividend_discount.get("fair_value_per_share"), low, high),
             "independent": True,
         })
 

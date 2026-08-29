@@ -1524,6 +1524,398 @@ def excess_returns_valuation(f: dict, roe: float | None = None,
         },
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Dividend discount model — REITs
+#
+# A REIT is the one company type whose dividend is not a residual. It is a
+# statutory obligation: US REIT status requires distributing at least 90% of
+# taxable income, so the payout is close to the whole of what the business
+# produces rather than whatever management chose to leave over. That makes the
+# dividend the cash flow, and discounting it the direct valuation rather than a
+# proxy for one.
+#
+#     Value per share = PV(expected dividends per share) + PV(terminal value)
+#
+# The excess return model next door cannot value one, and not for a subtle
+# reason: measured on the O fixture 2026-08-29, dividends run 261.2% of net
+# income averaged over four years, so `1 - payout` is -161.2% and the retention
+# growth that model needs is negative. `RETENTION_VALIDITY_RANGE` refuses it in
+# as many words. That is not a defect in either model — GAAP net income for a
+# REIT is struck after depreciating buildings that are not economically wasting,
+# which is exactly why the industry reports FFO and why a payout ratio measured
+# against net income exceeds 100% for essentially every REIT that exists.
+#
+# **Per share throughout, never in aggregate**, and that is the load-bearing
+# choice. REITs fund acquisitions by issuing equity: O's share count ran
+# 660.3m -> 934.0m across the four reported years, +41.4%. Aggregate dividends
+# paid therefore compound at 17.22% while the dividend *per share* compounds at
+# 4.43%, and the difference is not growth — it is the new shareholders who
+# brought the capital. Valuing the aggregate stream and dividing by today's
+# share count would credit the existing holder with dividends bought by someone
+# else's money, and at 17.22% against a cost of equity of 7.51% the Gordon
+# terminal value would be negative into the bargain.
+COMMON_DIVIDEND_ROWS = ("Common Stock Dividend Paid", "Cash Dividends Paid")
+
+# Common-first, and the order is the whole point. `DIVIDEND_PAID_ROWS` above
+# reads `Cash Dividends Paid` first because the excess return model wants the
+# total distribution against total earnings. This model divides by the *common*
+# share count, so the preferred dividend is a claim ranking ahead of the shares
+# being valued. On the O fixture the two rows agree in three of four years and
+# differ in FY2024 by exactly `Preferred Stock Dividend Paid` — 2,699,482k
+# against 2,691,719k, a 7,763k preferred distribution — which is a 0.29% error
+# in that year's dividend per share. Found in review 2026-08-29; the first draft
+# reused `DIVIDEND_PAID_ROWS` and inherited the wrong priority.
+SHARES_OUTSTANDING_ROWS = ("Ordinary Shares Number",)
+
+# The grid sweeps terminal growth against cost of equity, matching the DCF's
+# grid step for step rather than the excess return model's. That is deliberate:
+# there the two first-order inputs are ROE and the cost of equity, and the
+# growth rate is a function of ROE. Here the first-order input is a dividend
+# growth rate measured from four years of the company's own declared dividends —
+# a fact — while terminal growth is a pure assumption carrying 62.7% of the
+# answer on O. The assumption is what deserves the axis.
+#
+# And it is the axis that moves the answer, which is the check that this is the
+# right pair rather than merely the conventional one. Measured on O 2026-08-29:
+# across this grid the terminal share runs 54.8-71.9%, while the dividend growth
+# sweep beside it moves the same share only 61.7-63.7%. Stated as "63-71%" in
+# the first draft, which was neither of those readings — it was the base case
+# and the with-bars counterfactual quoted as though they were a range.
+DDM_KE_STEPS = (-0.01, -0.005, 0.0, 0.005, 0.01)
+DDM_TERMINAL_GROWTH_STEPS = (-0.005, -0.0025, 0.0, 0.0025, 0.005)
+
+# And the explicit rate gets the one-dimensional sweep the DCF's growth rate
+# gets, for the same reason: it sits fixed outside the grid above, so nothing in
+# that grid can express being wrong about it.
+#
+# +/-3pp rather than the DCF's +/-4pp, calibrated to this series rather than to
+# that one. O's own year-on-year dividend growth runs 2.19 / 7.58 / 3.58% about
+# a 4.45% mean — deviations of -2.26, +3.13 and -0.87 points — so a 3-point
+# sweep is the narrowest one that still covers every move this company's
+# dividend has actually made. A declared dividend is the most deliberately
+# smoothed number a listed company publishes, so stressing it as hard as a free
+# cash flow forecast would claim a volatility the series does not have; stressing
+# it less hard than its own history would be worse.
+#
+# +/-2pp was the first draft and its stated reason — that it was "already wider
+# than the company's recent history" — was false, arrived at from a dividend
+# series read off the wrong cash-flow row. Corrected 2026-08-29.
+DIVIDEND_GROWTH_STEPS = (-0.03, -0.015, 0.0, 0.015, 0.03)
+
+# Rows for the FFO proxy the coverage diagnostic is measured against. Identical
+# to `scoring.py`'s, deliberately: this reads the same two figures that module
+# already reads and inherits the same caveat, which its comment states at
+# length — net income plus total D&A is **not** NAREIT FFO, because yfinance
+# exposes no gain-on-sale-of-real-estate row to subtract. Reported as a proxy
+# and named one. Nothing here writes to scoring or changes a score.
+DEP_AMORT_ROWS = ("Depreciation And Amortization", "Depreciation Amortization Depletion")
+
+
+def dividend_per_share_history(f: dict) -> list[dict]:
+    """Dividend per common share per reported period, oldest first.
+
+    Both legs come from the same period or the period is skipped, the same
+    pairing discipline `roe_history` documents — and here the two legs sit in
+    two different statements again, the dividend in the cash flow and the share
+    count on the balance sheet, so `statements.paired_latest` cannot help.
+
+    The share count is the balance sheet's `Ordinary Shares Number` for that
+    period, never `info["sharesOutstanding"]`. The latter is a single
+    point-in-time figure — 932,492,530 against the FY2025 statement's
+    933,975,000 on the O fixture — and dividing four years of dividends by one
+    year's share count would report dividend growth that is mostly the change in
+    the denominator.
+    """
+    out = []
+    cash_flow = f.get("cash_flow", {}) or {}
+    balance = f.get("balance_sheet", {}) or {}
+    for period in sorted(cash_flow):
+        dividends = statements.value_at(cash_flow, period, *COMMON_DIVIDEND_ROWS)
+        shares = statements.value_at(balance, period, *SHARES_OUTSTANDING_ROWS)
+        if not dividends or not shares or shares <= 0 or dividends >= 0:
+            continue
+        out.append({"period": period, "shares": shares,
+                    "dividend_per_share": abs(dividends) / shares})
+    return out
+
+
+def dividend_discount_valuation(f: dict, growth_rate: float | None = None,
+                                terminal_growth: float | None = None,
+                                cost_of_equity_override: float | None = None,
+                                tax_rate: float | None = None,
+                                peers: list[dict] | None = None,
+                                market_bars: tuple[list[dict], list[dict]] | None = None
+                                ) -> dict:
+    """Two-stage dividend discount valuation, for REITs.
+
+    Returns the same envelope the other two models do — `assumptions`,
+    `fair_value_per_share`, `current_price`, `upside_pct`, `diagnostics`, a
+    sensitivity grid and a one-dimensional growth sweep — or `{"error": ...}`.
+
+    It deliberately returns **no `equity_value`**, for the reason the excess
+    return model returns no enterprise value: this model works in per-share
+    units from the first line to the last, and multiplying back by a share count
+    to publish an aggregate would invent a figure it never computed and invite a
+    comparison with two models that reach per-share from the other direction.
+
+    **The growth rate is the compound rate of the company's own declared
+    dividends per share**, not a retention-growth formula and not
+    `info["payoutRatio"]`. Measured on O 2026-08-29 the series runs 2.7464 ->
+    2.8065 -> 3.0193 -> 3.1274, a compound 4.4256% against a mean year-on-year
+    of 4.4504% — 2 basis points apart, which is what a smoothed series looks
+    like and is why the compound rate can be used without normalising it the way
+    ROE has to be. Both are published; the compound one is used.
+
+    **It refuses when the cost of equity comes in below this company's own
+    pre-tax cost of debt.** A lender ranks ahead of a shareholder, so a share
+    cannot require less return than the bond above it — the same inequality
+    `dcf_valuation` reports as `cost_of_equity_below_debt` and, there,
+    deliberately never corrects. This model refuses rather than reporting,
+    and the difference in treatment is a difference in exposure rather than in
+    doctrine: a DCF discounts at WACC, which blends the inverted cost of equity
+    with the debt cost that overtook it and damps the error, while this model
+    discounts every cash flow at the cost of equity alone and the terminal value
+    divides by `ke - g`. Measured on O with `market_bars` supplied, a beta
+    regression of 0.4263 (R^2 0.148) puts the cost of equity at 6.20% against a
+    7.30% pre-tax cost of debt, and the fair value comes out at 94.35 against a
+    price of 62.70 — +50.5%, with 70.7% of it in the terminal. The same fixture
+    without bars uses the reported beta of 0.72, lands at 7.51%, clears the
+    inversion, and values it at 69.51. One of those two numbers is a valuation
+    and the other is a 110-basis-point input error multiplied by a perpetuity.
+
+    Correcting the inversion instead of refusing was the alternative and it was
+    declined on 2026-08-29: flooring the cost of equity at the cost of debt is a
+    modelling change that belongs to both models or to neither, `dcf_valuation`
+    does not make it, and making it here alone would leave the same company
+    discounted two ways by one platform. It stays where the DCF's comment left
+    it — the open CAPM question in TODOLIST.
+    """
+    info = f.get("info", {}) or {}
+    history = dividend_per_share_history(f)
+    if len(history) < 2:
+        return {"error": "Fewer than two periods report a dividend against a "
+                         "share count, so a dividend growth rate cannot be "
+                         "measured — dividend discount model not applicable."}
+
+    # No zero-dividend guard here, and its absence is deliberate rather than an
+    # oversight. `dividend_per_share_history` admits a period only when the
+    # dividend is strictly negative (a cash outflow) and the share count
+    # strictly positive, so every entry it returns is strictly positive and a
+    # `dps <= 0` check below could never fire. A year in which the dividend goes
+    # to zero drops out of the history and shortens it — which is what the
+    # refusal above measures. Verified 2026-08-29 by zeroing O's newest dividend:
+    # the history returns three periods, not four with a zero in it.
+    dps = [h["dividend_per_share"] for h in history]
+    periods = len(dps) - 1
+    growth_cagr = (dps[-1] / dps[0]) ** (1 / periods) - 1
+    yoy = [dps[i + 1] / dps[i] - 1 for i in range(periods)]
+    growth_mean_yoy = sum(yoy) / len(yoy)
+    growth_source = "user"
+    if growth_rate is None:
+        growth_rate, growth_source = growth_cagr, "dps_compound_growth"
+        if not GROWTH_VALIDITY_RANGE[0] <= growth_rate <= GROWTH_VALIDITY_RANGE[1]:
+            # Rejected rather than truncated, the rule `GROWTH_VALIDITY_RANGE`
+            # exists to state: a rate outside this band is a corrupt series
+            # rather than a fast-growing dividend, and clamping it would
+            # substitute a number no statement reported.
+            return {"error": f"Measured dividend growth of {growth_rate:.1%} is "
+                             f"outside {GROWTH_VALIDITY_RANGE[0]:.0%} to "
+                             f"{GROWTH_VALIDITY_RANGE[1]:.0%} — the dividend "
+                             "series is not describing a growth rate."}
+
+    tax_rate = tax_rate_for(info) if tax_rate is None else tax_rate
+    wacc_parts = _wacc(f, tax_rate, peers, market_bars)
+    ke = wacc_parts["cost_of_equity"] if cost_of_equity_override is None \
+        else cost_of_equity_override
+    ke_source = "capm" if cost_of_equity_override is None else "user"
+    cost_of_debt_pre_tax = (wacc_parts["risk_free_rate"]
+                            + wacc_parts.get("credit_spread", 0.0))
+
+    if ke < cost_of_debt_pre_tax:
+        return {"error": f"Cost of equity ({ke:.2%}) is below this company's "
+                         f"pre-tax cost of debt ({cost_of_debt_pre_tax:.2%}). A "
+                         "lender ranks ahead of a shareholder, so the discount "
+                         "rate this model would apply to every dividend is not "
+                         "one the company could raise equity at — no fair value "
+                         "is reported rather than one built on it."}
+
+    terminal_growth_source = "user"
+    if terminal_growth is None:
+        rf_cap = wacc_parts["risk_free_rate"]
+        terminal_growth = min(TERMINAL_GROWTH, rf_cap)
+        terminal_growth_source = ("platform_default" if terminal_growth == TERMINAL_GROWTH
+                                  else "capped_at_risk_free_rate")
+
+    if ke <= terminal_growth:
+        return {"error": f"Cost of equity ({ke:.2%}) must exceed terminal growth "
+                         f"({terminal_growth:.2%})."}
+
+    base_dps = dps[-1]
+
+    def _value_at(k: float, g_term: float, g: float | None = None) -> float | None:
+        """Fair value per share at an alternative cost of equity, terminal growth
+        and explicit growth rate — in reporting-currency units, unconverted.
+
+        `_project` is the DCF's own projection loop and needs no adaptation: it
+        grows a level along `_growth_path` and caps it with `level x (1 + g) /
+        (k - g)`, which is the Gordon dividend formula written for a cash flow.
+        Reusing it is what keeps the two models' fade shape identical rather
+        than merely similar.
+        """
+        if k <= g_term:
+            return None
+        pv, terminal_pv, _ = _project(base_dps, growth_rate if g is None else g,
+                                      k, g_term)
+        return pv + terminal_pv
+
+    pv_explicit, pv_terminal, _ = _project(base_dps, growth_rate, ke, terminal_growth)
+    value_per_share = pv_explicit + pv_terminal
+
+    # Dividends per share are a reporting-currency figure and the price is a
+    # traded one. Converted once, here, exactly as the other two models do — and
+    # withheld rather than compared across two units when no rate can be had.
+    price = info.get("currentPrice") or info.get("regularMarketPrice")
+    fx, fx_mismatch = _to_trading(info)
+    fx_basis = ("single_currency" if not fx_mismatch
+                else "converted" if fx is not None else "rate_unavailable")
+    conv = fx if fx is not None else 1.0
+    fair_value = value_per_share * conv
+    comparable = bool(fair_value and price and fx_basis != "rate_unavailable")
+
+    def _converted(k: float, g_term: float, g: float | None = None):
+        out = _value_at(k, g_term, g)
+        return None if out is None else round(out * conv, 2)
+
+    # What discount rate the market is applying, which is the one number that
+    # makes an upside figure arguable rather than merely large. Bisected because
+    # the two-stage fade has no closed form; monotone falling in `k`, so the
+    # bracket cannot straddle two roots. Returns None when the price lies
+    # outside what any rate in the band can reach — "no cost of equity gets you
+    # there" being a result rather than a failure, per `solve_for_fair_value`.
+    implied_ke = None
+    if comparable:
+        # Both ends bracketed, not just the near one. Fair value falls in `k`,
+        # so a root exists only if the cheap end overshoots the price *and* the
+        # dear end undershoots it. Checking only the first returned `hi` itself
+        # as the answer whenever no rate could reach the price: measured
+        # 2026-08-29 on O with the price forced to 1.00 — under which even a
+        # 100% cost of equity values it at 3.40 — the bisection reported an
+        # implied cost of equity of exactly 1.0, which is the bracket's edge
+        # rather than a solution. None is the honest answer, per the same
+        # reasoning `solve_for_fair_value` states: "no rate in this band gets
+        # you there" is a result, not a failure.
+        lo, hi = terminal_growth + 1e-6, 1.0
+        near, far = _converted(lo, terminal_growth), _converted(hi, terminal_growth)
+        if near is not None and far is not None and near > price > far:
+            for _ in range(200):
+                mid = (lo + hi) / 2
+                value = _converted(mid, terminal_growth)
+                if value is None or value > price:
+                    lo = mid
+                else:
+                    hi = mid
+            implied_ke = round((lo + hi) / 2, 6)
+
+    # Dividends against the FFO proxy, per period. The one question a dividend
+    # discount model cannot ask of itself: it takes the dividend as given and
+    # compounds it, so whether the dividend is covered has to come from outside
+    # the model. A proxy and labelled one — see DEP_AMORT_ROWS.
+    coverage = []
+    for h in history:
+        dep = statements.value_at(f.get("cash_flow", {}), h["period"], *DEP_AMORT_ROWS)
+        income = statements.value_at(f.get("income_statement", {}), h["period"],
+                                     *COMMON_INCOME_ROWS)
+        if dep is None or income is None or income + dep <= 0:
+            continue
+        coverage.append({"period": h["period"],
+                         "payout_of_ffo_proxy": round(
+                             h["dividend_per_share"] * h["shares"] / (income + dep), 4)})
+
+    return {
+        "assumptions": {
+            "dividend_per_share": round(base_dps, 6),
+            "dividend_period": history[-1]["period"],
+            "dividend_basis": "common_stock_dividend_paid_per_period_share_count",
+            "growth_rate_explicit": growth_rate,
+            "growth_source": growth_source,
+            "growth_periods": periods,
+            "terminal_growth": terminal_growth,
+            "terminal_growth_source": terminal_growth_source,
+            "terminal_growth_anchor": TERMINAL_GROWTH,
+            "terminal_growth_ceilings": {
+                "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
+                "risk_free_rate": wacc_parts["risk_free_rate"],
+            },
+            "cost_of_equity_used": ke,
+            "cost_of_equity_source": ke_source,
+            "tax_rate": tax_rate,
+            "projection_years": PROJECTION_YEARS,
+            "stage1_years": STAGE1_YEARS,
+            "stage2_years": STAGE2_YEARS,
+            **wacc_parts,
+            "currency": info.get("currency"),
+            "reporting_currency": info.get("financialCurrency"),
+            "fx_basis": fx_basis,
+            "fx_rate_used": round(fx, 6) if fx_mismatch and fx is not None else None,
+        },
+        "dividend_per_share": round(base_dps, 6),
+        "dividend_pv": round(pv_explicit * conv, 4),
+        "terminal_value_pv": round(pv_terminal * conv, 4),
+        "fair_value_per_share": round(fair_value, 2) if fair_value else None,
+        "current_price": price,
+        "upside_pct": round((fair_value / price - 1) * 100, 1) if comparable else None,
+        "diagnostics": {
+            "dividend_per_share_history": [
+                {"period": h["period"],
+                 "dividend_per_share": round(h["dividend_per_share"], 6),
+                 "shares": h["shares"]} for h in history],
+            # Published beside the rate that is used, never averaged with it —
+            # two ways of reading one series, agreeing to 2bp on O, and a gap
+            # between them is the signal that the series is not smooth.
+            "growth_compound": round(growth_cagr, 6),
+            "growth_mean_yoy": round(growth_mean_yoy, 6),
+            # +41.4% over four years on O. Per-share arithmetic already handles
+            # it; this says how much of the aggregate dividend's growth was
+            # bought rather than earned.
+            "share_count_growth": round(history[-1]["shares"] / history[0]["shares"] - 1, 4),
+            "payout_of_ffo_proxy": coverage,
+            "ffo_basis": "net_income_plus_total_dep_amort_not_nareit_ffo",
+            "terminal_value_share": round(pv_terminal / value_per_share, 6)
+                                    if value_per_share else None,
+            "terminal_value_high": bool(value_per_share
+                                        and pv_terminal / value_per_share > 0.75),
+            # How much room the perpetuity has, published for the reason the
+            # DCF publishes it: the answer scales as the reciprocal of this and
+            # its sensitivity to an error in `ke` as the reciprocal squared.
+            "terminal_spread": round(ke - terminal_growth, 4),
+            "cost_of_debt_pre_tax": round(cost_of_debt_pre_tax, 4),
+            # Always False on a returned valuation — the inversion is refused
+            # above. Reported anyway so the panel reads the same field the DCF's
+            # does, and so a reader can see how much room cleared the test.
+            "cost_of_equity_below_debt": ke < cost_of_debt_pre_tax,
+            "cost_of_equity_headroom": round(ke - cost_of_debt_pre_tax, 4),
+            "implied_cost_of_equity": implied_ke,
+            "dividend_yield_on_price": round(base_dps * conv / price, 6)
+                                       if comparable else None,
+        },
+        "sensitivity": {
+            "terminal_growth_cols": [round(terminal_growth + d, 4)
+                                     for d in DDM_TERMINAL_GROWTH_STEPS],
+            "rows": [{"cost_of_equity": round(ke + dk, 6),
+                      "values": [_converted(ke + dk, terminal_growth + dg)
+                                 for dg in DDM_TERMINAL_GROWTH_STEPS]}
+                     for dk in DDM_KE_STEPS],
+        },
+        # Cost of equity and terminal growth held at base; only the explicit
+        # rate moves, so this reads as "what the answer costs per point of
+        # dividend growth".
+        "growth_sensitivity": {
+            "growth_rates": [round(growth_rate + d, 6) for d in DIVIDEND_GROWTH_STEPS],
+            "values": [_converted(ke, terminal_growth, growth_rate + d)
+                       for d in DIVIDEND_GROWTH_STEPS],
+        },
+    }
+
 
 # How far this year's cash conversion may sit from the company's own history
 # before the base year stops being a run-rate.
@@ -1984,6 +2376,17 @@ def full_analysis(f: dict, peers: list[dict] | None = None,
         "excess_return": (
             excess_returns_valuation(f, peers=peers, market_bars=market_bars)
             if sector_weights.valuation_model_for(_classify(f)) == "excess_return"
+            else None),
+        # Gated identically, and the gate matters just as much. Run on the wrong
+        # company type this model is not merely imprecise, it is meaningless:
+        # measured 2026-08-29 it values AAPL at 17.07 against a price of 311,
+        # because Apple's dividend is a small residual of its earnings rather
+        # than the whole of what the business distributes. Same shape of error
+        # as the excess return model's 10,249.75 on the same company, in the
+        # other direction.
+        "dividend_discount": (
+            dividend_discount_valuation(f, peers=peers, market_bars=market_bars)
+            if sector_weights.valuation_model_for(_classify(f)) == "dividend_discount"
             else None),
         "revenue_trend": revenue_trend(f),
     }
