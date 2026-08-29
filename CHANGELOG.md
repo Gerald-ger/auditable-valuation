@@ -17,6 +17,84 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-29 (d) - The Financial Models tab had a panel for the model that does not apply
+
+Since this morning a bank has had an excess return valuation and a REIT a dividend discount
+one. The Financial Models tab showed neither. It showed a DCF panel, and inside it a banner
+explaining that a DCF does not apply to this company — the model with no answer, and nothing
+from the one with an answer.
+
+A read-only `IntrinsicPanel` now sits **above** the DCF panel, rendering whichever of the two
+applies. Above rather than below because the DCF panel's own banner is a disclaimer, and
+meeting a disclaimer before the answer is the wrong order.
+
+It has three states, all of them real on the committed fixtures:
+
+| | what the panel shows |
+|---|---|
+| JPM | a valuation: **330.52** against a price of 359.24, the bridge from book equity, and a cost-of-equity × ROE grid |
+| O | **the refusal itself** — the dividend model declines once real market bars are supplied, and the sentence saying why is the most useful thing on the panel |
+| AAPL | nothing at all; the DCF applies, so this panel does not render |
+
+No backend plumbing was needed — `full_analysis` has carried both keys since this morning
+and `ModelsTab` already stored the whole payload.
+
+### What it exposed in the backend
+
+`dcf_valuation` documents the rule: `conv` is applied **at the output boundary**, to every
+currency-denominated output and to none of the unit-free ratios. The dividend model follows
+it. The excess return model did not — it converted `fair_value_per_share` and left
+`book_value_of_equity`, `excess_return_pv`, `terminal_value_pv`, `equity_value` and
+`tangible_book_value` in reporting currency.
+
+That was inconsistent across the three models and inconsistent **inside** the one. Measured
+on a JPM fixture relabelled CNY-reporting against an HKD listing: `book_value_per_share`
+(converted) times the share count gave **376.64bn** against a `book_value_of_equity` of
+**342.39bn** — a ratio of exactly 1.1000, the FX rate. Both figures were on the same payload
+and they could not both be right.
+
+Fixed at the boundary, which is numerically a no-op on every committed fixture — all but the
+Hong Kong pair report and trade in one currency — and is exactly why nothing caught it until
+a panel tried to print the bridge.
+
+### Four things the mutation battery found that a green suite did not
+
+Two were redundant code of mine, and deleting them is the fix:
+
+- `bank ? big : (x) => num(x, 2)` — `big` falls through to `num` below a million and every
+  per-share figure the dividend model produces is far beneath it. The two formatters were
+  **provably identical**.
+- `{!bank && v.growth_sensitivity && ...}` — `growth_sensitivity` is a key only the dividend
+  model returns, so `!bank` could never change the outcome.
+
+Two were untested behaviour:
+
+- The upside colour's null guard. `null >= 0` is true in JS, so a withheld comparison paints
+  green. The DCF panel carries this guard **and a test for it**; the new panel copied the
+  guard and not the test.
+- The grid's cell colouring against price. Painting every cell one colour left 196 tests green.
+
+### And a placebo introduced while fixing a review comment
+
+The review noted the upside-colour test used a position-based selector where its DCF sibling
+uses a content-based one. Hardening it wrote the regex as a **literal backspace character**
+rather than ``:
+
+```
+    expect(upside.className).not.toMatch(/^H(up|down)^H/);   <- 0x08, not 
+    expect(upside.className).not.toMatch(/(up|down)/);   <- the sibling, correct
+```
+
+The assertion could no longer fail. It is the fourth unfalsifiable test found in this work
+and the first one created rather than inherited — caught because the mutation that had been
+failing a moment earlier started passing.
+
+Test fixtures also gained `reporting_currency`, which the backend always sends and the mocks
+omitted; without it, a mutation firing the conversion footnote on every company was invisible.
+
+761 -> **762 backend** and 190 -> **200 frontend tests**, 962 offline. Bundle 478.65 kB ->
+486.90 kB. Ten mutations against the panel, ten caught.
+
 ## 2026-08-29 (c) - A bank's scorecard could not see its own valuation
 
 The excess return model shipped this morning drew a bar on the football field and the

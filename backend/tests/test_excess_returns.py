@@ -383,6 +383,62 @@ def test_price_to_book_is_withheld_when_the_two_are_in_different_currencies(jpm,
     assert out["diagnostics"]["price_to_book"] is None
 
 
+def test_every_currency_output_is_converted_and_no_ratio_is(jpm):
+    """The output-boundary rule, which this model did not follow until P5a.
+
+    `dcf_valuation`'s own comment states it: `conv` is applied to every
+    currency-denominated output and to none of the unit-free ratios. The DCF
+    converts `equity_value`; the dividend model converts both its present
+    values; this one converted `fair_value_per_share` and nothing else.
+
+    The gap was internal too. Before the fix, on this same relabelled fixture,
+    `book_value_per_share` times the share count came to 376.64bn against a
+    `book_value_of_equity` of 342.39bn — off by exactly the 1.10 rate, so the
+    two figures on one payload could not both be right.
+
+    Every fixture but the Hong Kong pair reports and trades in one currency, so
+    `conv` is 1.0 throughout the suite and the defect was a no-op on all of it.
+    That is why this test relabels rather than reaching for a fixture.
+    """
+    crossed = copy.deepcopy(jpm)
+    crossed["info"]["financialCurrency"] = "CNY"
+    crossed["info"]["currency"] = "HKD"
+
+    # Cost of equity and terminal growth pinned across both runs: relabelling
+    # the reporting currency also re-points the risk-free rate at ChinaBond, and
+    # without holding those the conversion and the discount rate move together.
+    kw = dict(cost_of_equity_override=0.10, terminal_growth=0.025)
+    plain = fm.excess_returns_valuation(jpm, **kw)
+    converted = fm.excess_returns_valuation(crossed, **kw)
+
+    assert plain["assumptions"]["fx_basis"] == "single_currency"
+    assert converted["assumptions"]["fx_basis"] == "converted"
+    assert converted["assumptions"]["fx_rate_used"] == pytest.approx(1.10)
+
+    # `rel=1e-4` rather than tighter: every one of these is rounded to two
+    # decimals before it is returned, and scaling a 2dp figure by 1.10 lands a
+    # rounding step away from the 2dp figure computed from the scaled input.
+    for key in ("book_value_of_equity", "excess_return_pv", "terminal_value_pv",
+                "equity_value", "fair_value_per_share"):
+        assert converted[key] == pytest.approx(plain[key] * 1.10, rel=1e-4), key
+
+    for key in ("book_value_per_share", "tangible_book_value"):
+        assert converted["diagnostics"][key] == pytest.approx(
+            plain["diagnostics"][key] * 1.10, rel=1e-4), key
+
+    # And nothing unit-free moves: a ratio of two reporting-currency figures is
+    # already dimensionless, so converting it would break what conversion fixes.
+    for key in ("excess_spread", "implied_terminal_payout", "current_payout",
+                "terminal_value_share", "tangible_share_of_book"):
+        assert converted["diagnostics"][key] == pytest.approx(
+            plain["diagnostics"][key], rel=1e-9), key
+
+    # The identity that was false before: per-share times shares is the total.
+    shares = jpm["info"]["sharesOutstanding"]
+    assert converted["diagnostics"]["book_value_per_share"] * shares == pytest.approx(
+        converted["book_value_of_equity"], rel=1e-4)
+
+
 def test_tangible_book_comes_from_the_same_period_as_book(jpm):
     """`statements.latest` walks backward per row; `book` does not. Dropping the
     row from the newest period silently paired a 2024 tangible figure with 2025

@@ -1467,10 +1467,27 @@ def excess_returns_valuation(f: dict, roe: float | None = None,
             "fx_basis": fx_basis,
             "fx_rate_used": round(fx, 6) if fx_mismatch and fx is not None else None,
         },
-        "book_value_of_equity": book,
-        "excess_return_pv": round(pv_explicit, 2),
-        "terminal_value_pv": round(pv_terminal, 2),
-        "equity_value": round(equity_value, 2),
+        # Converted at the output boundary, the rule `dcf_valuation` states at
+        # length above its own `conv`: every currency-denominated *output* is
+        # converted, and the unit-free ratios below are not. This model shipped
+        # on 2026-08-29 converting only `fair_value_per_share`, which left it the
+        # odd one of the three — the DCF converts `equity_value` and the dividend
+        # model converts both its present values.
+        #
+        # The inconsistency was internal as well as across models. Measured on a
+        # JPM fixture relabelled CNY-reporting against an HKD listing:
+        # `book_value_per_share` (converted) times the share count came to
+        # 376.64bn against a `book_value_of_equity` of 342.39bn — a ratio of
+        # exactly 1.1000, the FX rate. A reader multiplying the one figure to
+        # reach the other got the wrong answer by precisely the conversion.
+        #
+        # Numerically a no-op on every committed fixture, since all but the Hong
+        # Kong names report and trade in one currency, which is why nothing
+        # caught it until the Models tab tried to print the bridge.
+        "book_value_of_equity": round(book * conv, 2),
+        "excess_return_pv": round(pv_explicit * conv, 2),
+        "terminal_value_pv": round(pv_terminal * conv, 2),
+        "equity_value": round(equity_value * conv, 2),
         "fair_value_per_share": round(fair_value, 2) if fair_value else None,
         "current_price": price,
         "upside_pct": round((fair_value / price - 1) * 100, 1) if comparable else None,
@@ -1503,7 +1520,9 @@ def excess_returns_valuation(f: dict, roe: float | None = None,
             # rather than tangible capital is part of reading the answer. The
             # mark-to-market assumption that makes book meaningful for a bank
             # does not extend to intangibles.
-            "tangible_book_value": tangible,
+                # Converted for the same reason, and to stay comparable with
+            # `book_value_per_share` two rows above it, which always was.
+            "tangible_book_value": round(tangible * conv, 2) if tangible else None,
             "tangible_share_of_book": round(tangible / book, 4) if tangible and book else None,
             "projection": path,
         },

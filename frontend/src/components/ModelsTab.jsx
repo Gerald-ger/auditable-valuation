@@ -820,6 +820,333 @@ function TrustFlagBadge({ dcf }) {
   );
 }
 
+/**
+ * The intrinsic valuation for a company the DCF panel below cannot value.
+ *
+ * A bank has no free cash flow to discount — deposits are raw material rather
+ * than capital awaiting reinvestment — and a REIT's `CFO - CapEx` treats
+ * property acquisition as maintenance. Both get their own model in
+ * `financial_models`, and until now both were invisible here: the tab showed a
+ * DCF panel with a banner saying the DCF does not apply, and nothing that did.
+ *
+ * Read-only on purpose. The DCF panel's inputs recalculate through
+ * `POST /stock/{t}/dcf`; there is no equivalent endpoint for these two yet, and
+ * rendering controls that cannot recalculate would be worse than none.
+ *
+ * Rendered *above* the DCF panel rather than inside it. The two are different
+ * models with different bridges — this one never forms an enterprise value —
+ * and nesting them would invite the comparison the football field deliberately
+ * declines to draw.
+ */
+function IntrinsicPanel({ analysis }) {
+  // Exactly one of the two is non-null for any company: `full_analysis` gates
+  // each on `valuation_model_for(classification)`, and that returns one model.
+  // An errored model is still an object, so it is picked here and its refusal
+  // is what gets rendered — which is the point. "No valuation, and here is the
+  // sentence saying why" is the answer for a REIT today.
+  const model = analysis.excess_return
+    ? 'excess_return'
+    : analysis.dividend_discount
+      ? 'dividend_discount'
+      : null;
+  if (!model) return null;
+
+  const v = analysis[model];
+  const bank = model === 'excess_return';
+  const title = bank
+    ? 'Excess return: residual income on book equity'
+    : 'Dividend discount: two-stage, per share';
+
+  if (v.error) {
+    return (
+      <div className="panel intrinsic-panel">
+        <div className="panel-title">{title}</div>
+        <div className="notice-banner">{v.error}</div>
+        <div className="chart-note">
+          A discounted cash flow does not apply to this company type either, so there is
+          no intrinsic fair value on this tab for it. The peer multiples and the football
+          field on the Scorecard are what remain — a refusal is a result here, not a gap
+          waiting to be filled.
+        </div>
+      </div>
+    );
+  }
+
+  const a = v.assumptions;
+  const d = v.diagnostics;
+  const ccy = a.currency;
+  // `big` for both. The excess return model works in aggregate currency and
+  // reaches per share only at the last step, so its bridge runs in the hundreds
+  // of billions; the dividend model is per share from its first line and its
+  // bridge runs in tens. One formatter covers both because `big` abbreviates
+  // only above a million and falls through to `num` beneath it — a separate
+  // per-share formatter was written first and a mutation proved it changed
+  // nothing, which is what removed it.
+  const ffo = d?.payout_of_ffo_proxy;
+  const ffoLatest = ffo && ffo.length ? ffo[ffo.length - 1].payout_of_ffo_proxy : null;
+
+  return (
+    <div className="panel intrinsic-panel">
+      <div className="panel-title">
+        {title}
+        <span className="title-note">
+          {a.stage1_years} explicit year{a.stage1_years === 1 ? '' : 's'} +{' '}
+          {a.stage2_years}-year fade to terminal
+        </span>
+      </div>
+
+      <div className="chart-note">
+        {bank
+          ? 'A bank’s book equity is regulatory capital rather than an accounting artefact, so what a share is worth is what its return on equity earns above the cost of that equity, compounded. Deposits are raw material; there is no free cash flow here to discount.'
+          : 'A REIT distributes by statute rather than by choice, so the dividend is the cash flow rather than a residual left after one. Per share throughout — REITs fund acquisitions by issuing equity, and the aggregate dividend grows with the share count as well as with the business.'}
+      </div>
+
+      <div className="dcf-result">
+        <div>
+          <span className="dcf-label">Fair value / share {ccy}</span>
+          <span className="dcf-big">{num(v.fair_value_per_share)}</span>
+        </div>
+        <div>
+          <span className="dcf-label">Current price {ccy}</span>
+          <span className="dcf-big">{num(v.current_price)}</span>
+        </div>
+        <div>
+          <span className="dcf-label">Upside</span>
+          {/* null >= 0 is true in JS — an unavailable upside stays neutral
+              rather than rendering green. Same guard as the DCF panel's. */}
+          <span
+            className={`dcf-big ${v.upside_pct == null ? '' : v.upside_pct >= 0 ? 'up' : 'down'}`}
+          >
+            {v.upside_pct > 0 ? '+' : ''}
+            {num(v.upside_pct, 1)}%
+          </span>
+        </div>
+      </div>
+
+      {/* Where the number comes from, in the order the model builds it. No
+          enterprise value and no net debt on either: both reach equity
+          directly rather than bridging to it, and printing a bridge they never
+          computed would invite a comparison with the DCF that does not exist.
+
+          The unit is named because the two models differ in it — one bridge is
+          an aggregate and the other is already per share — and because these
+          figures are converted at the output boundary, so on a cross-listed
+          issuer they are not the currency the statements were filed in. */}
+      <div className="sens-title">
+        Where the value comes from &mdash; {ccy}
+        {bank ? ', aggregate' : ' per share'}
+      </div>
+      <div className="dcf-audit">
+        {(bank
+          ? [
+              ['Book value of common equity', big(v.book_value_of_equity)],
+              ['+ PV of excess returns', big(v.excess_return_pv)],
+              ['+ PV of terminal excess return', big(v.terminal_value_pv)],
+              ['= Equity value', big(v.equity_value)],
+            ]
+          : [
+              [`Dividend / share, ${a.dividend_period}`, big(a.dividend_per_share)],
+              ['PV of the explicit dividends', big(v.dividend_pv)],
+              ['+ PV of the terminal dividend', big(v.terminal_value_pv)],
+              ['= Value / share', big(v.fair_value_per_share)],
+            ]
+        ).map(([label, value]) => (
+          <div className="dcf-audit-row" key={label}>
+            <span className="dcf-label">{label}</span>
+            <span>{value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="sens-title">What the model assumes</div>
+      <div className="dcf-audit">
+        {(bank
+          ? [
+              [
+                'Return on equity',
+                pct(a.roe, 2),
+                `mean of ${a.roe_periods} reported periods; the newest alone is ${pct(a.roe_latest, 2)}, worth ${num(d.fair_value_latest_roe)} a share`,
+              ],
+              [
+                'Spread over cost of equity',
+                pct(d.excess_spread, 2),
+                'claimed to persist forever — the single largest assumption here, since competition and regulation should erode it',
+              ],
+              [
+                'Book value growth',
+                pct(a.growth_rate_explicit, 2),
+                `return on equity times a retention ratio of ${pct(a.retention_ratio, 1)}`,
+              ],
+              [
+                'Payout the terminal phase needs',
+                pct(d.implied_terminal_payout, 1),
+                `against ${pct(d.current_payout, 1)} paid today — a gap is the model quietly assuming a change of policy`,
+              ],
+              [
+                'Price to book',
+                num(d.price_to_book, 3),
+                `book value per share ${num(d.book_value_per_share)} ${ccy}${
+                  d.tangible_share_of_book == null
+                    ? ''
+                    : `; ${pct(d.tangible_share_of_book, 1)} of it tangible`
+                }`,
+              ],
+            ]
+          : [
+              [
+                'Dividend growth',
+                pct(a.growth_rate_explicit, 2),
+                `compounded across ${a.growth_periods + 1} declared dividends; the mean year-on-year reads ${pct(d.growth_mean_yoy, 2)}`,
+              ],
+              [
+                'Cost of equity vs cost of debt',
+                pct(d.cost_of_equity_headroom, 2),
+                `headroom over a pre-tax cost of debt of ${pct(d.cost_of_debt_pre_tax, 2)}; below zero the model refuses, because a share cannot require less return than the bond above it`,
+              ],
+              [
+                'Cost of equity the price implies',
+                pct(d.implied_cost_of_equity, 2),
+                'what the market is charging, against what CAPM says below — the gap, not the fair value, is the claim being made',
+              ],
+              [
+                'Dividend against FFO',
+                pct(ffoLatest, 1),
+                'net income plus total depreciation — a proxy, not NAREIT FFO, since no gain-on-sale row is published',
+              ],
+              [
+                'Trailing dividend yield',
+                pct(d.trailing_dividend_yield, 2),
+                `share count grew ${pct(d.share_count_growth, 1)} across the reported periods`,
+              ],
+            ]
+        ).map(([label, value, note]) => (
+          <div className="dcf-audit-row" key={label}>
+            <span className="dcf-label">
+              {label}
+              {note && <em> — {note}</em>}
+            </span>
+            <span>{value}</span>
+          </div>
+        ))}
+        <div className="dcf-audit-row">
+          <span className="dcf-label">
+            Cost of equity <em>— {a.cost_of_equity_source === 'capm' ? 'CAPM' : 'supplied'}</em>
+          </span>
+          <span>{pct(a.cost_of_equity_used, 2)}</span>
+        </div>
+        <div className="dcf-audit-row">
+          <span className="dcf-label">
+            Terminal growth <em>— {a.terminal_growth_source.replaceAll('_', ' ')}</em>
+          </span>
+          <span>{pct(a.terminal_growth, 2)}</span>
+        </div>
+        <div className="dcf-audit-row">
+          <span className="dcf-label">
+            Terminal share of the answer
+            {d.terminal_value_high && <em> — above the conventional 75% warning line</em>}
+          </span>
+          <span className={d.terminal_value_high ? 'down' : ''}>
+            {pct(d.terminal_value_share, 1)}
+          </span>
+        </div>
+      </div>
+
+      <div className="sens-title">
+        Sensitivity: fair value across cost of equity (rows) ×{' '}
+        {bank ? 'return on equity' : 'terminal growth'} (columns)
+      </div>
+      <table className="sens-table">
+        <thead>
+          <tr>
+            <th>Ke \ {bank ? 'ROE' : 'g'}</th>
+            {(bank ? v.sensitivity.roe_cols : v.sensitivity.terminal_growth_cols).map((c) => (
+              <th key={c}>{(c * 100).toFixed(2)}%</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {v.sensitivity.rows.map((row) => (
+            <tr key={row.cost_of_equity}>
+              <td>{(row.cost_of_equity * 100).toFixed(2)}%</td>
+              {row.values.map((cell, i) => (
+                <td
+                  key={i}
+                  className={
+                    cell === null ? '' : cell >= v.current_price ? 'cell-up' : 'cell-down'
+                  }
+                >
+                  {cell === null ? '—' : num(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Only the dividend model reaches this, and the condition is the data
+          rather than a check on which model ran: `growth_sensitivity` is a key
+          only `dividend_discount_valuation` returns. The excess return model
+          publishes `roe_sensitivity` instead and it is deliberately not drawn —
+          its grid already sweeps both first-order inputs, so that sweep is
+          literally the grid's middle row, verified element for element on the
+          JPM fixture, which is why `comps._excess_return_band` declines to
+          union it in too. A `!bank &&` guard stood here until a mutation showed
+          it could never change the outcome. */}
+      {v.growth_sensitivity && (
+        <>
+          <div className="sens-title">
+            Sensitivity: fair value across the dividend growth rate (the grid above holds
+            it at {(a.growth_rate_explicit * 100).toFixed(2)}%)
+          </div>
+          <table className="sens-table">
+            <thead>
+              <tr>
+                <th>Growth</th>
+                {v.growth_sensitivity.growth_rates.map((g, i) => (
+                  <th key={i}>{(g * 100).toFixed(2)}%</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Fair value</td>
+                {v.growth_sensitivity.values.map((cell, i) => (
+                  <td
+                    key={i}
+                    className={
+                      cell === null ? '' : cell >= v.current_price ? 'cell-up' : 'cell-down'
+                    }
+                  >
+                    {cell === null ? '—' : num(cell)}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <div className="chart-note">
+        Read-only. The DCF panel below recalculates from its inputs through an endpoint
+        this model does not have yet, and controls that cannot recalculate would say less
+        than none.
+        {a.fx_basis === 'converted' && (
+          <>
+            {' '}Every figure above is converted from {a.reporting_currency} at{' '}
+            {num(a.fx_rate_used, 4)}; the ratios are unit-free and are not.
+          </>
+        )}
+        {a.fx_basis === 'rate_unavailable' && (
+          <>
+            {' '}No rate was available between the reporting and trading currencies, so the
+            comparison with price is withheld rather than made across two units.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ModelsTab({ ticker }) {
   const [analysis, setAnalysis] = useState(null);
   const [card, setCard] = useState(null);
@@ -909,6 +1236,11 @@ export default function ModelsTab({ ticker }) {
           )}
         </div>
       </div>
+
+      {/* Above the DCF panel, not below it: for these company types the DCF
+          panel's own banner says it does not apply, and the model that does
+          apply should be the one the reader meets first. */}
+      <IntrinsicPanel analysis={analysis} />
 
       <div className="panel dcf-panel">
         <div className="panel-title">
