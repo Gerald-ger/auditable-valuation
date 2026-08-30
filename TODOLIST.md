@@ -798,9 +798,9 @@ prints it — so what a source would buy is the right to put it in the headline.
 
 ### ⚪ ~~Portfolio totals ignore FX~~ — closed 2026-08-30
 
-Holdings in USD and HKD are summed at face value. The UI warns when the totals really do
+~~Holdings in USD and HKD are summed at face value. The UI warns when the totals really do
 span more than one currency, but the total is wrong, not merely imprecise.
-**Trigger: actually holding both.** ~~Needs a rate source; `obb.currency` is free.~~
+**Trigger: actually holding both.** Needs a rate source; `obb.currency` is free.~~
 
 *(**The rate source already exists — corrected 2026-08-30.** `data_provider.fx_rate` is live,
 daily-cached and already used inside `financial_models` to reconcile a statement currency

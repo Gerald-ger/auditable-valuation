@@ -42,6 +42,9 @@ CLAIMS = (
     ("README.md", r"pytest\s+# (\d+) tests, offline", "backend"),
     ("README.md", r"npm test\s+# (\d+) tests", "frontend"),
     ("README.md", r"this repo — (\d+) backend", "backend"),
+    # Added 2026-08-30 after the guard shipped without it: the count is
+    # hyphenated here, so every sweep that looked for "N tests" walked past it.
+    ("README.md", r"the (\d+)-test suite runs entirely offline", "backend"),
     ("README.md", r"backend, (\d+) frontend, seconds", "frontend"),
     ("docs/testing.md", r"pytest\s+# (\d+) tests, offline", "backend"),
     ("docs/testing.md", r"npm test\s+# (\d+) tests", "frontend"),

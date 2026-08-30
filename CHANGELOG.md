@@ -17,6 +17,25 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (h) - The guard shipped with the blind spot it was built to remove
+
+`README.md:448` says "the 780-test suite runs entirely offline against them", in the licensing
+section, and the guard added an hour earlier walked straight past it. Every sweep that found
+the other nine claims searched for some form of "N tests"; this one is hyphenated — `780-test`
+— so none of them saw it, mine included.
+
+That is the entry's own thesis arriving by demonstration rather than argument: a number is not
+protected by having been looked for once, and the sweep that establishes the claim list is
+exactly as fallible as the docs it is auditing. Found by an independent review of the commit
+that added the guard.
+
+Tenth claim added and mutation-proved: reverting that line to 780 fails the guard naming
+`README.md:448`. Also squared up the closed FX entry in TODOLIST, whose header was struck
+through while the paragraph under it still asserted, unstruck, that portfolio totals sum at
+face value — the other two closed entries in that file wrap the whole original claim.
+
+No count changed: 793 backend, 215 frontend, 1,008 offline.
+
 ## 2026-08-30 (g) - The number on the most-read line, and the mechanism that was never built
 
 The test count has been written down in ten places and gone stale in all of them, four times
