@@ -46,6 +46,11 @@ CLAIMS = (
     # hyphenated here, so every sweep that looked for "N tests" walked past it.
     ("README.md", r"the (\d+)-test suite runs entirely offline", "backend"),
     ("README.md", r"backend, (\d+) frontend, seconds", "frontend"),
+    # Added 2026-08-31. Fourth miss of the same class and a new shape: this one
+    # is not hyphenated at all, it simply sits on a line that never says
+    # "test" — the word is on the line below it. It had been wrong since before
+    # the guard existed, by 22 and then by 24.
+    ("README.md", r"\*\*(\d+) of those run offline\*\*", "total"),
     # Added 2026-08-30 after an independent re-verification found it. Third
     # miss of the same shape: the count is hyphenated *and* has a word before
     # "suite", so both the "N tests" sweep and the "N-test suite" sweep that
@@ -134,7 +139,13 @@ def test_no_test_count_in_those_files_is_unaccounted_for(request):
     for name in GUARDED_FILES:
         for i, line in enumerate(
                 (ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
-            if "test" not in line.lower():
+            lowered = line.lower()
+            # "offline" as well as "test", because the fourth miss said neither
+            # on its own line: README's "**987 of those run offline**" carries
+            # the count while the word "test" sits on the line below. Measured
+            # 2026-08-31 across the guarded files, adding it surfaces exactly
+            # that one number and no false positive.
+            if "test" not in lowered and "offline" not in lowered:
                 continue
             for m in COUNT_SHAPED.finditer(line):
                 if int(m.group(1)) not in known:

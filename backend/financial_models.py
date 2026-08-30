@@ -388,10 +388,42 @@ def resolve_beta(info: dict, peers: list[dict] | None = None,
             #
             # So the interval decides. A thin or halted series produces a wide
             # one that still contains 0.30 and is still clamped; a precise
-            # measurement below the floor is used as measured. Nothing new is
-            # invented for the other side: with no floor a sufficiently negative
-            # beta can drive WACC under terminal growth, and `dcf_valuation`
-            # already refuses that in as many words rather than printing it.
+            # measurement below the floor is used as measured.
+            #
+            # **Zero is a different kind of line, and the interval does not get
+            # a vote on it.** This comment used to say nothing new was needed on
+            # the other side, because `dcf_valuation` refuses a WACC at or below
+            # terminal growth. That refusal is real and it is not a guard:
+            # measured 2026-08-31 on AAPL, a beta of -0.40 clears it and
+            # publishes **21,288.07 against a price near 311**; -0.41 is the
+            # first value refused. The refusal sits one hundredth of a beta
+            # below the worst figure it admits, which is not where a bound goes.
+            #
+            # `cost_of_equity = rf + beta * erp`, so under zero the model
+            # prices a company's equity below its own government's paper —
+            # **and CAPM permits exactly that.** An asset that genuinely hedges
+            # the market earns less than the risk-free rate, and a first draft
+            # of this comment called the clamp a mathematical necessity, which
+            # it is not. It is a policy about what to publish: a 261-week OLS
+            # slope is not trusted far enough to print a discount rate under
+            # the sovereign, when one hundredth of a beta above the refusal it
+            # yields 68x the price. The cost is real and worth naming — a
+            # genuine negative-beta name, a gold miner or a tail hedge, is
+            # discounted conservatively at `rf`.
+            #
+            # It is still a different line from `BETA_MIN`, which is a vendor
+            # heuristic with no theory under it and so *is* overruled by a good
+            # regression. Zero is where the output stops being defensible, not
+            # where the arithmetic stops working — which is why the interval
+            # gets no vote here and does there.
+            #
+            # It costs one `max()` and moves no committed fixture — none of the
+            # eight regresses negative, and 0002_HK is the only one that
+            # reaches this branch at all, at +0.1518.
+            #
+            # `[0.00, 0.30)` is left open on purpose. At 0.05 AAPL is worth
+            # 420.87, +35% on an unremarkable-looking number, and nothing
+            # measured here says where a precision threshold belongs.
             #
             # `BETA_MAX` is deliberately untouched. The same argument would
             # apply, but no fixture approaches 2.5 — RIVN is the highest at
@@ -403,7 +435,7 @@ def resolve_beta(info: dict, peers: list[dict] | None = None,
             # calls `beta_fit` for the audit row.
             floored = (max(fit["beta"], BETA_MIN)
                        if fit["confidence_interval"][1] >= BETA_MIN
-                       else fit["beta"])
+                       else max(fit["beta"], 0.0))
             return round(min(floored, BETA_MAX), 4), "computed"
 
     raw = info.get("beta")

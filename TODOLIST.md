@@ -1444,6 +1444,33 @@ cheapest correct guard may not be a precision threshold at all: **restoring the 
 the skipping branch** costs one `max()` and makes the whole band unreachable, at the price of
 overriding a measurement the interval says is precise. That trade is a decision; the band is not.
 
+**The clamp was taken 2026-08-31, and the band is now `[0.00, 0.30)`.** `resolve_beta`'s
+skipping branch ends at `max(fit["beta"], 0.0)`, so nothing below zero is published. Verified
+zero-movement rather than assumed: `golden_scores.json` is byte-identical, none of the eight
+fixtures regresses negative, and 0002_HK is the only one reaching that branch at all, at
++0.1518. Reverting the `max()` turns exactly the two new tests red.
+
+The refusal boundary was measured more precisely on the way: `-0.40` publishes 21,288.07 and
+`-0.41` is the first value refused, so the old comment citing `WACC ≤ terminal growth` as the
+lower guard was describing something that fires one hundredth of a beta below the worst figure
+it admits.
+
+**An independent review corrected the reasoning, and the correction is the part worth keeping.**
+The first draft argued 0.0 was a mathematical line — that below it CAPM "stops measuring". It
+does not: `rf + beta × ERP` under `rf` is the *correct* CAPM price for an asset that genuinely
+hedges the market, and a negative-beta gold miner or tail hedge is now discounted conservatively
+at the risk-free rate. So the clamp is a **publication policy**, not a fix: a 261-week OLS slope
+is not trusted far enough to print a discount rate below the sovereign. That is defensible and
+it is not the same claim, and stating the stronger one would have been exactly the sort of
+unexamined assertion this list exists to catch.
+
+**Still open, and it is the interesting half.** `[0.00, 0.30)` is untouched — a beta of 0.05
+values AAPL at 420.87, +35% on a figure that looks unremarkable in the audit row. Closing it
+needs a precision threshold, and the position below is unchanged: the fixtures say where real
+data sits and nothing about where a cutoff belongs, so one is still not being invented.
+*Trigger: unchanged — a bars source that can produce placeholder or forward-filled series, or
+evidence for where a precision cutoff belongs.*
+
 ### 🟡 `_us_treasury_10y`'s internals have never been tested *(found 2026-08-19)*
 
 Three mutations inside it survive the whole suite: **removing the day-cache read**, **never

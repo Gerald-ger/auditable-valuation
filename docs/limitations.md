@@ -166,6 +166,20 @@ it is a bug in this file.
   The conclusion survives the correction; that particular evidence for it did not.)* And note
   the asymmetry it introduces — beta now carries an interval while the growth rate and equity
   risk premium do not, which does not mean those are precise.
+
+  **The interval decides the floor's upper half only.** Freeing a precise regression from 0.30
+  left that branch bounded above and nowhere below, and the comment saying `WACC ≤ terminal
+  growth` covered the other side was wrong about what it covers: measured 2026-08-31, a beta of
+  **−0.40 values AAPL at 21,288 against a price near 311**, and the refusal only fires from
+  −0.41. The branch is now held at **0.0** — below zero `rf + beta × ERP` prices a company's
+  equity beneath its own government's paper, which **CAPM genuinely permits** for an asset that
+  hedges the market. So this is a policy about what to publish rather than a correction: a
+  261-week regression is not trusted far enough to print a discount rate under the sovereign
+  when the figure one step above the refusal is 68× the price. A real negative-beta name — a
+  gold miner, a tail hedge — is discounted conservatively at the risk-free rate as a result, and
+  that is the cost. **`[0.00, 0.30)` is still open, and it is the half that matters**: at a beta
+  of 0.05 AAPL is worth 420.87, a +35% call from a number that looks unremarkable on screen.
+  Closing that needs the precision cutoff the paragraph above declines to invent.
 - **Forensic checks are computed but never scored.** The Scorecard shows Altman Z,
   Piotroski F, the Sloan accrual ratio and net share issuance beside the composite, each
   with its published threshold. They stay out of the score because the composite already

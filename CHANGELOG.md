@@ -17,6 +17,67 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (b) - A refusal sitting one hundredth of a beta below the worst number it admits
+
+Making `BETA_MIN` interval-aware on 2026-08-20 was right — 0002.HK's interval is [0.0747,
+0.2289] and clamping it to 0.30 overruled a good regression rather than guarding against a bad
+one. It also removed the only thing bounding that branch from below, which ends at
+`min(floored, BETA_MAX)`: a ceiling and nothing else.
+
+The comment above it said no lower bound was needed, because `dcf_valuation` refuses a WACC at
+or below terminal growth. **That refusal is real and it is not a bound.** Measured on AAPL by
+substituting the beta directly, and reproduced independently:
+
+| beta | WACC | fair value | vs a price near 311 |
+|---|---|---|---|
+| 0.30 — the floor | 5.61% | 271.20 | −12.8% |
+| 0.20 | 5.17% | 316.25 | **+1.7% — the verdict flips to cheap** |
+| 0.05 | 4.51% | 420.87 | +35.3% |
+| 0.00 | 4.29% | 472.91 | +52.1% |
+| −0.40 | 2.54% | **21,288.07** | **+6,745%** |
+| −0.41 | 2.50% | refused | — |
+
+The refusal fires one hundredth of a beta below the worst figure it lets through. A guard that
+only catches the case after the 68x one is not guarding that branch.
+
+**The fix is one `max()`**, and the argument for where it goes is the whole point.
+`cost_of_equity = rf + beta * ERP`, so below zero the model prices a company's equity beneath
+its own government's paper — **which CAPM permits**, for an asset that genuinely hedges the
+market. An independent review caught the first draft of this change calling that a mathematical
+necessity, and it is not one. **It is a policy about what to publish**: a 261-week OLS slope is
+not trusted far enough to print a discount rate under the sovereign when one step above the
+refusal it yields 68× the price. The cost is named rather than hidden — a real negative-beta
+name, a gold miner or a tail hedge, is now discounted conservatively at `rf`. It remains a
+different line from `BETA_MIN`, which is a vendor heuristic with no theory under it and is
+therefore overruled by a good regression: zero is where the output stops being defensible, not
+where the arithmetic stops working. The effective band in the skipping branch becomes
+`[0.0, 2.5]`.
+
+**It moves nothing.** `golden_scores.json` is byte-identical, and the reason is measured rather
+than hoped: none of the eight fixtures regresses negative, and 0002_HK is the only one that
+reaches this branch at all, at +0.1518. Reverting the `max()` turns exactly the two new tests
+red and leaves the other 794 green.
+
+**What is deliberately still open is the interesting half.** `[0.00, 0.30)` is untouched: at a
+beta of 0.05 AAPL is worth 420.87, a +35% call produced by a number that looks unremarkable on
+screen. Closing that needs a precision threshold, the fixtures say only where real data sits
+(R² 0.028 to 0.691) and nothing about where a cutoff belongs, and one is still not being
+invented. The second new test pins the bound at 472.91 precisely so the record says this is a
+bound and not a cure.
+
+**And a fourth instance of the blind spot from 2026-08-30 (i), in a shape neither half of the
+guard could see.** `README.md:316` read "**987 of those run offline**" — wrong before this
+change by 22 and after it by 24. `CLAIMS` had no pattern for that phrasing, and the completeness
+scan skipped the line because it only reads lines containing "test", and this line does not: the
+word sits on the line *below* the number. The three earlier misses were all hyphenation; this
+one is not hyphenated at all.
+
+Both halves were extended, and the widening was measured before it was made: adding "offline" to
+the scan's trigger surfaces exactly that one number across the guarded files and no false
+positive. Breaking the figure now fails both checks, where a moment ago it failed neither.
+
+794 -> **796 backend**, 215 frontend, 1,011 offline.
+
 ## 2026-08-31 - Two questions wearing one answer, and one of them was already answered
 
 `TODOLIST`'s yfinance entry said that sharing, hosting or publishing the platform is a blocker

@@ -2134,6 +2134,74 @@ def test_a_precise_regression_below_the_floor_is_used_as_measured():
     assert a["beta"] < fm.BETA_MIN
 
 
+# ── and the other side of the floor, which was left open ─────────────
+#
+# Freeing a precise measurement from `BETA_MIN` also removed the only thing
+# bounding the slope from below, because the branch that skips the floor ends
+# at `min(floored, BETA_MAX)` — a ceiling and nothing else. What lies under it
+# was measured 2026-08-31 on AAPL by substituting the beta directly:
+#
+#   beta   0.30 -> WACC 5.61% -> 271.20     the floor, i.e. the right answer
+#   beta   0.20 -> WACC 5.17% -> 316.25     verdict flips expensive -> cheap
+#   beta   0.00 -> WACC 4.29% -> 472.91     +52% against a price of ~311
+#   beta  -0.40 -> WACC 2.54% -> 21,288.07  68x the company's own price
+#   beta  -0.41 ->                REFUSED   WACC at or below terminal growth
+#
+# So `dcf_valuation`'s refusal is real but sits one hundredth of a beta below
+# the worst number it lets through, and the comment in `resolve_beta` that
+# cited it as the lower guard was wrong about what it guards.
+
+def test_a_confidently_negative_beta_is_held_at_zero(monkeypatch):
+    """A policy about what gets published, not a correction to the arithmetic.
+
+    `cost_of_equity = rf + beta * erp`, so a negative beta prices a company's
+    equity below its own government's paper — and **CAPM permits that**, for an
+    asset that genuinely hedges the market. This clamp does not claim
+    otherwise. What it says is that a 261-week OLS slope is not trusted far
+    enough to print a discount rate under the sovereign, when one hundredth of
+    a beta above the WACC refusal it values AAPL at 68x its own price.
+
+    That still separates it from `BETA_MIN`: 0.30 is a vendor heuristic with no
+    theory under it, so a good regression overrules it. Zero is where the
+    output stops being defensible rather than where the maths stops working, so
+    the interval gets no vote.
+
+    The interval is deliberately tight and entirely below zero — the shape that
+    rejects the floor at 95% and would previously have sailed straight through.
+    """
+    fit = {"beta": -0.50, "standard_error": 0.0204,
+           "r_squared": 0.31, "confidence_interval": (-0.54, -0.46)}
+    monkeypatch.setattr(fm.market_series, "beta_fit", lambda s, i: (fit, 261))
+
+    a = fm._wacc(load_fundamentals("AAPL"), 0.21, None,
+                 (load_bars("AAPL"), load_bars("_GSPC")))
+
+    assert a["beta_confidence_interval"][1] < fm.BETA_MIN, "the floor must be skipped here"
+    assert a["beta_regressed"] == pytest.approx(-0.50)
+    assert a["beta"] == 0.0
+    assert a["cost_of_equity"] >= a["risk_free_rate"], (
+        "equity priced below the sovereign — the thing the clamp exists to refuse")
+
+
+def test_the_clamp_bounds_the_absurdity_without_pretending_to_fix_it(monkeypatch):
+    """What the guard is worth, stated as a number rather than a feeling.
+
+    Held at zero, the same fabricated beta values AAPL at 472.91 instead of
+    21,288.07 — 68x its own price becomes 1.5x. That is a bound, not a cure:
+    472.91 against a price near 311 is still a +52% call produced by a beta
+    nobody should trust, and the band `[0.00, 0.30)` is left wide open on
+    purpose, because the fixtures say where real data sits and nothing says
+    where a precision threshold belongs.
+    """
+    fit = {"beta": -0.40, "standard_error": 0.0204,
+           "r_squared": 0.31, "confidence_interval": (-0.44, -0.36)}
+    monkeypatch.setattr(fm.market_series, "beta_fit", lambda s, i: (fit, 261))
+
+    v = fm.dcf_valuation(load_fundamentals("AAPL"), tax_rate=0.21,
+                         market_bars=load_market_bars("AAPL"))
+    assert v["fair_value_per_share"] == pytest.approx(472.91, abs=0.01)
+
+
 def test_the_ceiling_is_deliberately_left_alone():
     """`BETA_MAX` gets no interval treatment, and the absence is the decision.
 
