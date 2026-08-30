@@ -962,16 +962,55 @@ covered by the `net_debt_assumed_zero` flag that already fires beside it. These 
   the three fixed that day. The fix is the same one-word change (`is not None`) plus a
   decision about what to do when it *is* missing — the bar should probably not be drawn at
   all, which is a different change from scoring it.
-- **`format.js`'s `num` / `big` / `pct` guard `null` and `undefined` but not `NaN`.**
-  Measured: `pct(NaN)` renders `"NaN%"`, and `num(NaN)` / `big(NaN)` fall through to
-  `toLocaleString()`, which is **locale-dependent** — on this machine it rendered a Chinese
-  not-a-number string. `big(Infinity)` renders `"InfinityT"`, the trillion suffix appended
-  to infinity. The 0-versus-null distinction is correctly preserved everywhere
-  (`num(0)` → `"0"`, `null` → `"—"`); only NaN and infinity are unguarded.
+- ~~**`format.js`'s `num` / `big` / `pct` guard `null` and `undefined` but not `NaN`.**~~
+  **Closed 2026-08-30.** All four formatters — `scoreColor` included, which this bullet did
+  not name — now share one `missing()` predicate. Two things this entry had wrong are worth
+  keeping rather than overwriting.
 
-**Trigger:** neither produces a *plausible* wrong number — the first is bounded and on a
-cross-check bar, the second renders visibly broken text. Both are worth folding into the
-next pass over their files rather than a commit of their own.
+  **It was not latent.** The trigger below says neither of these produces a *plausible* wrong
+  number, and that "the second renders visibly broken text" as though nothing were rendering
+  it. `FootballField`'s axis row is a sibling of its `.map`, gated only by `ranges` being
+  non-empty, and its three ticks read `min`/`max` directly rather than through the guarded
+  `x()`. With every row `not_applicable` and no price, `lows` is empty, `Math.min(...[])` is
+  Infinity — so the axis rendered **`∞`**, **`非數值`** and **`-∞`** as its labels. The
+  fixture that produces this has been in `ScorecardTab.test.jsx` since it was written; the
+  test's own comment enumerates three guards on `x()` and misses that the axis is a fourth
+  consumer reading around it. Confirmed by writing the assertion and reading the failure's
+  DOM dump, not by argument.
+
+  **And `scoreColor(NaN)` did produce a plausible wrong output.** `NaN >= 65` and `NaN >= 50`
+  are both false, so a score that could not be computed fell through to `var(--down)` and
+  rendered identically to one that scored terribly — across 7 call sites, and against the
+  stated contract in `format.test.js`'s own header.
+
+  **Left open deliberately:** `num("")` returns `"0"`, because `Number("")` is `0` and the
+  empty string fails the null/undefined arm. That *is* a plausible wrong number, and it is the
+  one thing here nobody has shown a path to — no call site was found that passes an empty
+  string. Changing behaviour for an input never observed is speculative; recorded instead.
+  *Trigger: a backend field that can arrive as `""`.*
+
+**Trigger:** what remains is `comps.py`'s coercion above — bounded, and on a cross-check bar.
+Worth folding into the next pass over that file rather than a commit of its own.
+
+### 🟡 `FootballField`'s scale is safe by coincidence, not by construction *(found 2026-08-30)*
+
+Raised by the independent review of the axis fix above, and narrower than that bug. `x()` is
+`(v) => ((v - min) / (max - min)) * 100`, and `min`/`max` are non-finite exactly when the
+domain is empty. Three callers survive that state without a `Number.isFinite` check of their
+own: the overlap band behind `t?.overlap`, the price rule behind `currentPrice`, and `geom`
+plus the mid-tick inside `drawn.map`.
+
+Two of the three are safe **by construction** — `drawn.map` contributes nothing when `drawn`
+is empty, and a truthy `currentPrice` is concatenated into `lows`/`highs` before the reduction,
+so it makes the domain finite by its own presence. The third is safe only **by assumption**:
+nothing in this component stops the backend sending a `triangulation.overlap` while every
+football-field row is `not_applicable`. If those ever coexist, `x(t.overlap.low)` feeds a
+non-finite number into `style.left` — silently invalid CSS rather than visible text, which is
+why it ranks below the axis bug rather than beside it.
+
+**Trigger: the first backend change that can emit an overlap without a drawable row**, or the
+next structural pass over `FootballField`. Not worth a guard at each call site today — the
+honest fix is one early return once there is a reason to write it.
 
 ### 🟡 Three specification items that never reached code *(found 2026-08-26)*
 

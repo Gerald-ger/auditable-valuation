@@ -17,6 +17,49 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (d) - The axis of an empty chart was printing ∞, 非數值 and -∞
+
+`num`, `big`, `pct` and `scoreColor` each guarded `null` and `undefined` and stopped there.
+`NaN` is neither, so it passed all four and came out the other side as whatever
+`toLocaleString` makes of it — on this zh-HK machine the literal string `非數值`, on a US
+runner `NaN`. `big(Infinity)` took the trillion branch and produced `InfinityT`.
+
+TODOLIST called this latent on the grounds that broken text is visibly broken. Both halves of
+that were wrong.
+
+It is not latent. `FootballField`'s axis row is a sibling of its `.map`, gated only by
+`ranges` being non-empty, and its three ticks read `min` and `max` directly instead of going
+through `x()`. When every row is `not_applicable` and there is no price, `lows` is empty,
+`Math.min(...[])` is Infinity and `Math.max(...[])` is -Infinity — so the axis rendered `∞`,
+`非數值` and `-∞` as its labels. The fixture that produces exactly this has been sitting in
+`ScorecardTab.test.jsx` since it was written: that test's comment enumerates the three guards
+protecting `x()` and does not notice the axis is a fourth consumer reading around it. It was
+right about the cause and wrong about the reach. This was confirmed by writing the assertion
+first and reading the DOM out of the failure, rather than by argument.
+
+And the broken text was not the worst of it. `NaN >= 65` and `NaN >= 50` are both false, so
+`scoreColor(NaN)` fell through to `var(--down)`: a score that could not be computed rendered
+identically to one that scored terribly, across seven call sites, against the contract
+`format.test.js` states in its own opening paragraph.
+
+One `missing()` predicate now serves all four, because four guards that were meant to agree
+and did not is the shape of the original defect. It keeps the explicit null/undefined arm
+rather than relying on `Number.isFinite` alone — `Number(null)` is `0`, and the short version
+would have rendered a missing value as a real zero. `num("")` still returns `"0"` for the same
+reason and is left alone: it is a plausible wrong number, but no call site was found that can
+produce it, and changing behaviour for an input never observed is guesswork. Recorded in
+TODOLIST instead.
+
+The axis is now behind `Number.isFinite(min) && Number.isFinite(max)` — the element is dropped
+rather than drawn with em dashes, since an axis with no domain is not a scale.
+
+Both fixes mutation-proved: removing the non-finite arm fails exactly the four formatter tests
+and no others, removing the axis guard fails exactly the one axis test. The five new
+assertions are all locale-independent — the axis test asserts on the element rather than on
+its text for exactly that reason, since the suite runs on three operating systems.
+
+207 -> **212 frontend**, 992 offline. Bundle 489.00 -> 489.21 kB.
+
 ## 2026-08-30 (c) - The documentation still described a DCF-only platform
 
 An audit of all seventeen markdown files against the code — three independent agents on

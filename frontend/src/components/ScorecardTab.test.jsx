@@ -233,6 +233,34 @@ describe('ScorecardTab', () => {
     expect(container.querySelector('.ff-bar')).toBeNull();
   });
 
+  it('draws no axis when no row survives to set its scale', async () => {
+    // The abandoned assertion described in the test above was right about the
+    // cause and wrong about the reach. `Math.min(...[])` is Infinity and
+    // `Math.max(...[])` is -Infinity, so on this same fixture `min` is
+    // Infinity, `max` is -Infinity and their midpoint is NaN. The three guards
+    // that test lists — `t?.overlap`, `currentPrice`, `drawn.map` — all protect
+    // callers of `x()`. The axis ticks do not call `x()`; they read `min` and
+    // `max` directly, and the axis row itself is a sibling of the `.map`, gated
+    // only by the empty-`ranges` early return. So those three values reached
+    // the DOM as visible text.
+    //
+    // Asserted on the element rather than on the text it held, because
+    // `num(NaN)` is locale-dependent — 非數值 here, "NaN" on a US runner — and
+    // this suite runs on three operating systems.
+    const { container } = await mount({
+      compsBody: comps({
+        current_price: null,
+        triangulation: null,
+        football_field: [{
+          method: 'DCF (sensitivity 25th–75th + growth)', not_applicable: true,
+          reason: 'Banks are valued on equity, not enterprise value.',
+        }],
+      }),
+    });
+
+    expect(container.querySelector('.ff-axis')).toBeNull();
+  });
+
   it('names the two methods that actually disagreed, rather than assuming a DCF', async () => {
     // The note under a LOW verdict used to read "A discounted cash flow and
     // trading comps measure different things". That was safe while a DCF was

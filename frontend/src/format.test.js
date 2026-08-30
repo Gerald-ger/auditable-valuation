@@ -30,6 +30,16 @@ describe('num', () => {
     expect(num(0)).toBe('0');
   });
 
+  it('renders a non-finite number as missing, not as locale-dependent text', () => {
+    // `Number(NaN).toLocaleString()` is not the string "NaN" everywhere: on the
+    // zh-HK machine this was found on it is 非數值, on an en-US runner it is
+    // NaN, and the suite runs on three OSes. A calculation that failed means
+    // the same thing to a reader as a figure that was never reported.
+    expect(num(NaN)).toBe('—');
+    expect(num(Infinity)).toBe('—');
+    expect(num(-Infinity)).toBe('—');
+  });
+
   it('passes `digits` through to the formatter', () => {
     expect(digitCount(num(3.14159, 2))).toBe(3); // 3.14
     expect(digitCount(num(3.14159, 4))).toBe(5); // 3.1416
@@ -45,6 +55,14 @@ describe('big', () => {
 
   it('renders zero as zero, not as missing', () => {
     expect(big(0)).toBe('0');
+  });
+
+  it('renders a non-finite number as missing rather than suffixing it', () => {
+    // `Math.abs(Infinity) >= 1e12` is true, so the trillion branch fired and
+    // `(Infinity / 1e12).toFixed(2) + 'T'` produced the string "InfinityT".
+    expect(big(NaN)).toBe('—');
+    expect(big(Infinity)).toBe('—');
+    expect(big(-Infinity)).toBe('—');
   });
 
   it('picks the suffix at each threshold', () => {
@@ -76,6 +94,14 @@ describe('pct', () => {
     expect(pct(0)).toBe('0.0%');
   });
 
+  it('renders a non-finite number as missing', () => {
+    // `pct` uses `toFixed`, so this one is locale-free and was rendering the
+    // literal "NaN%" and "Infinity%".
+    expect(pct(NaN)).toBe('—');
+    expect(pct(Infinity)).toBe('—');
+    expect(pct(-Infinity)).toBe('—');
+  });
+
   it('converts a fraction to a percentage', () => {
     expect(pct(0.1234)).toBe('12.3%');
     expect(pct(-0.05, 2)).toBe('-5.00%');
@@ -99,6 +125,16 @@ describe('scoreColor', () => {
 
   it('bands a zero score rather than treating it as missing', () => {
     expect(scoreColor(0)).toBe('var(--down)');
+  });
+
+  it('mutes a non-finite score rather than banding it as the worst tier', () => {
+    // `NaN >= 65` and `NaN >= 50` are both false, so a score that could not be
+    // computed fell through to `--down` and rendered as one that scored
+    // terribly — the exact conflation the docstring at the top of this file
+    // says these formatters exist to prevent.
+    expect(scoreColor(NaN)).toBe('var(--muted)');
+    expect(scoreColor(Infinity)).toBe('var(--muted)');
+    expect(scoreColor(-Infinity)).toBe('var(--muted)');
   });
 });
 

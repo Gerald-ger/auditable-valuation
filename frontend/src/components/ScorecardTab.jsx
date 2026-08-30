@@ -368,15 +368,25 @@ function FootballField({ ranges, currentPrice, triangulation }) {
             </div>
           );
         })}
-        <div className="ff-row ff-axis">
-          <span className="ff-label" />
-          <div className="ff-track">
-            <span className="ff-tick" style={{ left: '0%' }}>{num(min)}</span>
-            <span className="ff-tick mid" style={{ left: '50%' }}>{num((min + max) / 2)}</span>
-            <span className="ff-tick end" style={{ left: '100%' }}>{num(max)}</span>
+        {/* An axis needs a domain. When every row is `not_applicable` and there
+            is no price, `lows` is empty, `Math.min(...[])` is Infinity and
+            `Math.max(...[])` is -Infinity — so this row rendered ∞, a
+            locale-dependent NaN and -∞ as its three tick labels. The bars and
+            the price rule are already behind their own guards; this one was
+            a sibling of the `.map` and gated only by `ranges` being non-empty.
+            `Number.isFinite` rather than a length check on `lows`, because it
+            also catches a domain that is present but carries a null bound. */}
+        {Number.isFinite(min) && Number.isFinite(max) && (
+          <div className="ff-row ff-axis">
+            <span className="ff-label" />
+            <div className="ff-track">
+              <span className="ff-tick" style={{ left: '0%' }}>{num(min)}</span>
+              <span className="ff-tick mid" style={{ left: '50%' }}>{num((min + max) / 2)}</span>
+              <span className="ff-tick end" style={{ left: '100%' }}>{num(max)}</span>
+            </div>
+            <span className="ff-range" />
           </div>
-          <span className="ff-range" />
-        </div>
+        )}
       </div>
       {/* A method that does not apply is named and struck out rather than
           dropped: a missing row reads as missing data, and the reason is the
