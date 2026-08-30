@@ -38,6 +38,58 @@ against itself.
 
 ## Now
 
+### 🔴 A CNY reporter inherits China's sovereign yield as its perpetual growth ceiling *(2026-08-30)*
+
+**`financial_models.py:573` has said "See TODOLIST" about this since 2026-08-19 and no entry was
+ever written.** The comment reads: *"What keeps it open is the terminal-growth ceiling: a
+1.1-1.7% CNY rate also asserts 1.1-1.7% perpetual growth for Tencent."* Every CNY entry that does
+exist in this file is about the **discount rate** — closed 2026-08-26 — or about cache staleness
+— closed 2026-08-20. The largest single sensitivity measured anywhere in this platform was
+flagged in code, referred to a tracker, and the tracker never received it.
+
+All three models take `terminal_growth = min(TERMINAL_GROWTH, risk_free_rate)`
+(`financial_models.py:808`, `:1388`, `:1764`). For a USD or HKD reporter the 2.5% side binds and
+nothing happens. For a **CNY** reporter the risk-free rate is 1.10% — CGB 1.70% net of the
+vendored sovereign spread — and it binds instead. Of the eight fixtures **only 0700.HK is
+caught**: 0002.HK reports HKD, whose 3.00% clears 2.5%.
+
+Tencent's own year-one consensus growth is **9.39%**. The model grants it **1.10%** in
+perpetuity. Measured 2026-08-30, production path, every input pinned including the exchange rate:
+
+| terminal growth | fair value | vs price | V pillar | composite |
+|---|---|---|---|---|
+| 1.10% — today, `capped_at_risk_free_rate` | 539.04 | +12.0% | 67 | 73 |
+| 2.50% — the platform default, unbound | 652.41 | +35.5% | 72 | 74 |
+| 4.00% — `NOMINAL_GDP_GROWTH`, already computed | 880.65 | +82.9% | 75 | 75 |
+
+**A 63.4% swing in fair value, and 2 points of composite.** The score barely moves because the
+upside anchor curve saturates above +40%, so this is a defect in the number the Models tab
+prints rather than in the ranking — which is an argument about *which* readers it misleads, not
+about whether it is one.
+
+**The mechanism was designed for the opposite direction.** The Done entry of 2026-08-06 records
+declining Simply Wall St's *terminal growth = 10Y yield* on the grounds it "would set terminal
+growth **above** long-run nominal GDP, which reference doc §1.1.3 forbids". That is a ceiling
+against too-*high* growth. The CNY curve arrived on **2026-08-19**, after that decision, and
+binds from underneath. §1.1.3 itself says only `g_terminal ≤ long-run nominal GDP` — it does not
+mention the risk-free rate at all, so the `min(..., rf)` half is this platform's own addition and
+dropping it would still satisfy the spec.
+
+**The counter-argument, which is real:** a perpetual growth rate above the risk-free rate claims
+a company outgrows government paper forever. Mechanically applying that to a policy-suppressed
+domestic curve is the thing in question — not the principle.
+
+**Cost.** Three call sites share the line; five assertions across four test files name
+`capped_at_risk_free_rate`; `ModelsTab.jsx` has a display branch for it; `golden_scores.json`
+holds `0700_HK` and would need re-baking. Calibrated against this repo's own recent commits
+that is a **medium** change — roughly 6-11 files and 100-330 lines, the size of `65450ec`.
+
+**Decision needed, not a trigger:** anchor the ceiling to a long-run nominal growth estimate
+independent of the sovereign curve (`NOMINAL_GDP_GROWTH` is already computed and already
+published in `terminal_growth_ceilings` as a ceiling it never enforces), or keep the rf cap and
+accept that a CNY reporter is valued on a 1.1% perpetuity, or make it currency-conditional.
+The measurement above does not choose between them.
+
 ### 🔵 The valuation-upside metric is scored on one observation *(2026-08-29)*
 
 `valuation_upside_pct` joined the V pillar for `financials_bank` and
@@ -110,6 +162,33 @@ commit. These are the remainder, none of them load-bearing.
   the suite size.*
 
 ### 🔵 The review's 32 standing findings, none of them written down until now *(2026-08-27)*
+
+> **Re-checked 2026-08-30 against the live repo and GitHub. The count decays faster than the
+> entry does, and five sub-findings are already closed:**
+>
+> - ~~"zero badges"~~ — `README.md:3-6` now carries four (CI, tests, licence, Python 3.12/13/14).
+> - ~~"no release"~~ — `gh release list` shows **v0.1.0**, tagged 2026-08-27, *before this entry
+>   was written*.
+> - ~~"`docs/release-readiness.md` appears only as plain text"~~ — `README.md:37` links it.
+>   The other two named in the same bullet are **still unlinked**: `grep` for
+>   `currency-consistent-discounting` and `valuation-triangulation-review` in `README.md`
+>   returns nothing, and `quant-review-2026-08-06.md` is still plain text at `README.md:407`.
+> - `docs/images/social-preview.png` now exists (92,748 bytes, 2026-08-27), though whether it is
+>   wired into GitHub's social-preview setting cannot be told from the repo — left open.
+> - **The About-description staleness this entry predicted has recurred, and can now be shown
+>   rather than argued.** Three numbers for one fact are in circulation right now: GitHub's
+>   About says **856 offline tests**, `README.md:4` says **987**, and this entry records having
+>   corrected it to **793**. The prediction was "it goes stale again on the next commit that
+>   adds a test"; it has gone stale twice more since.
+>
+> **Confirmed unchanged:** Website field still empty, still 14 topics, no `docs/README.md` index,
+> first screen still defaults to Tracker/AAPL (`App.jsx:43-44`), neither start script checks
+> `node_modules` (`start.bat:8`), `aria-*` still only in `SearchBar.jsx`.
+>
+> **And the line-number joke landed a fourth time.** This entry says the exhaustive-deps disable
+> "is now at `:366`". It is at **`PriceChart.jsx:716`** — 398 → 344 → 366 → 716 across the file's
+> history. Four data points now say the same thing the entry already argues: reference the
+> symbol, not the line.
 
 The same four-agent review ran twice today — once before demo mode, once after — and produced
 **32 findings about the repo as a stranger meets it**. That is a different axis from the rest of
@@ -495,7 +574,8 @@ either. Until then the README says so in the same bullet that introduces it.
 
 Quant review §6 item 2 (score against the peer *distribution*, not absolute
 thresholds) is the right diagnosis and is **blocked on data, not effort**. A
-sector z-score or percentile needs a universe to rank within; this app has 21
+sector z-score or percentile needs a universe to rank within; this app has ~~21~~ **23**
+(re-counted 2026-08-30; the conclusion is unchanged — 23 is not a universe either)
 hand-curated peer entries, ~2.5 s per ticker, and no bulk endpoint. Four peers
 cannot produce a percentile.
 
@@ -561,8 +641,17 @@ the bridge and the bank path, neither of which needs a live price or real bars.
 
 ### 🟡 The methodology reference is truncated, not retrieved
 
-[backend/ai_client.py](backend/ai_client.py) does `text[:16000]` on a 1,087-line
-document, so everything past roughly the first 40% never reaches the model — including
+[backend/ai_client.py](backend/ai_client.py) does `text[:16000]` on a ~~1,087~~ **1,221**-line
+document, so everything past roughly the first ~~40%~~ **20.0%** never reaches the model — including
+
+*(**Re-measured 2026-08-30: the reachable share has halved, and not because the budget moved.**
+The document is now 80,011 characters, so 16,000 is 20.0% of it, and the cut lands at line 268
+of 1,221 — mid-sentence inside §1.2. The whole of §1.3 Residual Income, §2 relative valuation,
+§4 statement analysis, §6 endpoint mapping and §7.1 the model-priority matrix are outside it.
+The entry's own examples were right and understated: it is not the tail past 40%, it is 80% of
+the document. **This number will keep falling every time the reference grows**, which the
+2026-08-30 additions to §1.2/§1.3/§5.2 were deliberately placed past character 16,000 to avoid
+making worse.)*
 §6 (endpoint mapping) and §7.1 (the model-priority matrix). "Grounded in the
 methodology" is therefore only true of the opening sections.
 
@@ -687,10 +776,18 @@ periods: `Long Term Equity Investment` 348,712 = `Investmentsin Associatesat Cos
 **"At cost" applied to only a third of the portfolio.** `Investmentin Financial Assets`
 635,426 = `Available For Sale Securities` 428,342 + `Financial Assets at FVTPL` 207,084 —
 and both of those are *already carried at fair value*. That 635bn is now in the bridge,
-because using it reads a filed mark rather than inventing one. It moves 0700.HK from −11.1%
-to **+3.6%** with no assumption entering the headline.
+because using it reads a filed mark rather than inventing one. It moves 0700.HK from ~~−11.1%~~
+to ~~**+3.6%**~~ with no assumption entering the headline.
 
-**What is left is the associates leg only** — 348.7bn, +45.06/share on 0700.HK, shown beside
+*(**Both figures re-measured 2026-08-30 and neither reproduces**: the headline is now **+12.0%**
+at a fair value of 539.04. Same drift `L573`/XOM was corrected for on 2026-08-18 and this entry
+never was — beta became a regression on 2026-08-14 and gained an interval-aware floor on
+2026-08-20, and 0700.HK's beta is one of the ones that moved. The structural claim is untouched:
+cost is not value, and the associates leg stays out of the headline.)*
+
+**What is left is the associates leg only** — 348.7bn, ~~+45.06/share~~ **+42.61/share** on
+0700.HK (re-measured 2026-08-30 with the exchange rate pinned at 1.10;
+`diagnostics.equity_bridge.per_share.associates_at_cost`), shown beside
 the headline and excluded from it. Cost is neither a market value nor a floor: a long-held
 stake is usually worth more than it cost and an impaired one less, and the filing does not
 say which.
@@ -703,7 +800,20 @@ prints it — so what a source would buy is the right to put it in the headline.
 
 Holdings in USD and HKD are summed at face value. The UI warns when the totals really do
 span more than one currency, but the total is wrong, not merely imprecise.
-**Trigger: actually holding both.** Needs a rate source; `obb.currency` is free.
+**Trigger: actually holding both.** ~~Needs a rate source; `obb.currency` is free.~~
+
+*(**The rate source already exists — corrected 2026-08-30.** `data_provider.fx_rate` is live,
+daily-cached and already used inside `financial_models` to reconcile a statement currency
+against a trading one. Nothing needs sourcing; the work is wiring it into `position_values`/
+`portfolio()` in `main.py` and choosing a base currency — roughly 20-30 lines and 3-5 tests.
+This entry has been costed as blocked-on-data since it was written, and it is not.*
+*
+**And the size of it, measured 2026-08-30 on the committed fixtures:** AAPL prices at USD 311.00
+and 0700.HK at HKD 481.40, so ten AAPL plus a thousand 0700.HK reports a total of **484,510** —
+Hong Kong dollars added to US dollars as if they were the same unit. Converted at the HKD peg
+(~7.80) the true figure is about **64,828**. The displayed total is **7.5x** the real one, and
+it grows with the HK weight rather than staying a rounding error. That is not a cosmetic gap in
+a portfolio tab.)*
 
 *Narrowed 2026-08-17:* the warning used to read the currency of **every** row, so a
 watchlist entry — which carries no market value and is therefore in no total — could
@@ -802,7 +912,7 @@ no commercial charting package tells its users.
 *Migrated here 2026-08-18 from a local architecture audit being retired; recorded because the
 measurement would otherwise be lost with the untracked file.*
 
-`index.css` is a single 2,033-line global stylesheet, so nothing *could* detect dead CSS and
+`index.css` is a single ~~2,033~~ **2,287**-line (re-counted 2026-08-30, +12.5%; the 0.44% dead-selector figure was not re-derived and is due for it, since the stylesheet moved materially) global stylesheet, so nothing *could* detect dead CSS and
 deleting a component would silently strand its rules. That much is structurally true. But it
 was measured rather than assumed — every class selector diffed against every string literal in
 the JS/JSX sources:
@@ -1133,6 +1243,36 @@ defect reachable from yfinance.
 **Trigger: a bars source that can produce placeholder or forward-filled series**, or evidence for
 where a precision cutoff belongs. The fixtures say where real data sits (R² 0.028–0.691) and
 nothing about where a threshold should be, which is why one was not invented.
+
+**The band is now measured, 2026-08-30, and it is narrower and worse than the entry suggests.**
+The skipping branch has no lower clamp at all — `min(floored, BETA_MAX)` bounds the top and
+nothing bounds the bottom — so the question is not "how low can a beta go" but "how low can it
+go *and still be published*". Downstream, `WACC ≤ terminal growth` refuses. Between those two
+lies the band where the floor is absent and a valuation is still printed. Measured on AAPL by
+substituting the beta directly:
+
+| beta | WACC | fair value | vs price |
+|---|---|---|---|
+| **0.30** — the floor, i.e. the right answer | 5.61% | 271.20 | −12.8% |
+| 0.20 | 5.17% | 316.25 | **+1.7% — the verdict flips from expensive to cheap** |
+| 0.05 | 4.51% | 420.87 | +35.3% |
+| 0.00 | 4.29% | 472.91 | +52.1% |
+| −0.20 | 3.42% | 922.68 | +196.7% |
+| **−0.40** | 2.54% | **21,288.07** | **+6,745%** |
+| −0.45 | — | refused (WACC below terminal growth) | — |
+
+**So the dangerous band is `beta ∈ [−0.40, 0.30)`**, and its failure mode is not a slightly low
+beta: at the bottom edge AAPL is valued at 68× its own price, one hundredth of a beta before the
+refusal catches it. Negative betas do *not* escape into the output the way an earlier reading of
+this entry assumed — −1.5 is refused — which is exactly why the interesting cases are the
+near-zero positive ones that look unremarkable.
+
+**This is the evidence the entry said it did not have.** It does not name a threshold on
+`standard_error`, and inventing one is still declined. What it does say is that a guard placed
+anywhere inside `[−0.40, 0.30)` is defensible on measurement rather than taste, and that the
+cheapest correct guard may not be a precision threshold at all: **restoring the lower clamp in
+the skipping branch** costs one `max()` and makes the whole band unreachable, at the price of
+overriding a measurement the interval says is precise. That trade is a decision; the band is not.
 
 ### 🟡 `_us_treasury_10y`'s internals have never been tested *(found 2026-08-19)*
 
