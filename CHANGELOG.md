@@ -17,6 +17,51 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (i) - A net, after three widenings each cut to fit the last miss
+
+An independent re-verification of the five preceding commits found every fix reproducing
+against the running code rather than against its own tests — the formatters, the football-field
+axis, the peer net-debt suppression, the portfolio conversion and its refusal path, all
+measured a second time and all matching. It also found an eleventh test-count claim, in
+`backend/tests/fixtures/PROVENANCE.md`, still saying 780.
+
+That is the third instance of one shape in a day, and the sequence is the point:
+
+- `780 tests` — found by the first sweep.
+- `780-test suite` — missed, because the sweep looked for "N tests". Found by a reviewer.
+- `780-test backend suite` — missed by the widened sweep too, because that one looked for
+  "N-test suite" and this has a word in between. Found by the next reviewer.
+
+Each widening was cut to fit the previous miss, and the next instance sat just outside it. Two
+of the three were found by someone else.
+
+So the fix is not a twelfth pattern. `test_no_test_count_in_those_files_is_unaccounted_for`
+scans the guarded files for any three- or four-digit number on a line that mentions tests and
+fails on anything matching none of the three real counts. It is the completeness half: the
+`CLAIMS` list says the numbers we know about are right, this says there are no numbers we do
+not know about. Proved on a phrasing `CLAIMS` has no pattern for — "All 555 of the backend
+tests" — which it names by file and line.
+
+Two exclusions, both measured rather than imagined, after probing the guarded files for false
+positives. A unit after the number makes it a size: `docs/testing.md` carries "297 KB" on a
+line whose path contains `tests/`. A dot after it makes it a Hong Kong ticker: `0002.HK` reads
+as the number 2 and this repository is full of them. Percent-encoding is deliberately not
+excluded, so the badge URL's `tests-1008%20offline` is still seen. With both in place the scan
+reports zero unaccounted numbers, so it starts from a clean baseline rather than a suppressed
+one.
+
+The two checks are complementary rather than redundant, which was also measured: the broad scan
+finds `PROVENANCE.md`, which no pattern covered, and misses README's "793 backend, 215
+frontend", whose line never says "test". Neither alone is enough.
+
+Also closed a present-tense claim in TODOLIST that had outlived its own subject — "three
+numbers for one fact are in circulation right now" — which was true when written and false four
+hours later. Struck rather than rewritten. It was found by a sweep looking for exactly that
+kind of sentence, which is the only reason it is not still there.
+
+The count moved again by adding the test that counts it: 793 -> **794 backend**, 215 frontend,
+1,009 offline.
+
 ## 2026-08-30 (h) - The guard shipped with the blind spot it was built to remove
 
 `README.md:448` says "the 780-test suite runs entirely offline against them", in the licensing

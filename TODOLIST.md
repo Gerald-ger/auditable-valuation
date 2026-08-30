@@ -176,10 +176,21 @@ commit. These are the remainder, none of them load-bearing.
 > - `docs/images/social-preview.png` now exists (92,748 bytes, 2026-08-27), though whether it is
 >   wired into GitHub's social-preview setting cannot be told from the repo — left open.
 > - **The About-description staleness this entry predicted has recurred, and can now be shown
->   rather than argued.** Three numbers for one fact are in circulation right now: GitHub's
+>   rather than argued.** ~~Three numbers for one fact are in circulation right now: GitHub's
 >   About says **856 offline tests**, `README.md:4` says **987**, and this entry records having
->   corrected it to **793**. The prediction was "it goes stale again on the next commit that
+>   corrected it to **793**.~~ The prediction was "it goes stale again on the next commit that
 >   adds a test"; it has gone stale twice more since.
+>
+>   **Closed later the same day.** All of them now read **1008**, and a test enforces it:
+>   `backend/tests/test_documented_counts.py` reads eleven claims out of README, `docs/testing.md`
+>   and `backend/tests/fixtures/PROVENANCE.md` and fails naming the file and line of any that
+>   drifts. The About was corrected by hand, and **no test can reach it** — it lives outside git.
+>   That half of the prediction stands.
+>
+>   *Struck rather than rewritten because it was a present-tense claim that outlived its own
+>   subject: those three numbers really were in circulation when it was written, and were not
+>   four hours later. Leaving it unstruck would have made this entry an instance of the defect
+>   it is about — which is how it was found, by a sweep looking for exactly that.*
 >
 > **Confirmed unchanged:** Website field still empty, still 14 topics, no `docs/README.md` index,
 > first screen still defaults to Tracker/AAPL (`App.jsx:43-44`), neither start script checks

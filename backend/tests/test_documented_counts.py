@@ -46,6 +46,12 @@ CLAIMS = (
     # hyphenated here, so every sweep that looked for "N tests" walked past it.
     ("README.md", r"the (\d+)-test suite runs entirely offline", "backend"),
     ("README.md", r"backend, (\d+) frontend, seconds", "frontend"),
+    # Added 2026-08-30 after an independent re-verification found it. Third
+    # miss of the same shape: the count is hyphenated *and* has a word before
+    # "suite", so both the "N tests" sweep and the "N-test suite" sweep that
+    # was widened to catch the last one walked past it.
+    ("backend/tests/fixtures/PROVENANCE.md",
+     r"the (\d+)-test backend suite", "backend"),
     ("docs/testing.md", r"pytest\s+# (\d+) tests, offline", "backend"),
     ("docs/testing.md", r"npm test\s+# (\d+) tests", "frontend"),
 )
@@ -67,7 +73,8 @@ def _frontend_test_count() -> int:
     )
 
 
-def test_the_documented_test_counts_are_the_ones_that_ran(request):
+def _measured(request) -> dict[str, int]:
+    """The three counts, or skip because this run cannot see all of them."""
     config = request.config
     # A filtered run counts a subset, and asserting on it would fail for the
     # wrong reason. `file_or_dir` is empty only when pytest fell back to the
@@ -84,11 +91,68 @@ def test_the_documented_test_counts_are_the_ones_that_ran(request):
             or getattr(config.option, "lf", False)
             or getattr(config.option, "stepwise", False)):
         pytest.skip("a filtered run cannot count the suite")
-
     backend = len(request.session.items)
     frontend = _frontend_test_count()
-    measured = {"backend": backend, "frontend": frontend,
-                "total": backend + frontend}
+    return {"backend": backend, "frontend": frontend, "total": backend + frontend}
+
+
+# The files the two checks below cover, taken from `CLAIMS` so the pair cannot
+# drift apart: a claim added to a new file brings that file under both.
+GUARDED_FILES = tuple(dict.fromkeys(name for name, _, _ in CLAIMS))
+
+# A three- or four-digit number on a line that mentions tests is a count claim,
+# unless it is something else wearing the same shape. Both exclusions were
+# measured rather than imagined: a unit after it makes it a size — the fixtures
+# directory's "297 KB" — and a dot after it makes it a Hong Kong ticker,
+# `0002.HK` and `1177.HK`, of which this repository is full. Percent-encoding is
+# deliberately *not* excluded, so the badge URL's `tests-1008%20offline` is still
+# seen. Verified 2026-08-30: zero unaccounted numbers across the guarded files.
+COUNT_SHAPED = re.compile(
+    r"(?<![.\d])\b(\d{3,4})\b(?!\.|\s*(?:KB|MB|GB|kB|bytes|lines|chars|characters))")
+
+
+def test_no_test_count_in_those_files_is_unaccounted_for(request):
+    """The completeness half: `CLAIMS` says the numbers we know about are right,
+    this says there are no numbers we do not know about.
+
+    It exists because the same blind spot got past three separate sweeps in one
+    day. `780 tests` was found. `780-test suite` was not, and was found by a
+    reviewer. The pattern was widened to catch that, and `780-test backend
+    suite` — the same shape with one word inserted — was not caught either, and
+    was found by the next reviewer. Each widening was cut to fit the last miss,
+    and the next instance sat just outside it.
+
+    A net that fails on any number it cannot account for does not need widening.
+    The cost is that a new, correct number in a new phrasing also fails, and has
+    to be added to `CLAIMS` or given a shape this ignores — which is the right
+    trade, because that is the moment someone is looking at it.
+    """
+    measured = _measured(request)
+    known = set(measured.values())
+
+    unaccounted = []
+    for name in GUARDED_FILES:
+        for i, line in enumerate(
+                (ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
+            if "test" not in line.lower():
+                continue
+            for m in COUNT_SHAPED.finditer(line):
+                if int(m.group(1)) not in known:
+                    unaccounted.append(f"  {name}:{i} has {m.group(1)} — "
+                                       f"{line.strip()[:70]}")
+
+    assert not unaccounted, (
+        "A test-count-shaped number in a guarded file matches none of the three "
+        "real counts. Either it is a claim that has gone stale, or it is not a "
+        "count at all and needs a shape this check skips:\n"
+        + "\n".join(unaccounted)
+        + f"\n\nThe real counts are {measured['backend']} backend, "
+          f"{measured['frontend']} frontend, {measured['total']} offline.")
+
+
+def test_the_documented_test_counts_are_the_ones_that_ran(request):
+    measured = _measured(request)
+    backend, frontend = measured["backend"], measured["frontend"]
 
     wrong = []
     for name, pattern, kind in CLAIMS:
