@@ -1285,6 +1285,50 @@ or let HK degrade to price-and-quote. The six-method `YFinanceProvider` interfac
 keeps the eventual swap bounded — worth keeping clean. Full reasoning in
 `docs/data-sources-review.md` §3.
 
+**Split 2026-08-31, because this entry was answering two different questions with one answer.**
+
+The blocker above is about **live mode** — the app calling Yahoo on a visitor's behalf. That
+still stands, unchanged. **Demo mode is a different program.** `provider = FixtureProvider() if
+DEMO_MODE else YFinanceProvider()` (`data_provider.py:1355`), and an independent trace of every
+subsystem under `DEMO_MODE=1` found no path from any HTTP endpoint to any external provider.
+Three mechanisms do it, and they are not the same mechanism: the three risk-free rates,
+`fx_rate` and `live_price` are **rebound** to demo functions during the module's own init
+(`data_provider.py:1366-1370`); the ticker search skips its Yahoo fallback on a **runtime
+check** (`search.py:270`), as does peer discovery before it can reach FMP or the yfinance
+screener (`comps.py:498`); and the key-verification probe is **refused with a 403**
+(`main.py:288`). The one outbound call demo mode does *not* suppress is `/api/ai/*` to
+`http://localhost:11434` — the visitor's own Ollama, which carries no vendor data outward and
+simply fails where no daemon is running.
+
+So a hosted demo does not scrape Yahoo for anybody. What it serves is the committed fixtures:
+**18 files, 421 KiB, every one tracked in git and committed since 2026-08-06, in a public
+repository** — and whose own `PROVENANCE.md` states, near the top, that they are captured
+third-party data outside this repository's AGPL grant.
+
+**Which is the finding: hosting demo mode distributes nothing that is not already distributed.**
+Anyone can clone the repo today and get the same 421 KiB. Hosting changes the *interface* to
+that data — an API and a UI instead of a JSON file — not its availability. The decision that
+carries the risk was taken on 2026-08-14, when this exact question was reviewed and the
+fixtures — committed eight days earlier — were kept rather than removed: *"record it, do not
+act on it yet"* (`docs/data-sources-review.md` §3). A hosted demo does not add to it.
+
+That leaves exactly two self-consistent positions, and the state as of today is neither:
+
+- **Accept the repository as it stands** — then hosting demo mode adds no exposure, and the
+  hosting question has no data-licensing prerequisite left to clear. Only a deployment one.
+- **Do not accept it** — then the thing to change is the fixtures' presence in a public repo,
+  not the hosting decision. Declining to host while continuing to publish them changes nothing.
+
+**Today the repository carries the distribution and collects none of what it could buy.** That
+is the argument for resolving this either way rather than leaving it open.
+
+What this does *not* say: that the exposure is zero, or anything about the law. It is a
+statement about what hosting changes and what it leaves untouched, and it is not legal advice.
+Two things are unchanged by it — **live-mode hosting is still a blocker** on the terms above,
+and the fixtures are still eight companies captured on stated dates, not a data product.
+
+*Trigger for the remaining half: any decision to host **live** mode.*
+
 ### ⚪ ~~A wrong CGB tenor would be invisible to every test~~ — closed 2026-08-20
 
 *Raised 2026-08-19 and closed the next day by removing the possibility rather than by

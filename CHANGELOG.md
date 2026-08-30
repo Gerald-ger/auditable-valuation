@@ -17,6 +17,46 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 - Two questions wearing one answer, and one of them was already answered
+
+`TODOLIST`'s yfinance entry said that sharing, hosting or publishing the platform is a blocker
+on data licensing. That is right about **live mode** and it was being applied to demo mode,
+which is a different program: `provider = FixtureProvider() if DEMO_MODE else YFinanceProvider()`.
+An independent trace of every subsystem under `DEMO_MODE=1` found no path from any HTTP endpoint
+to any external provider, by three separate mechanisms — names rebound at module init for the
+rates, `fx_rate` and `live_price`; runtime checks for search and peer discovery; a 403 for the
+key probe. The single outbound call demo mode does not suppress is `/api/ai/*` to
+`http://localhost:11434`, the visitor's own Ollama, which carries nothing outward.
+
+So a hosted demo scrapes Yahoo for nobody. It serves 18 committed fixture files, 421 KiB, every
+one tracked in git since 2026-08-06 in a public repository, and `PROVENANCE.md` has said since
+2026-08-14 that they are third-party data outside the AGPL grant.
+
+**Which makes the question one that was already answered rather than one still open: hosting
+demo mode distributes nothing that is not already distributed.** Anyone can clone the repository
+today and get the same 421 KiB. Hosting changes the interface to that data — an API and a UI
+instead of a JSON file — not its availability.
+
+No code changed. What changed is that the entry now says which half of it is still a blocker,
+and names the two self-consistent positions available: accept the repository as it stands, in
+which case hosting adds no exposure; or do not, in which case the thing to change is the
+fixtures' presence in a public repo rather than the hosting decision. Declining to host while
+continuing to publish them is the one combination that pays the cost and collects nothing.
+
+**Four claims in the first draft of that entry were wrong, and an independent fact-check caught
+them before the commit.** It asserted the repository "went public 2026-08-14 with the fixtures
+in it" two sentences after asserting it had been public since 2026-07-31 — the two cannot both
+be true, and neither is what happened: the fixtures landed 2026-08-06 (`6fff7ca`) and what
+2026-08-14 actually produced was the *decision to keep them*, in as many words in
+`docs/data-sources-review.md` §3. It also described import-time rebinding and a runtime
+conditional in a different file as one mechanism, and cited a "second paragraph" that is the
+third once the opening blockquote's own paragraphs are counted. The publication date was dropped
+rather than corrected: GitHub's events API no longer reaches back far enough to establish it,
+and the argument never needed it.
+
+Recorded because the entry is about the cost of an unexamined claim, and it shipped its first
+draft carrying four.
+
 ## 2026-08-30 (i) - A net, after three widenings each cut to fit the last miss
 
 An independent re-verification of the five preceding commits found every fix reproducing
