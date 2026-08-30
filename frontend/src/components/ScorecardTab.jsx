@@ -203,6 +203,18 @@ function AnalystContext({ data }) {
 // is thinnest.
 const MIN_BAR_WIDTH = 1.5;
 
+// `implied_values` keys as a reader would name them. Only the two EV multiples
+// can currently be suppressed, but the map covers the whole set so a new
+// suppression rule does not have to remember to add a label — the fallback
+// prints the raw payload key, which is worse than nothing on a chart.
+const MULTIPLE_LABELS = {
+  peer_ev_ebitda: 'EV/EBITDA',
+  peer_ev_revenue: 'EV/Revenue',
+  peer_forward_pe: 'Forward P/E',
+  peer_trailing_pe: 'Trailing P/E',
+  peer_price_to_book: 'P/B',
+};
+
 /**
  * Valuation ranges against the current price.
  *
@@ -409,6 +421,18 @@ function FootballField({ ranges, currentPrice, triangulation }) {
           <b>{r.method}:</b> {r.equity_basis_note}
         </div>
       ))}
+
+      {/* A multiple the backend computed a median for and then declined to
+          apply. The reason has been in the payload since the operating-margin
+          transfer rule was written — whose own comment says suppression is
+          "recorded rather than silent" — and nothing rendered it until now, so
+          the bar was simply narrower than the peer count implied and no reader
+          could tell which multiple was missing or why. */}
+      {drawn.flatMap((r) => Object.entries(r.suppressed ?? {}).map(([key, why]) => (
+        <div key={`${r.method}-${key}`} className="chart-note ff-skipped">
+          <b>{MULTIPLE_LABELS[key] ?? key}:</b> not used. {why}
+        </div>
+      )))}
 
       {/* The arithmetic, ahead of every verdict on this panel. A reader who
           disagrees with a grade has nowhere to go; a reader who disagrees with a

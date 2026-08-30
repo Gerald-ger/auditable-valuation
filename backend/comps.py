@@ -623,8 +623,31 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
 
     # apply peer-median multiples to the target's own metrics
     shares = info.get("sharesOutstanding")
-    net_debt = (info.get("totalDebt") or 0) - (info.get("totalCash") or 0)
+    # Net debt is a subtraction, so a missing leg is an unknown rather than a
+    # zero. `or 0` read an absent cash balance as a company holding none, which
+    # overstates net debt and understates every EV-implied value by the whole
+    # cash figure — and the mirror image for an absent debt balance, which is
+    # why both legs are guarded rather than the one that was noticed first.
+    # Measured 2026-08-30: 10.61% of market cap on 0700.HK, the one fixture in a
+    # net cash position, against the 1.37% on AAPL that this was ranked on.
+    # No committed fixture is missing either leg, so nothing here is currently
+    # wrong; what changes is what happens the first time one is.
+    total_debt, total_cash = info.get("totalDebt"), info.get("totalCash")
+    net_debt = (total_debt - total_cash
+                if total_debt is not None and total_cash is not None else None)
     implied = {}
+    # Declared here rather than beside the margin rule below, because the
+    # EV/EBITDA line runs before that point and needs somewhere to record.
+    suppressed: dict[str, str] = {}
+    if net_debt is None:
+        reason = (f"{'Total debt' if total_debt is None else 'Cash'} is not reported, so net "
+                  "debt is unknown — an enterprise value cannot be bridged to an equity one "
+                  "without it, and assuming the missing side is zero would move the result "
+                  "by the whole of it.")
+        for key, median_key in (("peer_ev_ebitda", "ev_to_ebitda"),
+                                ("peer_ev_revenue", "ev_to_revenue")):
+            if medians.get(median_key):
+                suppressed[key] = reason
 
     # An EV multiple times a statement figure lands in the reporting currency,
     # as does net debt, so the bridged per-share value has to be converted before
@@ -675,7 +698,7 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
         bars therefore rest on two different definitions of enterprise value, and
         that difference is disclosed on the chart rather than averaged away.
         """
-        if mult and metric and shares and fx is not None:
+        if mult and metric and shares and fx is not None and net_debt is not None:
             return round((mult * metric - net_debt) * fx / shares, 2)
         return None
 
@@ -688,7 +711,6 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
     # EV/Revenue only where the margins make it a comparison — see
     # `_ev_revenue_transfers`. Suppression is recorded rather than silent,
     # because a missing multiple that nobody explains reads as missing data.
-    suppressed: dict[str, str] = {}
     peer_margins = [p["operating_margin"] for p in peers
                     if p.get("operating_margin") is not None]
     peer_margin = median(peer_margins) if peer_margins else None
@@ -696,11 +718,16 @@ def comps_analysis(target_fund: dict, peer_tickers: list[str]) -> dict:
         implied["peer_ev_revenue"] = ev_implied(medians.get("ev_to_revenue"),
                                                 info.get("totalRevenue"))
     elif medians.get("ev_to_revenue"):
-        suppressed["peer_ev_revenue"] = (
+        # Appended rather than assigned. An unknown net debt is recorded above
+        # and is the more fundamental objection — that multiple could not be
+        # computed on *any* margins — so overwriting it here would name the
+        # weaker of two true reasons and hide the one that binds first.
+        suppressed["peer_ev_revenue"] = " ".join(filter(None, (
+            suppressed.get("peer_ev_revenue"),
             "Operating margin "
             f"{_pct(info.get('operatingMargins'))} against a peer median of "
             f"{_pct(peer_margin)} — a revenue multiple does not transfer across "
-            "that gap.")
+            "that gap.")))
 
     # P/B-implied value is only meaningful for balance-sheet-driven sectors
     if info.get("sector") in ("Financial Services", "Real Estate") \
@@ -1023,6 +1050,16 @@ def football_field(target_fund: dict, dcf: dict, comps: dict,
             "multiples_used": len(vals),
             "suppressed": comps.get("suppressed_multiples") or {},
             "independent": True,
+        })
+    elif comps.get("suppressed_multiples"):
+        # Nothing left to plot, but not because nothing was tried. Without this
+        # the row simply vanishes, which reads as a method never attempted —
+        # the same confusion the DCF's `not_applicable` row exists to prevent.
+        # Only when something was actively refused: no peers at all is a
+        # different state, already tested, and it correctly draws no row.
+        ranges.append({
+            "method": "Peer multiples (implied)", "not_applicable": True,
+            "reason": " ".join(sorted(set(comps["suppressed_multiples"].values()))),
         })
 
     if info.get("targetLowPrice") and info.get("targetHighPrice"):

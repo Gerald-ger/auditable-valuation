@@ -297,4 +297,28 @@ describe('ScorecardTab', () => {
     // The claim that would have been false for this company.
     expect(note).not.toContain('discounted cash flow');
   });
+
+  it('names the multiple it refused, rather than only drawing a narrower bar', async () => {
+    // `suppressed_multiples` has been in the payload since the operating-margin
+    // transfer rule was added, and reached this row as `suppressed` — and
+    // nothing ever rendered it. A reader saw a bar narrower than the peer count
+    // implied, with no way to learn which multiple was missing or on what
+    // grounds. The backend comment beside it says suppression is "recorded
+    // rather than silent"; it was recorded and still silent.
+    const { container } = await mount({
+      compsBody: comps({
+        football_field: [{
+          method: 'Peer multiples (implied)', low: 240, high: 260, mid: 250,
+          suppressed: {
+            peer_ev_revenue: 'Operating margin 30.0% against a peer median of 8.0% — '
+                             + 'a revenue multiple does not transfer across that gap.',
+          },
+        }],
+      }),
+    });
+
+    const text = container.textContent;
+    expect(text).toContain('EV/Revenue');
+    expect(text).toContain('does not transfer across that gap');
+  });
 });

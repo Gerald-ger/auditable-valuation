@@ -948,20 +948,35 @@ component to fix it.
 **Trigger:** the stylesheet passing ~3,000 lines, or the first component deletion — whichever
 comes first, since either turns the structural risk into a live one.
 
-### 🟡 Two remaining `or 0` coercions from the 2026-08-27 audit
+### ⚪ ~~Two remaining `or 0` coercions from the 2026-08-27 audit~~ — both closed 2026-08-30
 
 The audit found six `.get(...) or 0` sites on model inputs. Three were benign (a missing
 analyst count and a missing dividend yield mean the same thing as zero), one was the
 market-cap defect fixed on 2026-08-27, and one — `financial_models`' `totalDebt or 0` — is
 covered by the `net_debt_assumed_zero` flag that already fires beside it. These two are not.
 
-- **`comps.py`'s `net_debt = (totalDebt or 0) - (totalCash or 0)`.** A missing cash balance
+- ~~**`comps.py`'s `net_debt = (totalDebt or 0) - (totalCash or 0)`.** A missing cash balance
   overstates net debt and understates the peer-implied value. Measured on AAPL: net debt
   21.9bn against 84.3bn, an overstatement of **1.37% of market cap**. It feeds the
   peer-implied bar of the football field, not the DCF headline, which is why it ranks below
   the three fixed that day. The fix is the same one-word change (`is not None`) plus a
   decision about what to do when it *is* missing — the bar should probably not be drawn at
-  all, which is a different change from scoring it.
+  all, which is a different change from scoring it.~~
+
+  **Closed 2026-08-30, and the ranking argument above was built on the mildest of eight
+  readings.** Measured across every fixture, the error runs 0.68% of market cap on O to 190%
+  on JPM; AAPL, the one number this entry carries, is **seventh of eight**. The two largest
+  are inert — JPM reports no EBITDA so `ev_implied` rejects it regardless, and RIVN's
+  multiples all fall to the positive-only filter — which leaves **0700.HK at 10.61%**, 56.18
+  per share against an implied low of 382.12, as the largest that reaches the chart. It is the
+  one fixture in a net *cash* position, which is exactly why the cash term going missing costs
+  it the most.
+
+  Both legs are guarded, not the cash one alone: the mirror case understates net debt and
+  overstates the value, and treating two identically-shaped absences differently inside one
+  expression is not defensible. The refused multiples are recorded in `suppressed_multiples`
+  and — for the first time — **rendered**; a fully-suppressed peer row now says it was refused
+  instead of vanishing.
 - ~~**`format.js`'s `num` / `big` / `pct` guard `null` and `undefined` but not `NaN`.**~~
   **Closed 2026-08-30.** All four formatters — `scoreColor` included, which this bullet did
   not name — now share one `missing()` predicate. Two things this entry had wrong are worth
@@ -989,8 +1004,18 @@ covered by the `net_debt_assumed_zero` flag that already fires beside it. These 
   string. Changing behaviour for an input never observed is speculative; recorded instead.
   *Trigger: a backend field that can arrive as `""`.*
 
-**Trigger:** what remains is `comps.py`'s coercion above — bounded, and on a cross-check bar.
-Worth folding into the next pass over that file rather than a commit of its own.
+**No trigger — both are closed.** What is left is the one thing declined on each, recorded in
+place above: `num("")` rendering as `"0"`, and the note below.
+
+**One finding from the review of the second fix, declined with a reason.** A peer median that
+rounds to `0.00` produces no implied value and records no reason, because both
+`ev_implied`'s `if mult and ...` and the suppression check test it for truthiness. That looks
+like the same defect this entry is about, and measuring it says otherwise: it behaves
+identically whether net debt is known or not, so it is a property of the truthiness idiom
+rather than of the coercion. Recording "refused because net debt is unknown" there would
+attach a false reason to a multiple that was never going to compute. *Trigger: a real peer
+median below 0.005×, which no fixture approaches — or a decision to make every zero-valued
+median state itself, which is a different and larger change than one word.*
 
 ### 🟡 `FootballField`'s scale is safe by coincidence, not by construction *(found 2026-08-30)*
 

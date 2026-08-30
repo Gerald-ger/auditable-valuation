@@ -17,6 +17,52 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (e) - A missing leg of a subtraction is not a zero
+
+`comps.py` built net debt as `(totalDebt or 0) - (totalCash or 0)`. An unreported cash
+balance therefore read as a company holding none, which overstates net debt and understates
+every EV-implied value by the entire cash figure. Both legs are guarded now, not the one that
+was noticed first: the mirror case understates net debt and overstates the value, and treating
+two identically-shaped absences differently inside one expression cannot be defended.
+
+TODOLIST measured this on AAPL, got 1.37% of market cap, and ranked it below three defects
+fixed the same day. Measured across all eight fixtures it runs from 0.68% on O to 190% on JPM,
+and AAPL is the seventh of eight. The two largest are inert and are written into the test so
+they are not re-measured as findings: JPM reports no EBITDA, so `ev_implied`'s guard rejects it
+whatever net debt says, and RIVN's multiples are all removed by the positive-only filter. The
+largest figure that actually reaches the chart is **0700.HK at 10.61%** — 56.18 per share
+against an implied low of 382.12 — because it is the one fixture in a net *cash* position and
+therefore the most sensitive to the cash term going missing.
+
+No committed fixture omits either leg, so no number on screen changes today. What changes is
+what happens the first time one does.
+
+Suppression rather than silence, which turned out to need two halves. The reasons were already
+recorded in `suppressed_multiples` — the comment beside that dict says suppression is "recorded
+rather than silent" — and **nothing had ever rendered them**. The operating-margin rule has
+been writing reasons there since 2026-08-12 and a reader saw only a bar narrower than the peer
+count implied, with no way to learn which multiple was missing or on what grounds. They now
+appear under the chart, reusing the `.ff-skipped` treatment the not-applicable rows already
+have. And `football_field` gated the whole peer row on `implied_values` being non-empty, so a
+row with everything suppressed vanished outright — it now says it was refused, which is what
+the DCF's own `not_applicable` row exists to do.
+
+Two things came out of the independent review of the change. Where EV/Revenue is refused on
+margins *and* on an unknown net debt, the first draft let the margin reason overwrite the other;
+it names the weaker of two true reasons, since that multiple could not have been computed on
+any margins at all. Both are recorded now. The second was declined and is worth stating: a peer
+median that rounds to `0.00` disappears with no value and no reason — but measured both ways it
+does that whether net debt is known or not, because `ev_implied` tests `mult` for truthiness
+too. Recording "refused because net debt is unknown" there would attach a false reason to a
+multiple that was never going to compute. Consistent with the neighbouring guard, and recorded
+in TODOLIST rather than papered over.
+
+Six new tests, all mutation-proved: reverting the guard fails three, reverting `ev_implied`'s
+arm fails three, reverting the football-field branch fails one, reverting the frontend block
+fails one, and reverting the combined reason fails one.
+
+780 -> **785 backend**, 212 -> **213 frontend**, 998 offline. Bundle 489.21 -> 489.56 kB.
+
 ## 2026-08-30 (d) - The axis of an empty chart was printing ∞, 非數值 and -∞
 
 `num`, `big`, `pct` and `scoreColor` each guarded `null` and `undefined` and stopped there.

@@ -176,6 +176,98 @@ def test_a_negative_implied_value_is_dropped(stub):
     assert "peer_ev_ebitda" not in result["implied_values"]
 
 
+def test_an_unreported_cash_balance_suppresses_the_ev_multiples(stub):
+    """Net debt is a subtraction, so a missing leg is an unknown, not a zero.
+
+    Reading an absent cash balance as "holds no cash" overstates net debt and
+    understates every EV-implied value by the entire cash figure. Measured
+    2026-08-30 across the committed fixtures: 0.68% of market cap on O and
+    **10.61% on 0700.HK**, which is the one name in a net *cash* position and
+    therefore the most sensitive — 56.18 per share against an implied low of
+    382.12. TODOLIST measured only AAPL, at 1.37%, and ranked the defect on the
+    mildest of the eight.
+
+    The two larger percentages are inert and worth naming so they are not
+    re-measured as findings: JPM's cash is 190% of its market cap but it reports
+    no EBITDA, and RIVN's is 23.6% but its multiples are all filtered by the
+    positive-only rule.
+    """
+    stub({t: snapshot(t) for t in ("A", "B", "C")})
+    result = comps.comps_analysis(target(totalCash=None), ["A", "B", "C"])
+
+    assert "peer_ev_ebitda" not in result["implied_values"]
+    assert "peer_ev_revenue" not in result["implied_values"]
+    assert "cash" in result["suppressed_multiples"]["peer_ev_ebitda"].lower()
+    # The earnings multiples do not cross the enterprise-value bridge and must
+    # be untouched — suppressing the whole row would be its own wrong answer.
+    assert result["implied_values"]["peer_forward_pe"] == pytest.approx(18.0 * 6.0)
+
+
+def test_an_unreported_debt_balance_suppresses_them_too(stub):
+    """The other leg of the same subtraction, and the same argument.
+
+    Its failure mode is the mirror image — an absent debt balance understates
+    net debt and *overstates* the implied value — so guarding one leg and
+    defaulting the other inside one expression would be indefensible.
+    """
+    stub({t: snapshot(t) for t in ("A", "B", "C")})
+    result = comps.comps_analysis(target(totalDebt=None), ["A", "B", "C"])
+
+    assert "peer_ev_ebitda" not in result["implied_values"]
+    assert "debt" in result["suppressed_multiples"]["peer_ev_ebitda"].lower()
+
+
+def test_two_reasons_to_refuse_a_multiple_are_both_recorded(stub):
+    """EV/Revenue can be refused on margins *and* on an unknown net debt, and
+    the second binds first: it could not be computed on any margins at all.
+
+    The first version of this assigned the margin reason over the net-debt one,
+    on the theory that the more specific objection should win. An independent
+    review pointed out that it names the weaker of two true reasons and hides
+    the one that actually blocks — a reader told "your margins do not transfer"
+    would reasonably think matching margins would produce the number.
+    """
+    stub({t: snapshot(t, operating_margin=0.02) for t in ("A", "B", "C")})
+    result = comps.comps_analysis(
+        target(totalCash=None, operatingMargins=0.30), ["A", "B", "C"])
+
+    why = result["suppressed_multiples"]["peer_ev_revenue"]
+    assert "net debt is unknown" in why
+    assert "does not transfer" in why
+
+
+def test_both_legs_present_is_unchanged(stub):
+    """The regression pin for the two tests above: the guard must not fire on a
+    company that reports both, including one that reports a cash balance of
+    exactly zero — `0` is a measurement and `None` is not."""
+    stub({t: snapshot(t, ev_to_ebitda=10.0) for t in ("A", "B", "C")})
+    f = target(totalCash=0)
+    result = comps.comps_analysis(f, ["A", "B", "C"])
+
+    expected = (10.0 * f["info"]["ebitda"] - f["info"]["totalDebt"]) \
+        / f["info"]["sharesOutstanding"]
+    assert result["implied_values"]["peer_ev_ebitda"] == pytest.approx(expected, rel=1e-9)
+    assert result["suppressed_multiples"] == {}
+
+
+def test_a_peer_row_that_was_suppressed_says_so_instead_of_vanishing(stub):
+    """`football_field` gates the peer row on `implied_values` being non-empty,
+    so a row with everything suppressed disappeared without explanation — which
+    reads as a method never attempted rather than one that was refused. The
+    DCF's own `not_applicable` row exists for exactly this reason."""
+    stub({t: snapshot(t) for t in ("A", "B", "C")})
+    f = target(totalCash=None, sector="Technology",
+               trailingEps=None, forwardEps=None)
+    result = comps.comps_analysis(f, ["A", "B", "C"])
+    assert result["implied_values"] == {}
+
+    rows = comps.football_field(f, None, result, None)
+    peer = next((r for r in rows if r["method"].startswith("Peer multiples")), None)
+    assert peer is not None, "the peer row vanished rather than saying it was refused"
+    assert peer["not_applicable"] is True
+    assert "cash" in peer["reason"].lower()
+
+
 def test_price_to_book_is_implied_only_for_balance_sheet_sectors(stub):
     """P/B-implied value assumes book value means something. For a software
     company it does not."""
