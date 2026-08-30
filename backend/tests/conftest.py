@@ -48,6 +48,30 @@ def load_market_bars(stem: str) -> tuple[list[dict], list[dict]]:
     return load_bars(stem), load_bars(HOME_INDEX.get(stem, "_GSPC"))
 
 
+def market_bars_or_none(ticker: str) -> tuple[list[dict], list[dict]] | None:
+    """`main._market_bars` served from the fixtures, **including its None.**
+
+    Takes a ticker rather than a stem, because that is what the function it
+    stands in for takes.
+
+    The None matters. `load_market_bars` raises `FileNotFoundError` for a ticker
+    with no committed bars, where the real `_market_bars` returns None and lets
+    every caller below it degrade. A double that cannot produce its original's
+    failure value turns a future "no bars for this ticker" into a collection
+    error instead of the fallback it is supposed to be exercising.
+    """
+    try:
+        bars, index_bars = load_market_bars(ticker.replace(".", "_"))
+    except FileNotFoundError:
+        return None
+    # `_market_bars` returns None when *either leg is empty*, not only when the
+    # fetch raised (`main.py:135`). No committed bars file is empty today — they
+    # run 249 to 262 rows — so this arm is unreachable from the fixtures as they
+    # stand, and it is here because "matches the original's contract" has to
+    # include the half that is not currently exercised, or it is not a match.
+    return (bars, index_bars) if bars and index_bars else None
+
+
 # China 10-year government yield. A round test constant, not a market quote, for
 # the same reason TEST_CNY_HKD below is one: what these tests pin is that a CNY
 # filer is discounted at a Chinese rate, not what that rate was on a given day.
@@ -60,6 +84,66 @@ TEST_CGB_10Y = 0.017
 # fixture rate far from the real one would let a sign or scale error look
 # reasonable in the goldens.
 TEST_HKGB_10Y = 0.0351
+
+
+class NetworkLeak(BaseException):
+    """Raised when a test reaches yfinance.
+
+    **A `BaseException` on purpose.** Every leak site in the application
+    swallows ordinary exceptions and degrades — `live_price` at
+    `data_provider.py:786`, `_market_bars` at `main.py:133` — so from a test an
+    outage and a success are indistinguishable, and a probe that raises a plain
+    `Exception` sees nothing. That is not a hypothetical: it is why the leak
+    recorded on 2026-08-19 was written down as two tests and measured on
+    2026-08-31 as seventeen.
+    """
+
+
+# The four yfinance entry points that actually go out to the network.
+# `EquityQuery` is deliberately absent — it builds a query object locally and
+# only `screen` sends it, so guarding it would fail a test that constructs one
+# offline. `download` is included though the backend does not currently call
+# it, because this is a guard against the leak not yet written.
+_YF_NETWORK_ENTRY_POINTS = ("Ticker", "Search", "download", "screen")
+
+
+@pytest.fixture(autouse=True)
+def no_live_yfinance(request, monkeypatch):
+    """yfinance is a hard error outside `network`-marked tests.
+
+    The suite calls itself offline in five places — `README.md:31` and `:448`,
+    `PROVENANCE.md:65`, and the docstrings of the two endpoint fixtures. Until
+    2026-08-31 that was false in seventeen tests, costing 5s of a 17s run and a
+    silent dependency on a vendor being reachable. Nothing failed when it was
+    false, which is the whole problem: the claim could not be checked by
+    running the suite, only by rebuilding a throwaway probe by hand, and
+    between 2026-08-19 and 2026-08-31 nobody did.
+
+    So the probe stops being a thing someone remembers to run. A test that
+    genuinely needs the vendor carries `pytest.mark.network` and is deselected
+    from the default run anyway; a test that reaches it by accident now fails
+    on the spot, naming the call.
+
+    **Two things it does not cover, because a guard is worth what it guards.**
+    It patches this interpreter's `yfinance` module object, so it does nothing
+    inside a child process — `test_demo_mode.py` spawns three, and those are
+    safe because they set `DEMO_MODE=1`, which is a different safety net, not
+    this one. And it is yfinance only: the FMP tier in `comps._fmp_peers`
+    reaches a live vendor through OpenBB and is held off by convention rather
+    than by a fixture, which is recorded in TODOLIST.
+    """
+    if request.node.get_closest_marker("network"):
+        return
+    import yfinance
+
+    def refuse(*args, **kwargs):
+        raise NetworkLeak(
+            f"a test reached yfinance: {args!r}. Stub the provider, or mark the "
+            f"test `network` if it is meant to go out.")
+
+    for name in _YF_NETWORK_ENTRY_POINTS:
+        if hasattr(yfinance, name):
+            monkeypatch.setattr(yfinance, name, refuse)
 
 
 @pytest.fixture(autouse=True)

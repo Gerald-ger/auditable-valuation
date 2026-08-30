@@ -27,6 +27,29 @@ The three counts above are checked against the running suite by
 `backend/tests/test_documented_counts.py`, because this number had gone stale four times
 before anything looked at it.
 
+**yfinance cannot be reached from an unmarked test.** `conftest.no_live_yfinance` is autouse and turns
+`yf.Ticker`, `yf.Search`, `yf.download` and `yf.screen` into a hard error for every test that
+does not carry the `network` marker. It raises a `BaseException` subclass deliberately: every
+site in the application that reaches the vendor swallows ordinary exceptions and degrades to
+`None`, so from inside a test an outage and a success are indistinguishable, and a probe that
+raises a plain `Exception` sees nothing.
+
+That is not theoretical. The leak was recorded on 2026-08-19 as **two** tests, on the strength
+of a throwaway probe that was then discarded as not worth maintaining. Nobody rebuilt it, and
+when it was rebuilt on 2026-08-31 the count was **seventeen** — two in `test_comps.py`,
+fourteen in `test_intrinsic_endpoint.py`, and one in `test_search_and_history.py` whose
+assertion had been holding because a live vendor happened to return nothing. All seventeen are
+closed, and the guard is committed so the eighteenth fails on the spot instead of joining them.
+
+**What it does not cover, said plainly, because a guard is worth exactly what it guards.** It
+patches yfinance and nothing else. The other outbound paths in `backend/` are held off by
+separate fixtures rather than by this one — `pinned_risk_free_rate` for the treasury and the CGB
+and HKGB `urlopen` calls, `no_live_screener` for the yfinance peer screen, `pinned_fx_rate` for
+the currency lookup — and the remaining `obb.*` calls (`equity.search` for the SEC index,
+`equity.compare.peers` for FMP, `equity.fundamental.filings`) have no blanket guard of their own.
+Every leak found on 2026-08-31 was a yfinance one, which is why that is what got a guard; it is
+not a claim that no other door exists.
+
 The frontend suite runs in vitest's default `node` environment; seven component
 suites opt into a DOM per file with a `@vitest-environment jsdom` docblock —
 `ErrorBoundary.test.jsx`, `ModelsTab.test.jsx`, `PortfolioTab.test.jsx`,

@@ -581,6 +581,50 @@ vendor snapshot with no interval published.
 honest error bar is better than none; three with invented ones would be worse than
 either. Until then the README says so in the same bullet that introduces it.
 
+### 🔵 The FMP peer tier is guarded by convention, one tier above the one that is guarded *(found 2026-08-31)*
+
+Raised by an independent review of the yfinance guard, and it is the same defect that guard was
+written for, sitting one step higher in the same expression:
+
+```python
+comps.py:514   return PEER_SUGGESTIONS.get(t) or _fmp_peers(t) or _screener_peers(t)
+```
+
+`_screener_peers`, the **lower** tier, is force-stubbed by the autouse `no_live_screener`, whose
+docstring says why in as many words: *"Nothing does that today; the point is that nothing can
+start doing it by accident."* `_fmp_peers` — which calls
+`obb.equity.compare.peers(symbol=..., provider="fmp")` and reaches a real vendor — has no such
+fixture. That reasoning was applied one tier too late, and the same docstring even names
+*"an `_fmp_peers` stub returning `[]`"* as a precondition it assumes rather than supplies.
+
+It degrades the same invisible way, too: `comps.py:391-396` catches `Exception`, records
+`_FMP_LAST_CALL = "failed"` and returns `[]`, so an outage and a success are indistinguishable
+from a test — exactly the mechanism that let the yfinance count drift from 2 to 17.
+
+**Not currently reached, and that is the whole status.** Every default-suite path into
+`suggest_peers` either uses a curated ticker or stubs `comps._fmp_peers` itself, across roughly
+fifteen tests. It is safe by convention, not by construction. `openbb` is installed in
+`backend/.venv`, so locally there is no `ImportError` standing in the way; CI is shielded only
+because `requirements-test.txt` deliberately omits openbb, which is a different fact that could
+change on its own.
+
+**Why it was not fixed on 2026-08-31 with the rest.** The obvious fix — add
+`_fmp_peers` to `no_live_screener` — breaks `test_fmp_status.py`, which calls `comps._fmp_peers`
+**directly** at five sites with a faked `sys.modules["openbb"]` and needs the real function. Doing
+it properly means that file capturing the real reference at import, the way `test_comps.py`
+already does for `_screener_peers`. That is a change to an unrelated test file, on a path that is
+not currently leaking, so it was recorded rather than folded into a commit about yfinance.
+
+**Trigger: the next change to `test_fmp_status.py` or to `suggest_peers`' fallback chain** — or
+any test that calls `suggest_peers`, `peer_beta_inputs` or `comps_endpoint` with an uncurated
+ticker, which is the case the convention does not cover.
+
+*(A smaller relative of the same shape, recorded here rather than separately: `ai_client.status`
+and `stream_chat` make real `aiohttp` calls to `http://localhost:11434` and no fixture stops
+them. Nothing reaches them in the default suite — the streaming tests drive `main._ndjson` with
+fake generators — and the destination is the developer's own machine, so this is a note, not a
+finding.)*
+
 ### 🔵 Cross-sectional normalization needs a universe, not a `scoring.py` change
 
 Quant review §6 item 2 (score against the peer *distribution*, not absolute
@@ -607,7 +651,7 @@ composite at all.
 
 ---
 
-### 🟡 Two tests in the "offline" suite reach live yfinance
+### ⚪ ~~Two tests in the "offline" suite reach live yfinance~~ — closed 2026-08-31, and there were seventeen
 
 **Found 2026-08-19** while proving the new peer tier does not leak, and **pre-existing** — the
 same two fail identically at `bc597ff`, before any of that change.
@@ -645,6 +689,42 @@ maintaining it.
 `main._market_bars` — stubbing only the bars was tried and both tests still leak, one line
 further up. **Trigger: next time `test_comps.py`'s endpoint tests are touched** — they assert on
 the bridge and the bank path, neither of which needs a live price or real bars.
+
+**Closed 2026-08-31 — and it was seventeen tests, not two.**
+
+The fix is what this entry proposed: `wired_endpoint` now stubs `live_price` and serves bars from
+the committed fixtures. `live_price` rather than `with_fresh_price` because returning None is
+what the real function does when the vendor is unreachable, so `with_fresh_price` stays in the
+call path and hands back the fixture's own price. Note the asymmetry — `_market_bars` must be
+patched on `main`, while `with_fresh_price` is imported into `main`'s namespace by name, so
+patching it on `data_provider` would not be seen.
+
+**The number is the finding.** Rebuilding the probe and running it against the *whole* suite
+rather than the two tests named here:
+
+| file | leaking tests | site |
+|---|---|---|
+| `test_comps.py` | 2 | `live_price`, then `get_history` |
+| `test_intrinsic_endpoint.py` | **14** | `live_price` — fixture stubbed the bars but not the price |
+| `test_search_and_history.py` | **1** | `yf.Search`, which the original probe never patched |
+
+All seventeen are closed. The two extra sites cost one line each; the search one was worse than
+latency — `test_unrelated_text_matches_nothing` asserted `== []` and had been passing because a
+live vendor happened to return nothing for `zzzzqqqq`, not because local fuzzy matching declined
+to invent a result.
+
+**The 2026-08-19 decision not to commit the probe is reversed, and its own reasoning is why.**
+It read: "Not committed; it is twenty lines and rebuilding it is cheaper than maintaining it."
+Nobody rebuilt it for twelve days, and in that window the count went from 2 to 17 with nothing
+able to notice. `conftest.no_live_yfinance` is now autouse and makes `yf.Ticker`, `yf.Search`,
+`yf.download` and `yf.screen` a hard error for any test without the `network` marker. It found
+the seventeenth itself, immediately, because it patches `yf.Search` and the throwaway probe did
+not.
+
+Suite time fell from a median **16.75s** to **11.73s** (n=7 and n=5), and what remains no longer
+depends on a vendor being reachable. The claim "runs entirely offline", made in `README.md:31`
+and `:448`, `PROVENANCE.md:65` and both endpoint fixtures' docstrings, is now enforced rather
+than asserted.
 
 ---
 

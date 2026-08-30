@@ -106,14 +106,26 @@ def _measured(request) -> dict[str, int]:
 GUARDED_FILES = tuple(dict.fromkeys(name for name, _, _ in CLAIMS))
 
 # A three- or four-digit number on a line that mentions tests is a count claim,
-# unless it is something else wearing the same shape. Both exclusions were
+# unless it is something else wearing the same shape. Every exclusion was
 # measured rather than imagined: a unit after it makes it a size — the fixtures
-# directory's "297 KB" — and a dot after it makes it a Hong Kong ticker,
-# `0002.HK` and `1177.HK`, of which this repository is full. Percent-encoding is
-# deliberately *not* excluded, so the badge URL's `tests-1008%20offline` is still
-# seen. Verified 2026-08-30: zero unaccounted numbers across the guarded files.
+# directory's "297 KB"; a dot after it makes it a Hong Kong ticker, `0002.HK`
+# and `1177.HK`, of which this repository is full; and `-MM-DD` after it makes
+# it the year of an ISO date. Percent-encoding is deliberately *not* excluded,
+# so the badge URL's `tests-1008%20offline` is still seen.
+#
+# The date exclusion was added 2026-08-31, and finding it is this check working
+# rather than failing. Writing "the leak was recorded on 2026-08-19 as two
+# tests" into `docs/testing.md` broke this scan, because `2026` is four digits
+# on a line that says "tests". That is exactly the trade the scan was built to
+# make: a new shape fails loudly while someone is looking at it, instead of a
+# stale count passing quietly.
+#
+# Verified 2026-08-31 — zero unaccounted numbers across the guarded files, and
+# the new exclusion removes precisely the two ISO years and nothing else.
 COUNT_SHAPED = re.compile(
-    r"(?<![.\d])\b(\d{3,4})\b(?!\.|\s*(?:KB|MB|GB|kB|bytes|lines|chars|characters))")
+    r"(?<![.\d])\b(\d{3,4})\b"
+    r"(?!-\d{2}-\d{2})"
+    r"(?!\.|\s*(?:KB|MB|GB|kB|bytes|lines|chars|characters))")
 
 
 def test_no_test_count_in_those_files_is_unaccounted_for(request):

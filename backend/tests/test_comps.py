@@ -8,7 +8,10 @@ interquartile band (§5.2 of the reference doc, not the grid's corners) and the
 positive-only median — so this file turns those measurements into assertions.
 
 Peers are fetched through `comps.provider`, so every test here swaps in a stub;
-nothing touches the network.
+nothing touches the network — which was written when this file was created and
+was not true until 2026-08-31, because two tests reached yfinance by a route
+that does not go through `comps.provider` at all. It is now enforced rather
+than asserted: `conftest.no_live_yfinance` makes any such call a hard error.
 """
 from __future__ import annotations
 
@@ -16,9 +19,10 @@ from statistics import quantiles
 
 import pytest
 
-from conftest import load_fundamentals
+from conftest import load_fundamentals, market_bars_or_none
 
 from backend import comps
+from backend import data_provider
 from backend import financial_models as fm
 
 
@@ -1098,7 +1102,34 @@ def test_a_missing_price_yields_no_bridge():
 
 @pytest.fixture
 def wired_endpoint(monkeypatch):
-    """The comps endpoint with both providers stubbed. No network."""
+    """The comps endpoint with the provider *and* both live-data escapes stubbed.
+
+    Stubbing `get_fundamentals` is not enough, and until 2026-08-31 it was all
+    this fixture did. Two further calls sit downstream of it and neither goes
+    through `comps.provider`, so both reached live yfinance on every run:
+
+      * `main._fundamentals` -> `with_fresh_price` -> `live_price`
+        (`data_provider.py:783`)
+      * `main._market_bars` -> `provider.get_history` (`data_provider.py:956`)
+
+    Nothing failed, which is why it survived: both sites swallow ordinary
+    exceptions and degrade to None, so an outage and a success look identical
+    from here. Only a `BaseException` makes them visible. The cost was ~3.4s of
+    a ~16s suite and a hidden dependency on a vendor being up. Confirmed
+    exhaustively — bypassing both sites leaves no third.
+
+    `live_price` is stubbed rather than `with_fresh_price` itself, because
+    returning None is what the real function does when the vendor is
+    unreachable; `with_fresh_price` then hands back its input untouched, so the
+    fixture's own price survives and that production code stays in the path.
+    Note the asymmetry with `_market_bars`, which must be patched on `main`:
+    `with_fresh_price` is imported into `main`'s namespace by name, so patching
+    it on `data_provider` would not be seen.
+
+    Bars are served from the committed fixtures rather than nulled, so the
+    regressed-beta path is still exercised — deterministically, which it never
+    was before.
+    """
     from backend import main
 
     def fundamentals(ticker):
@@ -1108,6 +1139,8 @@ def wired_endpoint(monkeypatch):
     monkeypatch.setattr(main, "_peer_beta_inputs", lambda f: None)
     monkeypatch.setattr(comps.provider, "get_peer_snapshot",
                         lambda t: (_ for _ in ()).throw(ValueError("no peer")))
+    monkeypatch.setattr(data_provider, "live_price", lambda t: None)
+    monkeypatch.setattr(main, "_market_bars", market_bars_or_none)
     return main.comps_endpoint
 
 

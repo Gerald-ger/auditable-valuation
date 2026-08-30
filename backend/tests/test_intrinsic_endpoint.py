@@ -14,26 +14,34 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from conftest import load_fundamentals, load_market_bars
+from conftest import load_fundamentals, load_market_bars, market_bars_or_none
 
+from backend import data_provider
 from backend import financial_models as fm
 
 
 @pytest.fixture
 def endpoint(monkeypatch):
-    """`custom_intrinsic` with every provider stubbed. No network.
+    """`custom_intrinsic` with every provider stubbed, and now with no network.
 
     Called directly rather than through a client, which is how `test_comps.py`
     exercises `comps_endpoint` — there is no `TestClient` anywhere in this suite
     and adding one for a single route would be a second way to do one thing.
+
+    **"No network" was false here until 2026-08-31, in all fourteen tests.**
+    The fixture stubbed the provider and the bars but not the price refresh, so
+    every one of them went `_fundamentals` -> `with_fresh_price` -> `live_price`
+    -> yfinance. Nothing failed, because that site swallows ordinary exceptions
+    and degrades to None — an outage and a success are indistinguishable from
+    here, which is how it survived being written down as a two-test problem.
     """
     from backend import main
 
     monkeypatch.setattr(main.provider, "get_fundamentals",
                         lambda ticker: load_fundamentals(ticker.replace(".", "_")))
     monkeypatch.setattr(main, "_peer_beta_inputs", lambda f: None)
-    monkeypatch.setattr(main, "_market_bars",
-                        lambda ticker: load_market_bars(ticker.replace(".", "_")))
+    monkeypatch.setattr(main, "_market_bars", market_bars_or_none)
+    monkeypatch.setattr(data_provider, "live_price", lambda ticker: None)
     return main.custom_intrinsic
 
 

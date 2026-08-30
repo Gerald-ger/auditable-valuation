@@ -17,6 +17,72 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (c) - The offline suite was not offline, in seventeen places rather than two
+
+A `TODOLIST` entry from 2026-08-19 recorded that two tests in the "offline" suite reached live
+yfinance, and closed with a note that the probe which found them was "twenty lines" and not
+worth committing, because rebuilding it would be cheaper than maintaining it.
+
+Rebuilding it cost about twenty lines, exactly as predicted. What that missed is that nobody
+rebuilt it for twelve days, and the count in the meantime was not two:
+
+| file | leaking | how |
+|---|---|---|
+| `test_comps.py` | 2 | `live_price`, and behind it `get_history` |
+| `test_intrinsic_endpoint.py` | **14** | its fixture stubbed the provider and the bars, but not the price refresh |
+| `test_search_and_history.py` | **1** | `yf.Search`, an entry point the original probe never patched |
+
+None of them failed, ever, which is the whole mechanism. Every site in the application that
+reaches the vendor swallows ordinary exceptions and degrades to `None` — `data_provider.py:786`,
+`main.py:133` — so from inside a test an outage and a success are indistinguishable. A probe
+raising a plain `Exception` sees nothing; only a `BaseException` subclass makes the calls
+visible. The claim could not be checked by running the suite, only by hand-building a tool and
+remembering to use it.
+
+**So the 2026-08-19 decision is reversed on its own evidence.** `conftest.no_live_yfinance` is
+autouse and turns `yf.Ticker`, `yf.Search`, `yf.download` and `yf.screen` into a hard error for
+every test without the `network` marker. `EquityQuery` is deliberately not guarded — it builds a
+query locally and only `screen` sends it. The guard earned itself immediately: it found the
+seventeenth leak, in `test_search_and_history.py`, which the hand-built probe had missed because
+that probe patched three entry points and not `Search`.
+
+That one was worse than wasted latency. `test_unrelated_text_matches_nothing` asserts that
+`search_tickers("zzzzqqqq")` returns `[]`, and it had been passing because a live vendor happened
+to return nothing for that string — or because the call failed and `_yahoo_matches` swallowed it.
+Local fuzzy matching declining to invent a result, the thing under test, was never what made it
+green.
+
+**Measured.** Suite time fell from a median **16.75s** (n=7) to **11.73s** (n=5), and the
+variance that remains is no longer a vendor's. The two `test_comps.py` tests were the #1 and #6
+slowest in the run and are now outside the top six entirely. Test count is unchanged at 796 —
+nothing was added, seventeen things stopped going out.
+
+Two smaller corrections came out of the same work. `conftest.market_bars_or_none` replaces two
+copies of a bars stub that could not return `None`, which is the one thing the function it
+doubles for does on failure — a double that cannot fail the way its original fails converts a
+future fallback path into a collection error. And the count guard gained a third exclusion, for
+the year of an ISO date: writing "recorded on 2026-08-19 as two tests" into `docs/testing.md`
+failed the completeness scan, because `2026` is four digits on a line containing "tests". That is
+the scan working. Measured before committing: the exclusion removes precisely those two years and
+nothing else, and a bogus count on the same line as a date is still caught.
+
+**And the review found the same defect one tier above the one just fixed, unfixed.**
+`suggest_peers` falls through `PEER_SUGGESTIONS -> _fmp_peers -> _screener_peers`. The *lower*
+tier is force-stubbed by an autouse fixture whose docstring explains that nothing must be able to
+start reaching it by accident; `_fmp_peers`, which calls a real vendor through OpenBB and
+swallows its failures identically, has no such fixture — and that same docstring names "an
+`_fmp_peers` stub returning `[]`" as a precondition it assumes rather than provides. Nothing
+reaches it in the default suite today, across about fifteen tests, by convention rather than by
+construction.
+
+It is recorded in TODOLIST rather than fixed here, and the reason is worth stating: the one-line
+fix breaks `test_fmp_status.py`, which calls `_fmp_peers` directly at five sites with a faked
+`openbb` and needs the real function. Doing it properly means changing an unrelated test file on
+a path that is not currently leaking, which is a different commit from this one. What the guard
+does *not* cover is now written into its own docstring — that, and the fact that it patches this
+interpreter only, so it does nothing inside the three child processes `test_demo_mode.py` spawns
+(those are safe by `DEMO_MODE=1`, a different net).
+
 ## 2026-08-31 (b) - A refusal sitting one hundredth of a beta below the worst number it admits
 
 Making `BETA_MIN` interval-aware on 2026-08-20 was right — 0002.HK's interval is [0.0747,

@@ -63,7 +63,9 @@ rate in a currency other than USD. The obvious HKD names cannot — `classify` r
 reached.
 
 Committing them is what lets the 796-test backend suite run **entirely offline**, in CI on a
-clean runner, with no network access and no API key. `pytest.ini` deselects the 27
+clean runner, with no network access and no API key. Enforced since 2026-08-31 rather than
+intended: `conftest.no_live_yfinance` fails any unmarked test that reaches the vendor, which is
+how seventeen tests that had been doing so were found. `pytest.ini` deselects the 27
 `network`-marked tests by default for the same reason.
 
 ## Standing

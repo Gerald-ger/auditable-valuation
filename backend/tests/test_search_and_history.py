@@ -62,8 +62,17 @@ def test_typos_still_find_the_company(monkeypatch, typo, expected):
     assert search.search_tickers(typo, 5)[0]["symbol"] == expected
 
 
-def test_unrelated_text_matches_nothing():
-    """Fuzzy must not degrade into 'always return something'."""
+def test_unrelated_text_matches_nothing(monkeypatch):
+    """Fuzzy must not degrade into 'always return something'.
+
+    Stubbed like every sibling here, which it was not until 2026-08-31: it
+    called `yf.Search` for real and its assertion held because a live vendor
+    happened to return nothing for `zzzzqqqq` — or because the call failed and
+    `_yahoo_matches` swallowed it. Either way the thing under test, local fuzzy
+    matching declining to invent a result, was never what made it pass.
+    """
+    _stub_index(monkeypatch, US)
+    _stub_remote(monkeypatch, [])
     assert search.search_tickers("zzzzqqqq", 5) == []
 
 
