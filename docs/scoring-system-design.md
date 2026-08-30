@@ -266,6 +266,35 @@ composite      = Σ (pillar_weight_p × pillar_score_p) / Σ pillar_weight_p    
 
 Round the composite to the nearest integer. **Never display decimals** — a 71.38 is false precision on anchor heuristics (analyst playbook: precision without accuracy is noise).
 
+> **As implemented** (`scoring.score_company`, recorded 2026-08-30): **the second line holds and
+> the first does not.** The composite is a genuine weighted sum — `sum(v["weight"] * v["score"])
+> / total_w` at `scoring.py:442`, its denominator built on the line above, with the weights
+> coming from `sector_weights.SECTOR_PROFILES[...]["weights"]`. The pillar score is not:
+> `scoring.py:432`
+> is `round(sum(scores) / len(scores))`, an unweighted mean over the metrics that scored.
+> **There is no `metric_weight_i` anywhere in the engine** — `grep metric_weight backend/`
+> returns nothing, and `SECTOR_PROFILES` carries only per-pillar `weights`, a `metrics`
+> membership list, and `anchor_overrides` (which curve maps a value to a score, not how much
+> that score counts). No structure exists that could make one metric outrank another inside a
+> pillar.
+>
+> This is not a divergence the code drifted into; the mechanism was never built. It is
+> recorded here rather than removed from the formula, because this file is a specification —
+> restating the code's arithmetic as the design would erase the gap instead of naming it.
+>
+> **§3's four "weighted up" notes inherit the same gap** and are not separately annotated:
+> `energy`'s FCF yield ("inside V"), `industrials`' interest coverage, `logistics`' asset
+> turnover and FCF conversion ("in Q"), and `utilities`' dividend yield ("in V"). All four
+> describe a metric weighted up *relative to its siblings in the same pillar*, and all four
+> are scored on the same unweighted footing as every other metric there. `real_estate_reit`
+> is **not** among them, though a first draft of this note said it was: its row drops metrics
+> and names which ones make up V, which is membership rather than weighting — and membership
+> *is* implemented, through `SECTOR_PROFILES[...]["metrics"]`.
+>
+> Closing this needs a mechanism before it needs a number: a weight per metric per profile,
+> a renormalisation rule for the missing-data case §4.1 already specifies, and a re-bake of
+> `golden_scores.json`. See TODOLIST.
+
 ### 4.2 Tier bands
 
 | Score | Tier | Label | Reading |

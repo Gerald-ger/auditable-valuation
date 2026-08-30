@@ -1091,8 +1091,31 @@ here because the alternative is finding them a second time.
   pillar score is `sum(scores)/len(scores)`, with no per-metric weighting mechanism
   anywhere, while the document's own §4.1 formula assumes one exists.
 
+  **Recorded in the specification 2026-08-30, and it reaches further than "the second of
+  those".** §4.1's first formula line names a `metric_weight_i` that exists nowhere in the
+  engine: `grep metric_weight backend/` returns nothing, and `SECTOR_PROFILES` carries only
+  per-pillar `weights`, a `metrics` membership list and `anchor_overrides` — no structure
+  that could make one metric outrank another inside a pillar. So **four** of the notes-column
+  rules are blocked on the same absent mechanism, not one: `energy`'s FCF yield, `industrials`'
+  interest coverage, `logistics`' asset turnover and FCF conversion, and `utilities`' dividend
+  yield are all "weighted up" on paper and unweighted in fact. The second formula line — the
+  composite's weighting *between* pillars — is fully implemented, which is why this reads as a
+  working system on a first pass.
+
+  *(A first draft of this named the REIT row as the fourth. It is not one: `real_estate_reit`
+  drops metrics and lists which ones make up V, which is membership rather than weighting, and
+  membership is implemented. The real fourth is `logistics`, whose weighting is in Q rather
+  than V. Caught by review, after the wrong list had been copied into three files.)*
+
+  A first draft of this repair edited the document to match the code. That is precisely what
+  its own banner forbids: it is a specification, and restating the engine's arithmetic as the
+  design would erase the gap rather than name it. An `As implemented` note was added beside
+  §4.1 instead, following the convention `financial-models-reference.md` already uses.
+
 **Trigger:** none of these changes a number that is currently wrong, so none is urgent.
-The peer cap is the cheapest and the only one whose fix is unambiguous.
+The peer cap is the cheapest and the only one whose fix is unambiguous. The metric-weight
+mechanism is the most expensive: a weight per metric per profile, a renormalisation rule for
+the missing-data case §4.1 already specifies, and a re-bake of `golden_scores.json`.
 
 ### ⚪ Stock compensation is not netted where free cash flow came from `info` *(recorded 2026-08-26)*
 

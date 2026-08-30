@@ -17,6 +17,65 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (g) - The number on the most-read line, and the mechanism that was never built
+
+The test count has been written down in ten places and gone stale in all of them, four times
+over: 409, then 793, then 856, then 987, each correct on the day it was typed. It sits on the
+README badge, which is also what a search result and a link preview show, and nothing in the
+toolchain ever forced a second look at it, because adding a test does not touch the file that
+counts them.
+
+A test, not a CI step. `backend/tests/test_documented_counts.py` reads every claim out of
+README and `docs/testing.md`, counts the backend suite from `request.session.items` and the
+frontend suite by reading the `it(` and `test(` calls out of `frontend/src/**/*.test.*`, and
+fails naming the file and line of anything that disagrees. That runs on whatever machine ran
+the suite and on all three operating systems in the matrix, rather than after a push, and it
+adds no top-level directory to a root whose clutter is already a recorded finding. The static
+frontend count is 215 against vitest's own 215; if the two ever diverge the static reading is
+the wrong one, and the fix is to stop counting that way rather than to adjust the number.
+
+Two numbers were deleted instead of guarded. `docs/testing.md` stated the collected total and
+the figure CI reports after one conditional skip, both derived from the backend count by
+addition — a number that is a sum of two others is best not restated at all. What the guard
+cannot see is the count of `network`-marked tests, which carry a module-level `pytestmark`:
+a static reading finds zero and `session.items` excludes them, so neither half of the method
+reaches them.
+
+The count is self-referential now, which is the correct answer rather than a curiosity: adding
+this test moved the suite from 792 to 793, and 1,007 offline to 1,008.
+
+The GitHub *About* description said 856, and still would: it lives outside git, is edited in a
+web form, and no test can reach it. Corrected by hand to 1,008. It is also still describing a
+DCF-and-comps platform two model families after that stopped being true, which is left alone
+here — that is positioning copy, not a count.
+
+**And a documented mechanism that was never built.** `scoring-system-design.md` §4.1 gives the
+pillar score as `Σ (metric_weight_i × metric_score_i) / Σ metric_weight_i`. There is no
+`metric_weight_i`: `scoring.py:432` is `round(sum(scores) / len(scores))`, an unweighted mean,
+and `SECTOR_PROFILES` carries only per-pillar weights, a metrics membership list and anchor
+overrides — no structure that could make one metric outrank another inside a pillar. The
+second line of the same formula, the composite's weighting *between* pillars, is fully
+implemented, which is why this reads as a working system on a first pass. Four of §3's
+"weighted up" notes inherit the gap: `energy`'s FCF yield, `industrials`' interest coverage,
+`logistics`' asset turnover and FCF conversion, and `utilities`' dividend yield.
+
+TODOLIST had this as one bullet inside a larger entry and called it "the second of those";
+it is four, and the reason is one absent mechanism rather than four omissions.
+
+The first version of that list named the REIT row as the fourth and was wrong in three files
+at once — `real_estate_reit` drops metrics and names which ones make up V, which is membership
+rather than weighting, and membership is implemented. The fourth is `logistics`, weighted up in
+Q rather than V. It was invented rather than misread: no source said REIT. Caught by review, in
+a change whose entire subject is numbers that drift because nothing checks them.
+
+The first attempt at this repair edited the document to match the code — which is exactly what
+its own banner forbids, in the same words `financial-models-reference.md` uses: it is a
+specification, and restating the engine's arithmetic as the design erases the gap instead of
+naming it. An `As implemented` note was added beside §4.1 instead, following the convention
+already in use.
+
+792 -> **793 backend**, 215 frontend, 1,008 offline.
+
 ## 2026-08-30 (f) - A total is a sum, and a sum needs one unit
 
 `/api/portfolio` added US dollars to Hong Kong dollars at face value and reported the result as
