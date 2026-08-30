@@ -241,7 +241,10 @@ it is a bug in this file.
 - The bull/bear debate and token streaming have **never been run against a live model** —
   Ollama is not installed here, so only the offline degradation path is verified. See
   [TODOLIST.md](../TODOLIST.md).
-- Portfolio totals sum mixed currencies at face value; there is no FX conversion. The UI
-  warns when holdings span more than one currency.
+- Portfolio value, cost and P&L are converted to **HKD** before they are summed, so the
+  totals, the per-row weights and the concentration figures are comparable across markets.
+  Per-share price and cost stay in the holding's own currency, and the columns say which is
+  which. When a rate cannot be fetched nothing is converted and the totals are withheld
+  rather than added across units — the currency that could not be priced is named on screen.
 - Everything runs locally; nothing is sent to any cloud service.
 - **Decision support only — not certified financial advice.**

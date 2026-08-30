@@ -71,6 +71,12 @@ export default function PortfolioTab({ onPick }) {
   const currencies = [
     ...new Set(rows.filter((r) => r.market_value).map((r) => r.currency).filter(Boolean)),
   ];
+  // Every money figure the backend converted is in `totals.currency`; when it
+  // could not price a currency it withholds the totals, leaves the rows as
+  // reported, and names what it could not price. The suffix follows that: a
+  // column labelled HKD when the numbers are not is worse than no label.
+  const unpriced = totals.unconverted_currencies ?? [];
+  const unit = totals.currency ? ` (${totals.currency})` : '';
 
   return (
     <div>
@@ -127,11 +133,11 @@ export default function PortfolioTab({ onPick }) {
         <>
           <div className="panel portfolio-totals">
             <div>
-              <div className="dcf-label">Market value</div>
+              <div className="dcf-label">Market value{unit}</div>
               <div className="dcf-big">{big(totals.market_value)}</div>
             </div>
             <div>
-              <div className="dcf-label">Unrealized P&L</div>
+              <div className="dcf-label">Unrealized P&L{unit}</div>
               {/* null >= 0 is true in JS, so an unavailable total rendered
                   green. Same bug already fixed on the DCF upside chip. */}
               <div
@@ -179,8 +185,12 @@ export default function PortfolioTab({ onPick }) {
               <table className="comps-table">
                 <thead>
                   <tr>
+                    {/* Price and cost are per-share quotes in the holding's own
+                        market and stay in its own currency; value and P&L are
+                        converted, so only those two carry the unit. */}
                     <th>Ticker</th><th>Shares</th><th>Price</th><th>Cost</th>
-                    <th>Value</th><th>Weight</th><th>P&L</th><th>Score</th><th>Note</th><th />
+                    <th>Value{unit}</th><th>Weight</th><th>P&L{unit}</th>
+                    <th>Score</th><th>Note</th><th />
                   </tr>
                 </thead>
                 <tbody>
@@ -256,12 +266,27 @@ export default function PortfolioTab({ onPick }) {
               beside each one names the formula that produced it, and two profiles score
               different metrics on different weights. Compare within a type; across types,
               open the scorecards and compare pillars.
-              {currencies.length > 1 && (
+              {/* This used to read "totals add face values without FX conversion,
+                  so the aggregate is indicative only". It was accurate until the
+                  totals were converted and is false now — and a caveat that
+                  outlives the defect it describes teaches the reader to ignore
+                  the next one. */}
+              {unpriced.length > 0 ? (
                 <>
                   {' '}
                   <span className="down">
-                    Holdings span {currencies.join(', ')}: totals add face values without FX
-                    conversion, so the aggregate is indicative only.
+                    No exchange rate for {unpriced.join(', ')}: the totals are withheld
+                    rather than added across units, and each row is shown in its own
+                    currency.
+                  </span>
+                </>
+              ) : currencies.length > 1 && (
+                <>
+                  {' '}
+                  <span>
+                    Holdings span {currencies.join(', ')}; value, cost and P&L are
+                    converted to {totals.currency} at today&rsquo;s rate. Price and cost
+                    per share stay in each holding&rsquo;s own currency.
                   </span>
                 </>
               )}

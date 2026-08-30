@@ -33,8 +33,13 @@ from backend import search
 from backend import sector_weights
 from backend import statements
 from backend import store
-from backend.data_provider import (DEMO_MODE, demo_data_as_of, home_index,
-                                   provider, with_fresh_price)
+from backend.data_provider import (DEMO_MODE, demo_data_as_of, fx_rate,
+                                   home_index, provider, with_fresh_price)
+
+# What the portfolio's aggregate figures are denominated in. A total is a sum,
+# and a sum needs one unit — holdings that trade in USD and HKD were previously
+# added at face value, which produces a number in no currency at all.
+BASE_CURRENCY = "HKD"
 
 # yfinance is IO-bound but throttles bursts, so batch work fans out narrowly
 # rather than one thread per ticker.
@@ -1060,9 +1065,40 @@ def portfolio():
             "quote_error": q.get("error"),
         })
 
+    # One lookup per distinct currency rather than per row: `fx_rate` caches per
+    # calendar day, and a portfolio spans a handful of listing currencies however
+    # many positions it holds. Rows whose money figures are all zero or absent —
+    # a watchlist entry, an unpriced ticker with no cost — need no rate, because
+    # zero is zero in every currency.
+    rates = {c: fx_rate(c, BASE_CURRENCY)
+             for c in {r["currency"] for r in rows
+                       if r["market_value"] or r["cost_value"]}}
+    # `or "unreported"` because a quote that failed carries no currency at all,
+    # and a blank in this list would read as though nothing were wrong.
+    unconverted = sorted({c or "unreported"
+                          for c, rate in rates.items() if rate is None})
+
+    # All or nothing. Converting the rows that have a rate and leaving the rest
+    # native would put two units in one column, which is the defect rather than
+    # a partial fix — so on any failure every row stays as reported and the
+    # totals refuse instead of falling back to the face-value sum, which is
+    # today's wrong number with a warning beside it.
+    if not unconverted:
+        for r in rows:
+            rate = rates.get(r["currency"])
+            if rate is None:
+                continue
+            for key in ("market_value", "cost_value", "unrealized_pnl"):
+                if r[key] is not None:
+                    r[key] = r[key] * rate
+            # `unrealized_pnl_pct` is deliberately absent from that list. It is
+            # a ratio of two figures in the same currency, so the rate cancels;
+            # multiplying it would be a category error.
+
     held = [r for r in rows if r["market_value"]]
-    total_value = sum(r["market_value"] for r in held)
-    total_cost = sum(r["cost_value"] for r in held if r["cost_value"] is not None)
+    total_value = None if unconverted else sum(r["market_value"] for r in held)
+    total_cost = None if unconverted else sum(
+        r["cost_value"] for r in held if r["cost_value"] is not None)
     for r in rows:
         r["weight_pct"] = (r["market_value"] / total_value * 100) \
             if r["market_value"] and total_value else None
@@ -1071,7 +1107,11 @@ def portfolio():
     return {
         "rows": rows,
         "totals": {
-            "market_value": round(total_value, 2),
+            # Stated rather than assumed: the figures below are a sum, and a sum
+            # in an unnamed unit is what this endpoint used to return.
+            "currency": None if unconverted else BASE_CURRENCY,
+            "unconverted_currencies": unconverted,
+            "market_value": round(total_value, 2) if total_value is not None else None,
             "cost_value": round(total_cost, 2) if total_cost else None,
             "unrealized_pnl": round(total_value - total_cost, 2) if total_cost else None,
             "unrealized_pnl_pct": round((total_value / total_cost - 1) * 100, 2)
@@ -1079,7 +1119,8 @@ def portfolio():
             "holdings": len(held),
             "watchlist_only": len(rows) - len(held),
         },
-        # Mixed currencies are summed at face value — see docs/limitations.md.
+        # Weights are shares of the converted total, so these are comparable
+        # across currencies — which the face-value versions were not.
         "concentration": {
             "top_weight_pct": round(weights[0], 1) if weights else None,
             "top3_weight_pct": round(sum(weights[:3]), 1) if weights else None,

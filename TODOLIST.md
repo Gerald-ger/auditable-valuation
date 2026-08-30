@@ -796,7 +796,7 @@ say which.
 that stated on screen. Note the platform can already show the second answer — the panel
 prints it — so what a source would buy is the right to put it in the headline.
 
-### 🟡 Portfolio totals ignore FX
+### ⚪ ~~Portfolio totals ignore FX~~ — closed 2026-08-30
 
 Holdings in USD and HKD are summed at face value. The UI warns when the totals really do
 span more than one currency, but the total is wrong, not merely imprecise.
@@ -820,6 +820,34 @@ watchlist entry — which carries no market value and is therefore in no total �
 raise it on a portfolio that was not mixed at all. It now reads the same set the backend
 uses to build `held`. That fixed when the warning fires; the summation it warns about is
 still unconverted, which is why this item stays open.
+
+**Closed 2026-08-30 — and the `7.5x` above needs a correction, because it was quoting a base
+currency that was not the one chosen.** Value, cost and P&L are converted to **HKD** before any
+sum; per-share price and cost stay native, and the columns say which is which. The size of the
+error turns out to depend on the base:
+
+| | shows | true (HKD) | |
+|---|---|---|---|
+| 10 AAPL + 1000 × 0700.HK | 484,510 | 505,658 | understated **4.2%** |
+| 10 AAPL alone | 3,110 | 24,258 | understated **7.80×** |
+
+So the `7.5x` was right for a *USD* base and is wrong for the one taken. The error scales with
+how much of the portfolio sits away from the base — it is small when HK names dominate, and it
+is the whole peg for a Hong Kong holder of US stocks, which is the realistic case.
+
+**The figure that is base-independent is the one this entry never mentioned: the weights.**
+AAPL's true share of that portfolio is 4.80% and it was reading **0.64%** — understated by 7.47×,
+the exchange rate itself, because a ratio of two figures in different units is not a weight.
+`top_weight_pct`, `top3_weight_pct` and `hhi` all inherited it, so the concentration panel was
+wrong too. The entry said "the total is wrong"; four more fields were.
+
+**Two things the change had to get right that this entry did not anticipate.** The totals'
+`unrealized_pnl_pct` is *not* saved by being a ratio — the row-level one is, since numerator and
+denominator share a currency, but the totals' divides one cross-currency sum by another. And the
+conversion is all-or-nothing: converting the rows that have a rate and leaving the rest native
+would put two units in one column, so a missing rate now withholds the totals and names the
+currency instead of falling back to the face-value sum, which is the old wrong number with a
+caveat beside it.
 
 ### ⚪ ~~CI proves the tests, not the install~~ — closed 2026-08-28
 

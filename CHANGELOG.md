@@ -17,6 +17,56 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-30 (f) - A total is a sum, and a sum needs one unit
+
+`/api/portfolio` added US dollars to Hong Kong dollars at face value and reported the result as
+a number. Value, cost and P&L are now converted to **HKD** before anything is summed. Per-share
+price and cost stay in the holding's own market currency, and the columns say which is which.
+
+The rate source needed no work at all. `data_provider.fx_rate` has been live, daily-cached and
+used inside `financial_models` for months; TODOLIST had this entry costed as blocked on a data
+source since it was written, and it was blocked on nobody wiring up a function that already
+existed.
+
+**The size of the error depends on the base currency, which is why the figure this was ranked
+on was the wrong one.** TODOLIST measured a mixed portfolio against a USD base and got "7.5x too
+high". Against the HKD base actually chosen, that same portfolio is 484,510 shown against
+505,658 true — understated by 4.2%, because 99% of its value was already HKD. An all-USD
+portfolio under an HKD base is understated by the whole peg, **7.80x**, and that is the case a
+Hong Kong holder of US stocks actually has.
+
+**The figure that does not depend on the base is the one nobody had written down: the weights.**
+AAPL's true share of that portfolio is 4.80% and it read **0.64%** — understated by 7.47x, the
+exchange rate itself, because a ratio of two figures in different units is not a weight.
+`top_weight_pct`, `top3_weight_pct` and `hhi` all inherited it. The entry said the total was
+wrong; four more fields were.
+
+Two things the fix had to get right that were not obvious going in. The totals'
+`unrealized_pnl_pct` is not saved by being a ratio — the per-row one is, since its numerator and
+denominator share a currency, but the totals' divides one cross-currency sum by another;
+measured on a two-currency portfolio it is 21.67%, against 37.93% for a naive average of the row
+percentages. And the conversion is all-or-nothing: converting the rows that have a rate and
+leaving the rest native would put two units in one column, which is the defect rather than a
+partial fix, so a missing rate withholds the totals and names the currency it could not price.
+Falling back to the face-value sum would be the old wrong number with a caveat beside it.
+
+The caveat that was there has been replaced rather than kept. "Totals add face values without FX
+conversion, so the aggregate is indicative only" was accurate on 2026-08-14 and is false now,
+and a warning that outlives the defect it describes teaches a reader to ignore the next one.
+
+`portfolio()` had never been tested. Everything in `test_portfolio.py` covers `position_values`,
+a pure function over one row, and stops there — which is how the endpoint summed two currencies
+for as long as it has existed. Seven tests now reach the aggregation, all mutation-proved:
+skipping the conversion fails five, falling back to the face-value sum fails one, claiming a
+currency without converting fails one, dropping the column label fails one, and dropping the
+refusal note fails one.
+
+Measured in review: 20 positions across 3 currencies cost exactly 3 `fx_rate` calls, one per
+distinct currency. Convert-then-sum against sum-then-convert differ by at most 1.9e-6 over
+200,000 randomised trials, invisible under the `round(_, 2)` that was already there.
+
+785 -> **792 backend**, 213 -> **215 frontend**, 1,007 offline. Bundle 489.56 -> 489.92 kB.
+
 ## 2026-08-30 (e) - A missing leg of a subtraction is not a zero
 
 `comps.py` built net debt as `(totalDebt or 0) - (totalCash or 0)`. An unreported cash

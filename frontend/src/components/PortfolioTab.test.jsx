@@ -73,6 +73,11 @@ const payload = (rows, over = {}) => ({
     unrealized_pnl_pct: 25.0,
     holdings: rows.length,
     watchlist_only: 0,
+    // The two fields that say what unit these figures are in. `main.portfolio()`
+    // converts every money figure to `BASE_CURRENCY` and names it here, or
+    // withholds the totals and names the currencies it could not price.
+    currency: 'HKD',
+    unconverted_currencies: [],
     ...(over.totals ?? {}),
   },
   concentration: { top_weight_pct: 100.0, top3_weight_pct: 100.0, hhi: 1.0 },
@@ -165,7 +170,7 @@ describe('the totals strip', () => {
   });
 });
 
-describe('the mixed-currency warning', () => {
+describe('what unit the totals are in', () => {
   it('stays silent when the only other currency is a watchlist row', async () => {
     // It fired on a portfolio of five USD holdings because a watched HK name was
     // listed beneath them. A watchlist row has no market value, so it is in no
@@ -178,17 +183,53 @@ describe('the mixed-currency warning', () => {
         unrealized_pnl_pct: null, weight_pct: null,
       }),
     ]));
-    expect(container.textContent).not.toContain('totals add face values');
+    expect(container.textContent).not.toContain('Holdings span');
     unmount();
   });
 
-  it('warns when two currencies really are being summed', async () => {
+  it('says the figures were converted, and to what', async () => {
+    // This used to read "totals add face values without FX conversion, so the
+    // aggregate is indicative only" — accurate when written and false now. A
+    // warning that survives the defect it describes is worse than none.
     const { container, unmount } = await mount(payload([
       row(),
       row({ ticker: '0700.HK', currency: 'HKD', market_value: 1000.0, weight_pct: 28.6 }),
     ]));
-    expect(container.textContent).toContain('totals add face values');
     expect(container.textContent).toContain('USD, HKD');
+    expect(container.textContent).toContain('converted to HKD');
+    expect(container.textContent).not.toContain('without FX conversion');
+    unmount();
+  });
+
+  it('labels the money columns with the unit they are actually in', async () => {
+    const { container, unmount } = await mount(payload([row()]));
+    const headers = [...container.querySelectorAll('thead th')].map((h) => h.textContent);
+    expect(headers).toContain('Value (HKD)');
+    expect(headers).toContain('P&L (HKD)');
+    // Price and cost are per-share quotes in the holding's own market and are
+    // deliberately not converted, so they must not claim a base-currency label.
+    expect(headers).toContain('Price');
+    expect(headers).toContain('Cost');
+    unmount();
+  });
+
+  it('withholds the totals rather than adding across units when a rate is missing', async () => {
+    // The refusal path. `fx_rate` returns None on an outage and the endpoint
+    // then declines the sum — falling back to face values would be exactly the
+    // old wrong number with a warning beside it.
+    const { container, unmount } = await mount(payload(
+      [row(), row({ ticker: '0700.HK', currency: 'HKD', market_value: 1000.0 })],
+      { totals: { currency: null, unconverted_currencies: ['USD'],
+                  market_value: null, cost_value: null,
+                  unrealized_pnl: null, unrealized_pnl_pct: null } },
+    ));
+
+    expect(container.textContent).toContain('No exchange rate for USD');
+    // Without a conversion the figures are each in their own currency, so the
+    // column must not be labelled with one.
+    const headers = [...container.querySelectorAll('thead th')].map((h) => h.textContent);
+    expect(headers).toContain('Value');
+    expect(headers).not.toContain('Value (HKD)');
     unmount();
   });
 });
