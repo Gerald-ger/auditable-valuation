@@ -137,9 +137,15 @@ def test_terminal_growth_is_the_same_cap_the_dcf_uses(valued):
     capped = fm.excess_returns_valuation(crossed)["assumptions"]
 
     assert capped["risk_free_rate"] == pytest.approx(0.011, abs=1e-6)
-    assert capped["terminal_growth"] == pytest.approx(0.011, abs=1e-6)
-    assert capped["terminal_growth_source"] == "capped_at_risk_free_rate"
-    assert capped["terminal_growth"] < capped["terminal_growth_anchor"]
+    # Since 2026-08-31 the rate is reported, not applied: a bank whose cash
+    # flows are CNY is still valued on the anchor, and the 1.10% reading that
+    # used to replace it silently is published beside the answer.
+    assert capped["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert capped["terminal_growth_source"] == "platform_default"
+    alt = capped["terminal_growth_alternative"]
+    assert alt["ceiling"] == "risk_free_rate"
+    assert alt["rate"] == pytest.approx(0.011, abs=1e-6)
+    assert alt["rate"] < capped["terminal_growth_anchor"]
 
 
 # ── the assumption, printed rather than buried ───────────────────────

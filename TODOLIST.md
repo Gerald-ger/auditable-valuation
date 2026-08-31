@@ -38,7 +38,7 @@ against itself.
 
 ## Now
 
-### 🔴 A CNY reporter inherits China's sovereign yield as its perpetual growth ceiling *(2026-08-30)*
+### ⚪ ~~A CNY reporter inherits China's sovereign yield as its perpetual growth ceiling~~ — closed 2026-08-31
 
 **`financial_models.py:573` has said "See TODOLIST" about this since 2026-08-19 and no entry was
 ever written.** The comment reads: *"What keeps it open is the terminal-growth ceiling: a
@@ -89,6 +89,44 @@ independent of the sovereign curve (`NOMINAL_GDP_GROWTH` is already computed and
 published in `terminal_growth_ceilings` as a ceiling it never enforces), or keep the rf cap and
 accept that a CNY reporter is valued on a 1.1% perpetuity, or make it currency-conditional.
 The measurement above does not choose between them.
+
+**Closed 2026-08-31 — the ceiling is published, not applied.**
+
+Neither of the three options in the paragraph above was taken as written. Anchoring to
+`NOMINAL_GDP_GROWTH` alone would have deleted a guard that measurement says is doing real work,
+and making it currency-conditional needed a judgment about which sovereign curves read as market
+prices — the kind of constant this list refuses to invent, on the same grounds it refused a beta
+precision threshold eleven days ago.
+
+**What was measured before choosing.** The `min(..., rf)` half was never in the specification —
+§1.1.3 asks only `g ≤ long-run nominal GDP` — but deleting it is not free:
+
+| 10Y | AAPL, ceiling kept | AAPL, ceiling dropped | JPM kept | JPM dropped |
+|---|---|---|---|---|
+| 4.30% (today) | 122.26 | 122.26 | 330.52 | 330.52 |
+| 1.50% | 171.74 | 207.28 | 549.62 | 653.04 |
+| **0.60%** | **177.17** | **266.87** | **606.95** | **909.11** |
+
+So the two errors point opposite ways: keeping the ceiling understates a CNY reporter today,
+dropping it overstates everything in a low-rate regime — about +50% on both models. No evidence
+in this repository decides between them, so neither was chosen. The anchor is the published
+answer because the specification asks for it in every rate regime; the ceiling's own reading is
+published beside it as `assumptions.terminal_growth_alternative` and rendered by `ModelsTab`.
+
+**Result.** 0700.HK **539.04 → 652.41**, +12.0% → +35.5%, valuation pillar 67 → 72, composite
+73 → 74. The golden diff is three lines and no other fixture moves — predicted by two independent
+measurements before the edit and confirmed by the diff after it.
+
+**Two corrections this produced.** The entry above says the assertions span "four test files";
+there are three. And the specification's warning that an uncapped bank terminal value goes
+*negative* does not forbid this change — what prevents the negative is the 2.5% anchor, not the
+risk-free half, and JPM at a 0.60% ten-year still has `Re` of 5.07% against a 2.5% perpetuity.
+That note has been amended to say which half was load-bearing, because read carelessly it would
+have stopped the change for a reason that was not true.
+
+*What is not closed: `NOMINAL_GDP_GROWTH` is a single global 4%, so it is a ceiling that never
+binds rather than an economy-specific one. Making it per-economy would change nothing today —
+every candidate value sits above the 2.5% anchor — which is why it was not done.*
 
 ### 🔵 The valuation-upside metric is scored on one observation *(2026-08-29)*
 

@@ -13,6 +13,22 @@
 > note above it. An AI assistant reading this file will find contradictions between the top
 > and the bottom; those are the point, not defects to reconcile.
 
+**Note 2026-08-31 — §5's mechanism is no longer what the engine does.**
+
+§5 below explains why the second leg cancels most of the first: `terminal_growth = min(
+TERMINAL_GROWTH, rf)` means lowering the rate lowers the growth cap with it, so the terminal
+spread is nearly invariant. **That cancellation is gone.** The risk-free ceiling is reported
+rather than applied as of 2026-08-31, so a CNY reporter now discounts at 7.28% against a 2.50%
+perpetuity — a 4.78-point spread instead of the ~3.50% the tables below record — and 0700.HK's
+fair value moves **539.04 → 652.41**, composite 73 → 74.
+
+The §5 analysis is correct about the code it was written against and is the reason the CNY
+discount-rate change looked so much smaller than expected at the time. It is left exactly as
+written, per this file's rule. What changed is the premise, not the algebra: the ceiling that
+made $g = rf$ hold no longer applies. The ceiling's own reading is still published beside the
+answer, so the figures in §4 remain reachable — they are now the `terminal_growth_alternative`
+column rather than the headline.
+
 **Status: ~~analysis only. No code was changed.~~ Implemented 2026-08-19.**
 
 `risk_free_rate` now reads ChinaBond's CGB 10-year for a CNY-reporting issuer, net of the

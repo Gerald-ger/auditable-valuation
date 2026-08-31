@@ -110,13 +110,28 @@ it is a bug in this file.
   floor grew shrinking companies at zero and inflated XOM's fair value 15.7%, and the
   ceiling truncated a 42.6% consensus from 55 analysts on NVDA. XOM's consensus is
   **−1.9%** and is now modelled as the decline it is.
-- **Terminal growth shows its derivation** rather than appearing as a bare 2.5%. It is held
-  under two ceilings, both displayed whether or not they bind: long-run nominal GDP
-  (nothing outgrows its economy forever) and the risk-free rate (Damodaran's cap — the
-  ten-year is itself a market read of long-run nominal growth). The cap applies only to the
-  platform's own default; a caller who names a rate gets that rate, because the
-  reconciliation back-solves deliberately past both ceilings and capping it there would
-  report "closing this gap needs 7.0% perpetual growth" as unreachable.
+- **Terminal growth shows its derivation** rather than appearing as a bare 2.5%. Two ceilings
+  are displayed whether or not they bind, but **only one is applied**: long-run nominal GDP
+  (nothing outgrows its economy forever) bounds the answer, and the risk-free rate —
+  Damodaran's cap, the ten-year as a market read of long-run nominal growth — is **reported
+  beside it rather than enforced**, since 2026-08-31.
+
+  The reason is that the second ceiling stops reading long-run growth when the curve is set
+  by policy. Until that date a CNY reporter inherited China's sovereign yield as its
+  perpetual growth rate: 0700.HK was granted **1.10%** against its own 9.39% year-one
+  consensus, worth **539.04 against 652.41** on fair value and 67 → 72 on the valuation
+  pillar. Reference doc §1.1.3 asks only `g ≤ long-run nominal GDP`, so the risk-free half
+  was this platform's own addition.
+
+  **Deleting it would have cost something real, which is why it is printed instead.**
+  Measured 2026-08-31: at a 2020-style 0.60% ten-year the old ceiling held AAPL at 177.17
+  where the anchor gives 266.87, and JPM at 606.95 against 909.11. No evidence decides which
+  reading is right, so both are on screen and the reader picks — the same trade this engine
+  makes for a weak regression, publishing R² rather than applying a "fit too weak" cut.
+
+  Neither ceiling touches a rate the caller names: the reconciliation back-solves past both
+  deliberately, and capping it would report "closing this gap needs 7.0% perpetual growth"
+  as unreachable.
 - **The base year is one reported period, and that is an assumption, not a neutral choice.**
   Free cash flow enters the valuation linearly, so a base year 22% below normal is a
   valuation 22% below normal — permanently, through every projected year and the terminal

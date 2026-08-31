@@ -332,6 +332,33 @@ describe('ModelsTab', () => {
     expect(panel.textContent).not.toContain('unit-free');
   });
 
+  it('prints the risk-free ceiling it did not apply, and what it would have cost', async () => {
+    // Until 2026-08-31 a CNY reporter's terminal growth was silently cut to its
+    // sovereign yield — 1.10% for 0700.HK against a 9.39% year-one consensus,
+    // worth 539.04 against 652.41. The rate is reported instead of applied now,
+    // and the entire point of that trade is that the reader sees the figure that
+    // was dropped. Applying the anchor without showing the ceiling would be the
+    // same silent behaviour with a different default.
+    const { container } = await mount({
+      analysisBody: analysis({
+        dcf: dcf({
+          assumptions: {
+            terminal_growth: 0.025, terminal_growth_source: 'platform_default',
+            terminal_growth_anchor: 0.025, risk_free_rate: 0.011,
+            terminal_growth_ceilings: { nominal_gdp_growth: 0.04, risk_free_rate: 0.011 },
+            terminal_growth_alternative: {
+              ceiling: 'risk_free_rate', rate: 0.011,
+              fair_value_per_share: 539.04, upside_pct: 12.0, refused: null,
+            },
+          },
+        }),
+      }),
+    });
+    const text = container.querySelector('.dcf-panel').textContent;
+    expect(text).toContain('reported here rather than');
+    expect(text).toContain('539.04');
+  });
+
   it('names the unit on a bridge whose figures were converted', async () => {
     // The one fx_basis no fixture exercised. The bridge figures are converted at
     // the output boundary — the excess return model did not do that until P5a

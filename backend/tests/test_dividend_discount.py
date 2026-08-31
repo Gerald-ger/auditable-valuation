@@ -463,12 +463,19 @@ def test_the_terminal_growth_cap_is_reached_rather_than_merely_stated(monkeypatc
     a = capped["assumptions"]
 
     assert a["risk_free_rate"] == pytest.approx(0.008, abs=1e-9)
-    assert a["terminal_growth"] == pytest.approx(0.008, abs=1e-9)
-    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
-    assert a["terminal_growth"] < a["terminal_growth_anchor"]
-    # With the discount rate held, a lower terminal growth is a smaller
-    # perpetuity — so the cap has to cost value rather than merely relabel it.
-    assert capped["fair_value_per_share"] < base["fair_value_per_share"]
+    # The rate is reported rather than applied since 2026-08-31, so the
+    # published answer no longer moves with it — but the reading still has to
+    # be reachable, and it still has to cost value, or it would be a label
+    # rather than a second valuation.
+    assert a["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert a["terminal_growth_source"] == "platform_default"
+    assert capped["fair_value_per_share"] == pytest.approx(
+        base["fair_value_per_share"], abs=0.01), "the anchor holds it steady now"
+
+    alt = a["terminal_growth_alternative"]
+    assert alt["rate"] == pytest.approx(0.008, abs=1e-9)
+    assert alt["rate"] < a["terminal_growth_anchor"]
+    assert alt["fair_value_per_share"] < base["fair_value_per_share"]
 
 
 def test_the_terminal_carries_most_of_the_answer_and_says_so(valued):
@@ -552,9 +559,11 @@ def test_the_terminal_growth_cap_binds_for_a_reporter_in_a_low_rate_currency():
     a = fm.dividend_discount_valuation(crossed)["assumptions"]
 
     assert a["risk_free_rate"] == pytest.approx(0.011, abs=1e-6)
-    assert a["terminal_growth"] == pytest.approx(0.011, abs=1e-6)
-    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
-    assert a["terminal_growth"] < a["terminal_growth_anchor"]
+    assert a["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert a["terminal_growth_source"] == "platform_default"
+    alt = a["terminal_growth_alternative"]
+    assert alt["rate"] == pytest.approx(0.011, abs=1e-6)
+    assert alt["rate"] < a["terminal_growth_anchor"]
 
 
 def test_the_yield_names_which_dividend_it_divides_by(valued):

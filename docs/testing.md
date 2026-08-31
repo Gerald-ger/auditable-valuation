@@ -13,9 +13,9 @@ the README on 2026-08-28; the three commands to run it are still
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 796 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 800 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 215 tests
+cd frontend; npm test                                   # 216 tests
 ```
 
 27 further tests are `network`-marked and deselected by default. One more skips unless

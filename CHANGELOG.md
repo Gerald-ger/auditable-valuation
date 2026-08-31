@@ -17,6 +17,61 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (d) - A sovereign yield was deciding a company's perpetual growth, silently
+
+All three models defaulted terminal growth to `min(TERMINAL_GROWTH, risk_free_rate)`. For a USD
+or HKD reporter the 2.5% anchor binds and nothing happens. For a **CNY** reporter the rate binds:
+0700.HK was granted **1.10% perpetual growth** — ChinaBond's 1.70% less the vendored sovereign
+spread — against its own year-one consensus of **9.39%**. Worth **539.04 against 652.41** on fair
+value, +12.0% against +35.5% on the verdict, and 67 → 72 on the valuation pillar. Of the eight
+fixtures it bound on exactly one; `financial_models.py` had said "See TODOLIST" about it since
+2026-08-19 and no entry was ever written until 2026-08-30.
+
+Reference doc §1.1.3 asks only `g_terminal <= long-run nominal GDP growth`. It does not mention
+the risk-free rate. **That half was this platform's own addition**, and its stated purpose — a
+market read of long-run nominal growth — is precisely what a policy-set curve under capital
+controls does not supply.
+
+**The addition was not worthless, and that is why this is not a deletion.** Measured 2026-08-31,
+at a 2020-style 0.60% ten-year the old ceiling held AAPL at **177.17** where the anchor gives
+**266.87**, and JPM at **606.95** against **909.11** — about +50% on both. Removing it silently
+would have traded one unflagged error for another, in a regime that has occurred once already and
+which the platform reads live.
+
+So the ceiling is **printed rather than applied**. `assumptions.terminal_growth_alternative`
+carries the rate, the fair value that ceiling would have produced, and its refusal if the
+re-valuation refuses; `ModelsTab` shows it beside the answer. It is the trade this engine already
+makes for a weak regression, where it publishes R² instead of applying a "fit too weak" cut — and
+the reference doc's own words for it are quoted in the helper: *a reader can disagree with a
+number on the screen; they cannot disagree with an omega buried in arithmetic.*
+
+**What moved, and only what moved.** The golden diff is three lines: `0700_HK` composite 73 → 74,
+valuation pillar 67 → 72, `dcf_upside_pct` 66 → 86. The other seven fixtures are byte-identical —
+predicted before the edit by two independent measurements, and confirmed by the diff afterwards.
+Five pre-existing assertions that pinned the cap *binding* were rewritten to pin it being
+*disclosed*, in the same three scenarios rather than new ones.
+
+**One reading that would have killed this change, checked rather than assumed.** The spec's
+"As implemented" note warns that an uncapped Gordon terminal value for a bank is *negative*,
+because `ROE x (1 - payout)` = 11.09% exceeds JPM's 8.66% cost of equity. Read carelessly that
+forbids touching the cap. What prevents the negative is the **2.5% anchor**, not the risk-free
+half: measured at a 0.60% ten-year, JPM's `Re` is still 5.07% and its terminal value is 909.11.
+The note has been amended to say which half was load-bearing.
+
+**A field this change shipped with, and then did not.** The first draft published a `refused`
+key beside the alternative, for a ceiling low enough to drive WACC under itself. An independent
+review proved it unreachable, and the proof is short: `wacc` does not depend on
+`terminal_growth`, so the inner call refuses only when `wacc <= rf_cap`; reaching that code
+requires `rf_cap < anchor`; therefore `wacc < anchor`, and the *outer* call's own guard has
+already returned an error before any alternative is assembled. Swept across all three models at
+every rate from 0.01% to 2.49% — **498 alternatives published, none refusing, 249 outer refusals
+that discarded the alternative entirely.** The key is gone, its frontend branch with it, and the
+reasoning is in the helper so the next draft does not re-add it.
+
+Also corrected: the tracker said these assertions span "four test files". There are three.
+
+796 -> **800 backend**, 215 -> **216 frontend**, 1,016 offline.
+
 ## 2026-08-31 (c) - The offline suite was not offline, in seventeen places rather than two
 
 A `TODOLIST` entry from 2026-08-19 recorded that two tests in the "offline" suite reached live

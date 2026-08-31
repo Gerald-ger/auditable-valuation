@@ -982,19 +982,97 @@ def test_both_ceilings_are_reported_even_when_neither_binds():
     assert a["terminal_growth_anchor"] == fm.TERMINAL_GROWTH
 
 
-def test_a_low_rate_regime_pulls_the_terminal_rate_down(monkeypatch):
-    """The case the cap exists for: a 0.60% ten-year, as in 2020.
+def test_a_low_rate_regime_reports_both_rates_instead_of_choosing(monkeypatch):
+    """The case the cap existed for: a 0.60% ten-year, as in 2020.
 
-    A fixed 2.5% there assumes perpetual growth four times what the bond market
-    prices. This is the only branch that changes a valuation, so it is the one
-    worth pinning.
+    A fixed 2.5% there does assume perpetual growth four times what the bond
+    market prices, and that objection did not go away on 2026-08-31 — what
+    changed is that it is now answered on screen rather than in arithmetic. The
+    anchor is the published figure because §1.1.3 asks for it in every rate
+    regime; the ceiling is published beside it because this is exactly where it
+    would have mattered.
+
+    Both numbers are pinned, because the gap between them is the whole subject:
+    266.87 against 177.17, a 50.6% difference that used to be resolved silently.
     """
     # One patch, not two: `pinned_risk_free_rate` reads `fm.RISK_FREE_RATE` when
     # it is called, so moving the constant moves the pinned rate with it.
     monkeypatch.setattr(fm, "RISK_FREE_RATE", 0.006)
-    a = fm.dcf_valuation(load_fundamentals("AAPL"))["assumptions"]
-    assert a["terminal_growth"] == 0.006
-    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
+    v = fm.dcf_valuation(load_fundamentals("AAPL"),
+                         market_bars=load_market_bars("AAPL"))
+    a = v["assumptions"]
+    assert a["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert a["terminal_growth_source"] == "platform_default"
+    assert v["fair_value_per_share"] == pytest.approx(266.87, abs=0.01)
+
+    alt = a["terminal_growth_alternative"]
+    assert alt["rate"] == pytest.approx(0.006, abs=1e-9)
+    assert alt["fair_value_per_share"] == pytest.approx(177.17, abs=0.01)
+
+
+# ── the ceiling that is published rather than enforced ───────────────
+#
+# Until 2026-08-31 the default was `min(TERMINAL_GROWTH, risk_free_rate)`, and
+# for a CNY reporter the second term bound: 0700.HK was granted **1.10%**
+# perpetual growth against its own 9.39% year-one consensus, worth 539.04
+# against 652.41 on the fair value and 67 -> 72 on the valuation pillar.
+#
+# Reference doc §1.1.3 asks only `g_terminal <= long-run nominal GDP growth`.
+# The risk-free half was this platform's own addition, and its stated purpose —
+# a market read of long-run nominal growth — is what a policy-set curve under
+# capital controls does not supply.
+#
+# Dropping it silently would lose something real, measured 2026-08-31: at a
+# 2020-style 0.60% ten-year the old cap held AAPL at 177.17 where the anchor
+# gives 266.87, and JPM at 606.95 against 909.11. So the ceiling is not
+# deleted, it is **printed** — the same trade this engine already makes for a
+# weak beta, where it publishes R² rather than applying a "fit too weak" cut.
+
+def test_a_cny_reporter_is_no_longer_held_at_its_sovereign_yield():
+    """0700.HK, the only fixture the old ceiling bound on."""
+    a = fm.dcf_valuation(load_fundamentals("0700_HK"),
+                         market_bars=load_market_bars("0700_HK"))["assumptions"]
+    assert a["risk_free_rate"] == pytest.approx(0.011, abs=1e-6)
+    assert a["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert a["terminal_growth_source"] == "platform_default"
+
+
+def test_the_ceiling_that_was_dropped_is_printed_beside_the_answer():
+    """What the risk-free ceiling *would* have produced, as a number on screen.
+
+    This is the whole point of the change: the reader sees both figures and can
+    disagree with either. 539.04 is what the platform published until
+    2026-08-31; 652.41 is what it publishes now.
+    """
+    v = fm.dcf_valuation(load_fundamentals("0700_HK"),
+                         market_bars=load_market_bars("0700_HK"))
+    assert v["fair_value_per_share"] == pytest.approx(652.41, abs=0.01)
+
+    alt = v["assumptions"]["terminal_growth_alternative"]
+    assert alt is not None, "the dropped ceiling has to be visible, not gone"
+    assert alt["ceiling"] == "risk_free_rate"
+    assert alt["rate"] == pytest.approx(0.011, abs=1e-6)
+    assert alt["fair_value_per_share"] == pytest.approx(539.04, abs=0.01)
+
+
+def test_no_alternative_where_the_ceiling_never_bound():
+    """AAPL at a 4.30% ten-year. The anchor is the lower of the two, so there is
+    no second reading to show and the field must be absent rather than equal."""
+    a = fm.dcf_valuation(load_fundamentals("AAPL"),
+                         market_bars=load_market_bars("AAPL"))["assumptions"]
+    assert a["risk_free_rate"] > fm.TERMINAL_GROWTH
+    assert a["terminal_growth_alternative"] is None
+
+
+def test_an_explicit_terminal_growth_gets_no_alternative():
+    """A caller naming a rate has already decided. Publishing a ceiling beside
+    it would suggest the engine second-guessed the input, and it does not —
+    this is also what stops the disclosure recursing."""
+    a = fm.dcf_valuation(load_fundamentals("0700_HK"),
+                         market_bars=load_market_bars("0700_HK"),
+                         terminal_growth=0.02)["assumptions"]
+    assert a["terminal_growth_source"] == "user"
+    assert a["terminal_growth_alternative"] is None
 
 
 def test_an_explicit_rate_overrides_both_ceilings():
@@ -2072,10 +2150,12 @@ def test_the_cny_fixture_now_carries_a_chinese_rate_end_to_end(monkeypatch):
     assert a["risk_free_source"] == "cgb_10y_less_spread"
     assert a["equity_risk_premium_market"] == "China"
     assert a["risk_free_rate"] == round(0.016864 - 0.006, 4)
-    # The growth ceiling binds, which is where most of the valuation change
-    # comes from — see docs/currency-consistent-discounting.md §5.
-    assert a["terminal_growth_source"] == "capped_at_risk_free_rate"
-    assert a["terminal_growth"] == pytest.approx(0.0109, abs=1e-4)
+    # The growth ceiling no longer binds — it is reported instead, and the
+    # 0.0109 it would have applied is on the alternative. See
+    # docs/currency-consistent-discounting.md §5.
+    assert a["terminal_growth_source"] == "platform_default"
+    assert a["terminal_growth"] == pytest.approx(fm.TERMINAL_GROWTH, abs=1e-9)
+    assert a["terminal_growth_alternative"]["rate"] == pytest.approx(0.0109, abs=1e-4)
 
 
 def test_the_audit_row_carries_the_precision_of_the_beta_it_used(monkeypatch):

@@ -730,6 +730,58 @@ def _enterprise_value(fcf: float, growth_rate: float, w: float, g_term: float,
     return pv + terminal_pv
 
 
+def _risk_free_ceiling_reading(revalue, rf_cap: float, anchor: float) -> dict | None:
+    """What the risk-free ceiling would have produced, or None where it is moot.
+
+    Until 2026-08-31 all three models defaulted to `min(TERMINAL_GROWTH,
+    risk_free_rate)`. For a CNY reporter the second term bound and nothing said
+    so on screen: 0700.HK was granted **1.10% perpetual growth** — CGB 1.70%
+    less the sovereign spread — against its own 9.39% year-one consensus, worth
+    **539.04 against 652.41** on fair value and 67 -> 72 on the valuation
+    pillar. Reference doc §1.1.3 asks only `g_terminal <= long-run nominal GDP
+    growth`; the risk-free half was this platform's own addition.
+
+    **The addition was not worthless, which is why this function exists rather
+    than a deletion.** Its stated purpose was a market read of long-run nominal
+    growth, and for a market-set curve that is defensible: measured 2026-08-31,
+    at a 2020-style 0.60% ten-year the old ceiling held AAPL at 177.17 where the
+    anchor gives 266.87, and JPM at 606.95 against 909.11. What it is not is a
+    read of *growth* when the curve is set by policy under capital controls,
+    which is the CNY case and the reason it bound there.
+
+    No constant decides between them, and none is invented here. The anchor is
+    published as the answer because that is what the specification requires in
+    every rate regime, and the ceiling is published beside it as a second
+    reading — the same trade this engine already makes for a weak regression,
+    where it prints R² rather than applying a "fit too weak" cut. The reference
+    doc's own words for it: *a reader can disagree with a number on the screen;
+    they cannot disagree with an omega buried in arithmetic.*
+
+    `revalue` re-runs the caller's own model at one different terminal growth.
+    It cannot recurse: the inner call names a rate, so it takes the `"user"`
+    branch and computes no alternative of its own.
+    """
+    if rf_cap >= anchor:
+        return None
+    alt = revalue(rf_cap)
+    return {
+        "ceiling": "risk_free_rate",
+        "rate": round(rf_cap, 4),
+        "fair_value_per_share": alt.get("fair_value_per_share"),
+        "upside_pct": alt.get("upside_pct"),
+    }
+    # No `refused` key, and the absence is a result rather than an oversight.
+    # A first draft carried one, on the theory that a ceiling low enough to
+    # drive WACC under it would refuse instead of valuing. It cannot be
+    # published: `wacc` does not depend on `terminal_growth`, so the inner call
+    # refuses only when `wacc <= rf_cap`, and reaching this function at all
+    # requires `rf_cap < anchor` — so `wacc < anchor`, and the *outer* call's
+    # own guard has already returned an error before this dict is assembled.
+    # Swept 2026-08-31 across all three models at every rate from 0.01% to
+    # 2.49%: 498 alternatives published, none of them refusing, 249 outer
+    # refusals that discarded the alternative entirely.
+
+
 def dcf_valuation(f: dict, growth_rate: float | None = None,
                   terminal_growth: float | None = None,
                   wacc_override: float | None = None,
@@ -835,11 +887,17 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     # growth to close" — the most useful sentence the reconciliation produces —
     # into an unreachable target reported as None.
     terminal_growth_source = "user"
+    terminal_growth_alternative = None
     if terminal_growth is None:
-        rf_cap = wacc_parts["risk_free_rate"]
-        terminal_growth = min(TERMINAL_GROWTH, rf_cap)
-        terminal_growth_source = ("platform_default" if terminal_growth == TERMINAL_GROWTH
-                                  else "capped_at_risk_free_rate")
+        # Spec §1.1.3 asks only `g <= long-run nominal GDP`, and that holds in
+        # every rate regime. The risk-free ceiling is published rather than
+        # applied — see `_risk_free_ceiling_reading`.
+        terminal_growth = min(TERMINAL_GROWTH, NOMINAL_GDP_GROWTH)
+        terminal_growth_source = "platform_default"
+        terminal_growth_alternative = _risk_free_ceiling_reading(
+            lambda g: dcf_valuation(f, growth_rate, g, wacc_override,
+                                              tax_rate, peers, market_bars),
+            wacc_parts["risk_free_rate"], terminal_growth)
 
     if wacc <= terminal_growth:
         return {"error": f"WACC ({wacc:.2%}) must exceed terminal growth ({terminal_growth:.2%})."}
@@ -1047,6 +1105,7 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
             # is visible. "user" means the caller named the rate and neither
             # ceiling was applied.
             "terminal_growth_source": terminal_growth_source,
+            "terminal_growth_alternative": terminal_growth_alternative,
             "terminal_growth_anchor": TERMINAL_GROWTH,
             "terminal_growth_ceilings": {
                 "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
@@ -1415,11 +1474,17 @@ def excess_returns_valuation(f: dict, roe: float | None = None,
     growth_source = "roe_x_retention"
 
     terminal_growth_source = "user"
+    terminal_growth_alternative = None
     if terminal_growth is None:
-        rf_cap = wacc_parts["risk_free_rate"]
-        terminal_growth = min(TERMINAL_GROWTH, rf_cap)
-        terminal_growth_source = ("platform_default" if terminal_growth == TERMINAL_GROWTH
-                                  else "capped_at_risk_free_rate")
+        # Spec §1.1.3 asks only `g <= long-run nominal GDP`, and that holds in
+        # every rate regime. The risk-free ceiling is published rather than
+        # applied — see `_risk_free_ceiling_reading`.
+        terminal_growth = min(TERMINAL_GROWTH, NOMINAL_GDP_GROWTH)
+        terminal_growth_source = "platform_default"
+        terminal_growth_alternative = _risk_free_ceiling_reading(
+            lambda g: excess_returns_valuation(f, roe, g, cost_of_equity_override,
+                                                         tax_rate, peers, market_bars),
+            wacc_parts["risk_free_rate"], terminal_growth)
 
     if ke <= terminal_growth:
         return {"error": f"Cost of equity ({ke:.2%}) must exceed terminal growth "
@@ -1482,6 +1547,7 @@ def excess_returns_valuation(f: dict, roe: float | None = None,
             "growth_source": growth_source,
             "terminal_growth": terminal_growth,
             "terminal_growth_source": terminal_growth_source,
+            "terminal_growth_alternative": terminal_growth_alternative,
             "terminal_growth_anchor": TERMINAL_GROWTH,
             "terminal_growth_ceilings": {
                 "nominal_gdp_growth": NOMINAL_GDP_GROWTH,
@@ -1791,11 +1857,18 @@ def dividend_discount_valuation(f: dict, growth_rate: float | None = None,
                          "is reported rather than one built on it."}
 
     terminal_growth_source = "user"
+    terminal_growth_alternative = None
     if terminal_growth is None:
-        rf_cap = wacc_parts["risk_free_rate"]
-        terminal_growth = min(TERMINAL_GROWTH, rf_cap)
-        terminal_growth_source = ("platform_default" if terminal_growth == TERMINAL_GROWTH
-                                  else "capped_at_risk_free_rate")
+        # Spec §1.1.3 asks only `g <= long-run nominal GDP`, and that holds in
+        # every rate regime. The risk-free ceiling is published rather than
+        # applied — see `_risk_free_ceiling_reading`.
+        terminal_growth = min(TERMINAL_GROWTH, NOMINAL_GDP_GROWTH)
+        terminal_growth_source = "platform_default"
+        terminal_growth_alternative = _risk_free_ceiling_reading(
+            lambda g: dividend_discount_valuation(f, growth_rate, g,
+                                                            cost_of_equity_override,
+                                                            tax_rate, peers, market_bars),
+            wacc_parts["risk_free_rate"], terminal_growth)
 
     if ke <= terminal_growth:
         return {"error": f"Cost of equity ({ke:.2%}) must exceed terminal growth "
@@ -1892,6 +1965,7 @@ def dividend_discount_valuation(f: dict, growth_rate: float | None = None,
             "growth_periods": periods,
             "terminal_growth": terminal_growth,
             "terminal_growth_source": terminal_growth_source,
+            "terminal_growth_alternative": terminal_growth_alternative,
             "terminal_growth_anchor": TERMINAL_GROWTH,
             "terminal_growth_ceilings": {
                 "nominal_gdp_growth": NOMINAL_GDP_GROWTH,

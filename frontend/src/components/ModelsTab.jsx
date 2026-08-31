@@ -353,15 +353,19 @@ function DcfAudit({ dcf }) {
                   {' '}· anchor <b>{pct(a.terminal_growth_anchor)}</b>, held under
                   long-run nominal GDP{' '}
                   <b>{pct(a.terminal_growth_ceilings.nominal_gdp_growth)}</b> (nothing
-                  outgrows its economy forever) and the risk-free rate{' '}
-                  <b>{pct(a.terminal_growth_ceilings.risk_free_rate)}</b> (Damodaran&rsquo;s
-                  cap: the ten-year is itself a market read of long-run nominal growth)
+                  outgrows its economy forever). The risk-free rate{' '}
+                  <b>{pct(a.terminal_growth_ceilings.risk_free_rate)}</b> is
+                  Damodaran&rsquo;s second cap — the ten-year as a market read of
+                  long-run nominal growth — and it is reported here rather than
+                  applied, because a policy-set curve reads as policy, not growth
                 </span>
-                {a.terminal_growth_source === 'capped_at_risk_free_rate' && (
+                {a.terminal_growth_alternative && (
                   <>
                     {' '}
                     <span className="warn-chip">
-                      cut to the risk-free rate in a low-rate regime
+                      at that {pct(a.terminal_growth_alternative.rate)} ceiling, fair
+                      value would be{' '}
+                      <b>{num(a.terminal_growth_alternative.fair_value_per_share)}</b>
                     </span>
                   </>
                 )}

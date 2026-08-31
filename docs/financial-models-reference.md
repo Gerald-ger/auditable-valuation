@@ -363,10 +363,18 @@ Terminal RI: assume excess returns fade to zero (competition) — `TV = RI_n * �
 > and that growth to be mutually consistent (84.2% against a current 30.5%). A reader can
 > disagree with a number on the screen; they cannot disagree with an `ω` buried in arithmetic.
 >
-> Terminal growth is capped at `min(TERMINAL_GROWTH, risk-free rate)` exactly as the DCF caps
-> it, and for a measured reason: `ROE x (1 - payout)` for a profitable bank routinely exceeds
-> its own cost of equity — 11.09% against 8.66% on JPM — so an uncapped Gordon terminal value
-> is not merely large, it is **negative**.
+> Terminal growth is capped at `min(TERMINAL_GROWTH, long-run nominal GDP)` exactly as the DCF
+> caps it, and for a measured reason: `ROE x (1 - payout)` for a profitable bank routinely
+> exceeds its own cost of equity — 11.09% against 8.66% on JPM — so an uncapped Gordon terminal
+> value is not merely large, it is **negative**.
+>
+> **Amended 2026-08-31.** This read `min(TERMINAL_GROWTH, risk-free rate)` until that date. The
+> anchor is what does the work above — 2.5% is far below any bank's cost of equity, and stays
+> so in a low-rate regime: measured at a 0.60% ten-year, JPM's `Re` is 5.07% and the terminal
+> value is 909.11, not negative. The risk-free half was doing something different, and for a
+> CNY reporter it was binding at 1.10%. It is now published as
+> `assumptions.terminal_growth_alternative` — the fair value that ceiling would have produced —
+> rather than applied. §1.1.3 above is unchanged and was never the thing that moved.
 >
 > ROE is the **mean across reported periods**, not the newest year: JPM runs 13.55 / 15.89 /
 > 17.51 / 16.26%, and feeding the newest of those into a perpetuity compounds a 4-point error
