@@ -65,8 +65,24 @@ RUN pip install --no-cache-dir --user -e .
 ENV DEMO_MODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 7860 is the Spaces default. A Space's README.md must carry a matching
-# `app_port`; other hosts generally inject $PORT instead, in which case override
-# this command rather than editing it.
+# 7860 is the Spaces default and a Space's README.md must carry a matching
+# `app_port`. Render and most other hosts inject `$PORT` instead and route to
+# *that*, so a container that always binds 7860 is one the platform can never
+# reach — it boots, looks healthy from the inside, and the deploy never goes
+# live. This comment used to say "override this command rather than editing it";
+# nothing did, and the default has to work.
+#
+# Three details in the line below, none of them cosmetic:
+#
+#   * shell form, because exec form is JSON and performs no variable expansion —
+#     `${PORT}` inside a JSON array is the literal six characters.
+#   * `${PORT:-7860}`, so Spaces keeps working unchanged when nothing sets it.
+#   * **`exec`**, which is the one that is easy to leave out. Without it `sh`
+#     stays PID 1 and does not forward SIGTERM to its child, so a spin-down or
+#     redeploy leaves uvicorn running until the platform's grace period expires
+#     and SIGKILLs it — in-flight requests cut mid-response. With `exec` the
+#     shell is replaced by python, uvicorn is PID 1, and it handles SIGTERM
+#     itself and closes connections cleanly. Free tiers spin down after fifteen
+#     idle minutes, so this path is taken several times a day, not rarely.
 EXPOSE 7860
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "exec python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-7860}"]

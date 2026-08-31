@@ -1,5 +1,5 @@
 ---
-title: Finance Analysis Platform
+title: Auditable Valuation
 emoji: 📊
 colorFrom: blue
 colorTo: gray
@@ -10,7 +10,7 @@ license: agpl-3.0
 short_description: Two-stage FCFF DCF, trading comps and a 0-100 scorecard
 ---
 
-# Finance Analysis Platform — live demo
+# Auditable Valuation — live demo
 
 Investment-banking valuation models as auditable code. A two-stage FCFF DCF where every
 assumption carries the source it came from, trading comps, and a deterministic 0–100

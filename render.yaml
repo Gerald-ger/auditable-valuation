@@ -1,0 +1,44 @@
+# Render Blueprint for the hosted demo.
+#
+# What this deploys is *demo mode* — the eight committed fixtures answer every
+# request and nothing reaches a data vendor. That is what makes it publishable:
+# serving live yfinance data from a public host is a licensing question recorded
+# in docs/data-sources-review.md §3, and this service never asks it.
+#
+# `DEMO_MODE=1` is deliberately NOT repeated here. The Dockerfile bakes it in,
+# and this file pins `dockerfilePath`, so the flag has exactly one home. Setting
+# it in both would create two places that must agree about the same
+# safety-critical switch, which is the trade this project usually refuses.
+#
+# Free tier, and what that costs: the instance spins down after 15 minutes idle
+# and takes 30-50 s to wake. `.github/workflows/keep-alive.yml` pings it to hold
+# that off, and is honest in its own comments about how reliably it can. The
+# free allowance is 750 instance-hours a month against the 744 hours a month
+# contains, so holding one service awake continuously still fits.
+#
+# **The AI features are dead on this deployment, and that is not a bug to fix
+# here.** `ai_client.py` posts to `http://localhost:11434`, a local Ollama, and
+# Render's free tier gives one container with no sidecar — so `/api/ai/chat`,
+# `/api/ai/predict`, `/api/ai/debate` and the scorecard narrative will answer
+# 503 for every visitor, permanently. Nothing crashes: `status()` reports
+# `online: false`, `stream_chat` raises `AIUnavailable`, and the UI renders the
+# unavailable state. But a visitor clicking Debate gets a refusal, and that is
+# worth knowing before the link goes on a CV rather than after. `DEMO_MODE` does
+# not change it — the two flags are unrelated.
+
+services:
+  - type: web
+    name: auditable-valuation
+    runtime: docker
+    plan: free
+    # Closest free region to the Hong Kong listings this platform is built
+    # around, and to its author. Changing it later forces a new service.
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Cheapest honest liveness probe: no ticker, no database, no fixture I/O,
+    # and it answers correctly with no network and no credential. Every other
+    # route needs a ticker. The static catch-all at `/` returns 200 whenever the
+    # process is alive, which reports less than this does.
+    healthCheckPath: /api/health
+    autoDeploy: true

@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Stock Analysis Platform", lifespan=lifespan)
+app = FastAPI(title="Auditable Valuation", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -17,6 +17,58 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (e) - A container that would have booted cleanly and never gone live
+
+The hosted demo's host is decided — Render free tier, kept awake by a GitHub Actions ping — and
+everything that can be prepared without a Docker daemon or a Render account is in the repository.
+`render.yaml` and `.github/workflows/keep-alive.yml`, both with their own reasoning in their own
+comments, including how unreliably a `*/5` cron can actually defend a 15-minute spin-down.
+
+**The blocker was in the line the Dockerfile's own comment had already predicted and not fixed.**
+`CMD` was exec form with a literal `--port 7860`; exec form is JSON and expands nothing, so the
+container would have bound 7860 while Render routed to its injected `$PORT` — booting cleanly,
+reporting healthy from the inside, and never going live. The comment beside it said "other hosts
+generally inject `$PORT` instead, in which case override this command rather than editing it."
+Nothing overrode it, and a default that only works on one host is not a default.
+
+It is now `["sh", "-c", "exec python -m uvicorn ... --port ${PORT:-7860}"]`, and the `exec` is
+the half that is easy to leave out: without it `sh` remains PID 1 and does not forward SIGTERM,
+so each of the several daily free-tier spin-downs would cut in-flight requests rather than close
+them. Verified without Docker, both directions — `PORT=8797` binds 8797 and answers 200 on
+`/api/health`; unset binds 7860, so Hugging Face Spaces keeps working unchanged.
+
+**The rest was measured by running the thing rather than reading it.** `DEMO_MODE=1`, one
+process, one origin: `/` serves the built UI, `/api/health` returns 200 with `demo: true`,
+`0700.HK` values off the committed fixtures and carries the new `terminal_growth_alternative`
+field end to end, and search degrades to `{"results": []}` at 200 for a company the demo does not
+have. Resident memory after three heavy endpoints: **131.6 MB** against the free tier's 512 MB,
+with `openbb` absent from `sys.modules` — the deferred-import discipline holds in the running
+process, not just in the grep.
+
+**Two findings from an independent audit were refuted, and the refutations are the useful part.**
+It reported the 107-pin runtime install as untested by CI — true of `ci.yml`, which installs the
+six-entry test set, and false of `runtime-install.yml`, which has installed the full set on 3.12,
+3.13 and 3.14 since `f6af67b` on 2026-08-28 and passes. And it reported `backend/tests/` as
+unnecessary weight in the image: `DEMO_DIR` **is** `backend/tests/fixtures`, so excluding it
+would break demo mode entirely. An audit of a file nobody has ever built is worth having; so is
+checking it.
+
+**One finding stands and is worth knowing before the link is shared.** `ai_client.py` posts to
+`http://localhost:11434`, and Render's free tier is a single container with no sidecar — so
+chat, predict, debate and the scorecard narrative will answer 503 for every visitor,
+permanently. It degrades rather than crashes, and it is unrelated to `DEMO_MODE`. Recorded in
+`render.yaml` next to the configuration it constrains.
+
+**Also, a rename that finished everywhere except where people look.** The project became
+*Auditable Valuation* on 2026-08-28, and five places still said otherwise — including
+`frontend/index.html`'s `<title>`, the `<h1>` in `App.jsx`, and the FastAPI title behind
+`/docs`. A hosted demo would have opened a browser tab reading "Stock Analysis Platform", a name
+this project has been two renames away from. And GitHub's *About* description, which lives
+outside git and which nothing in CI can reach, said **1008** offline tests against a real 1016 —
+the fourth recurrence of that specific staleness, corrected via `gh` and read back to confirm.
+
+No test count changed: nothing in this entry touches the suite.
+
 ## 2026-08-31 (d) - A sovereign yield was deciding a company's perpetual growth, silently
 
 All three models defaulted terminal growth to `min(TERMINAL_GROWTH, risk_free_rate)`. For a USD

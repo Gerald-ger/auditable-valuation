@@ -287,6 +287,48 @@ would have to degrade, because a static host cannot answer a query string or a P
 *Trigger: picking one. The container has still never been built — this machine has no Docker —
 so whichever host is chosen, its first build is that Dockerfile's first test.*
 
+**The host was picked 2026-08-31 — Render free tier + an Actions keep-alive — and everything
+that can be prepared without a Docker daemon or a Render account now is.**
+
+`render.yaml` (blueprint: free plan, Singapore, `healthCheckPath: /api/health`, `autoDeploy`)
+and `.github/workflows/keep-alive.yml` (`*/5` cron against `vars.DEMO_URL`, failing on any
+non-200). `DEMO_MODE` is deliberately *not* repeated in the blueprint — the Dockerfile bakes it
+and the blueprint pins `dockerfilePath`, so the safety-critical flag keeps one home.
+
+**A blocker was found and fixed, and it would have failed the first deploy.** `CMD` was exec
+form with a literal `--port 7860`, which performs no variable expansion — so the container would
+always have bound 7860 while Render routed to its injected `$PORT`, booting cleanly and never
+going live. It is now `["sh", "-c", "exec python -m uvicorn ... --port ${PORT:-7860}"]`. The
+`exec` is the part that is easy to omit: without it `sh` stays PID 1 and swallows SIGTERM, so
+every one of the several daily spin-downs would cut in-flight requests instead of closing them.
+Proven both ways locally without Docker — `PORT=8797` binds 8797 and answers 200, unset binds
+7860, so Spaces keeps working.
+
+**Measured rather than assumed, since the container has still never been built.** The app was
+run exactly as Render will run it — `DEMO_MODE=1`, single process, single origin: `/` serves the
+built UI, `/api/health` returns 200 with `demo: true`, `0700.HK` values from the fixtures, an
+unknown ticker returns a 502 that only a hand-typed URL can reach (search returns `{"results":
+[]}` at 200). **131.6 MB working set** after three heavy endpoints, against the free tier's
+512 MB, and `openbb` confirmed absent from `sys.modules` — the deferred imports hold.
+
+**Two claims from an independent audit were refuted by measurement, and both are worth
+recording.** It called the 107-pin `requirements.txt` install untested by CI: `ci.yml` does
+install only the six-entry test set, but `runtime-install.yml` has installed the full set on
+3.12, 3.13 *and* 3.14 since 2026-08-28 — `f6af67b` exists precisely to do that, and it passes.
+And it called shipping `backend/tests/` unnecessary image weight: `DEMO_DIR` is
+`backend/tests/fixtures`, so excluding it would break demo mode outright.
+
+**One audit finding stands, and it should be known before the link is shared.** `ai_client.py`
+posts to `http://localhost:11434`; Render's free tier is one container with no sidecar, so every
+AI feature — chat, predict, debate, the scorecard narrative — answers 503 permanently. It
+degrades cleanly rather than crashing, and `DEMO_MODE` is unrelated to it. Recorded in
+`render.yaml` beside the config it constrains.
+
+**What is left needs an account and a browser, not this repository:** create the Render service
+from the blueprint, set `DEMO_URL` as an Actions variable, then fill the GitHub *Website* field
+and the README. *The Dockerfile's first build is still its first test — that has not changed, it
+has only been narrowed to the one thing that cannot be checked from here.*
+
 **Two things to settle before that link goes anywhere.** Free tiers spin down when idle, and a
 recruiter's one click landing on a thirty-second cold start is worse than no link at all — so
 measure wake latency first. And serving *frozen committed fixtures* is a materially smaller act

@@ -1,0 +1,53 @@
+# Keeps the free-tier demo awake, and is honest about how well it can.
+#
+# Render's free tier spins a service down after 15 minutes with no request, and
+# takes 30-50 s to wake. A recruiter's one click landing on a cold start is
+# worse than no link at all, which is the whole reason this file exists.
+#
+# **The schedule is a request, not a guarantee.** GitHub's cron is best-effort
+# and runs late under load — commonly by several minutes, occasionally by more
+# than fifteen. So `*/5` rather than `*/10`: it is not that the service needs a
+# ping every five minutes, it is that a five-minute schedule usually still lands
+# inside a fifteen-minute window after GitHub has delayed it. It will sometimes
+# miss anyway, and then the next visitor pays the cold start.
+#
+# Cost: nothing. Actions minutes are unmetered on public repositories, and the
+# free instance allowance is 750 hours against the 744 in a month, so holding
+# one service awake continuously still fits.
+#
+# GitHub disables scheduled workflows on a repository with no pushes for 60
+# days, and sends a warning first. If the demo starts sleeping, check that
+# before suspecting Render.
+
+name: keep-alive
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:          # so it can be proved to work without waiting
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the demo
+        env:
+          # Set this to the deployed URL. Left as a repository variable rather
+          # than hard-coded so moving hosts is a settings change, not a commit.
+          DEMO_URL: ${{ vars.DEMO_URL }}
+        run: |
+          if [ -z "$DEMO_URL" ]; then
+            echo "DEMO_URL is not set — nothing to keep alive."
+            echo "Set it under Settings -> Secrets and variables -> Actions -> Variables."
+            exit 0
+          fi
+          # --max-time 90 rather than the default: a cold start is the case this
+          # is for, and 30-50 s of it is the service booting rather than hanging.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 90 \
+                   --retry 2 --retry-delay 10 "$DEMO_URL/api/health")
+          echo "GET $DEMO_URL/api/health -> $code"
+          # A wake-up that returns 5xx is worth failing on: the point is a
+          # visitor finding it up, not a request having been sent.
+          [ "$code" = "200" ]

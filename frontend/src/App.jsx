@@ -106,7 +106,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>Stock Analysis Platform</h1>
+        <h1>Auditable Valuation</h1>
         {TICKER_TABS.has(tab) && (
           <SearchBar value={ticker} saved={saved} onSelect={setTicker} />
         )}
