@@ -17,6 +17,44 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (j) - A company that did not report its debt scored as one that has none
+
+`scoring.py` computed net debt as `(total_debt or 0) - (total_cash or 0)`, and ROIC's invested
+capital from the same subtraction. `or 0` reads an unreported balance as a zero balance, and
+for net debt that collapses the result to `-cash`, which `max(net_debt, 0)` clamps to 0.0 —
+the top anchor on a curve where lower is better.
+
+**The error scales with the thing being measured, which is the worst property it could have.**
+With `totalDebt` unreported the leverage metric scored **100 on all six** fixtures that carry
+it: AAPL +1.3 points over its true 98.7, MSFT +2.7, XOM +4.7, 0002.HK +30.1, and **O +94.3 —
+5.7 to 100**, the most levered fixture in the set reading as the least. ROIC is wrong for the same
+reason but **not in the same direction**, and an independent review caught the first draft of
+this entry claiming otherwise. Against a true 0.2699 on MSFT: a missing `totalDebt` shrinks
+invested capital to `equity - cash` and reads 0.3650; a missing `totalCash` grows it to
+`equity + debt` and reads 0.2337. One overstates the company, one understates it, neither is
+the company — refusing is the only answer true in both directions.
+
+Both legs are guarded, not the one that flatters: an absent *cash* balance overstates net debt
+instead, which is quieter but no more true. This is the guard `comps.py:635-637` has carried
+since 2026-08-30 for the EV bridge, arriving in the scoring engine. The 2026-08-27 `or 0`
+audit that fixed `comps.py` and `financial_models.py` never had `scoring.py` in scope.
+
+**Verification changed the design twice, which is the reason to record it.** The first draft
+appended a flag; the nearest precedent — `cash_runway_q`, guarded on these same two fields —
+introduces zero flags, because an absent input is reported through `missing_metrics` and the
+coverage/confidence machinery, while flags mark something that *happened*. Measured, not
+argued. Then a mutation exposed a placebo: swapping the guard for a truthiness test left all
+807 tests green, since `if net_debt` and `if net_debt is not None` diverge only at exactly
+zero and no fixture has debt matched to the dollar by cash. That input is now constructed and
+pinned, and fails under exactly that mutation.
+
+Five tests. Four mutations, each landing on exactly the intended tests; the consumer-side
+`None` check additionally takes an existing test with it, so a half-fix cannot ship.
+**`golden_scores.json` is byte-unchanged** — for a company that reports both legs, nothing
+about this moved.
+
+**803 -> 808 backend, 1043 -> 1048 offline.** Frontend unchanged at 240.
+
 ## 2026-08-31 (i) - Three findings whose triggers the deployment discharged
 
 Hosting the demo yesterday did not just close its own item. It silently satisfied triggers that

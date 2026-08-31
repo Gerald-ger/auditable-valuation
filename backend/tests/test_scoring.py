@@ -87,6 +87,98 @@ def test_an_unreported_cash_balance_is_still_excluded():
     assert "cash_runway_q" in card["missing_metrics"]
 
 
+def test_an_unreported_debt_balance_is_not_a_company_without_debt():
+    """The same distinction as the two above, on the other half of net debt.
+
+    `(total_debt or 0)` read an absent debt balance as a company holding none,
+    and the direction is the dangerous one: net debt collapses to `-cash`, which
+    `max(net_debt, 0)` then clamps to 0.0 — the top anchor. Measured on O before
+    the fix, the metric went **5.7151 -> 0.0000**, which is a metric score of
+    **5.7 -> 100**: a REIT carrying the most leverage in the fixture set read as
+    the least. `comps.py` guards both legs of this same subtraction for the EV
+    bridge and states why; this is that guard, arriving in the scoring engine.
+    """
+    f = load_fundamentals("O")
+    f["info"]["totalDebt"] = None
+    card = scoring.score_company(f, market_bars=load_market_bars("O"))
+
+    assert "net_debt_ebitda" not in card["pillars"]["health"]["metrics"]
+    assert "net_debt_ebitda" in card["missing_metrics"]
+
+
+def test_an_unreported_cash_balance_leaves_net_debt_unknown_too():
+    """The mirror leg. Absent cash overstates net debt rather than flattering it,
+    which makes it the quieter half — and the reason both are guarded rather
+    than only the one that was noticed first.
+
+    On 0700.HK before the fix: **0.0000 -> 1.4362**, a company in a genuine net
+    cash position reading as one carrying 1.44x EBITDA of debt.
+    """
+    f = load_fundamentals("0700_HK")
+    f["info"]["totalCash"] = None
+    card = scoring.score_company(f, market_bars=load_market_bars("0700_HK"))
+
+    assert "net_debt_ebitda" not in card["pillars"]["health"]["metrics"]
+    assert "net_debt_ebitda" in card["missing_metrics"]
+
+
+def test_a_reported_net_cash_position_is_still_scored_at_zero():
+    """The anti-placebo half: 0.0 is a real reading and must survive the guard.
+
+    0700.HK holds more cash than debt, so `max(net_debt, 0)` is legitimately
+    0.0 and legitimately scores 100. A guard that dropped this would trade one
+    wrong answer for another, and would be indistinguishable from the defect
+    above by looking at the output alone — which is exactly why that defect was
+    invisible.
+    """
+    f = load_fundamentals("0700_HK")
+    card = scoring.score_company(f, market_bars=load_market_bars("0700_HK"))
+    cell = card["pillars"]["health"]["metrics"]["net_debt_ebitda"]
+
+    assert cell["raw"] == 0.0
+    assert cell["score"] == 100
+    assert "net_debt_ebitda" not in card["missing_metrics"]
+
+
+def test_debt_exactly_equal_to_cash_is_a_reading_not_an_absence():
+    """The one point where `if net_debt` and `if net_debt is not None` diverge.
+
+    Found by mutation: swapping the guard to a truthiness test left all 807
+    tests green, because every fixture's net debt is either clearly positive or
+    clearly negative and both are truthy. Exactly zero — debt matched to the
+    dollar by cash — is the single input that separates them, and it is the
+    reading the metric's top anchor is literally about. No fixture has it, so it
+    is constructed here.
+    """
+    f = load_fundamentals("MSFT")
+    f["info"]["totalCash"] = f["info"]["totalDebt"]
+    card = scoring.score_company(f, market_bars=load_market_bars("MSFT"))
+    cell = card["pillars"]["health"]["metrics"]["net_debt_ebitda"]
+
+    assert cell["raw"] == 0.0
+    assert cell["score"] == 100
+    assert "net_debt_ebitda" not in card["missing_metrics"]
+
+
+def test_invested_capital_is_unknown_when_either_leg_is_unreported():
+    """ROIC's denominator is the same subtraction, so it inherits the same flaw.
+
+    `equity + (debt or 0) - (cash or 0)` is wrong whichever leg goes missing, but
+    not in the same direction — a first draft of this docstring claimed it
+    flattered both ways, and the measurement it cited disproves it. Against a
+    true 0.2699 on MSFT: a missing `totalDebt` shrinks the denominator to
+    `equity - cash` and reads **0.3650**; a missing `totalCash` grows it to
+    `equity + debt` and reads **0.2337**. Refusing is what is true in both.
+    """
+    for missing in ("totalDebt", "totalCash"):
+        f = load_fundamentals("MSFT")
+        f["info"][missing] = None
+        card = scoring.score_company(f, market_bars=load_market_bars("MSFT"))
+
+        assert "roic" not in card["pillars"]["quality"]["metrics"], missing
+        assert "roic" in card["missing_metrics"], missing
+
+
 def test_no_interest_expense_scores_top_without_inventing_a_ratio():
     """EBIT over zero has no value; the company it describes has no burden.
 

@@ -38,6 +38,47 @@ against itself.
 
 ## Now
 
+### ⚪ ~~An unreported debt balance scored as a debt-free company~~ — closed 2026-08-31
+
+`scoring.py` read `(total_debt or 0) - (total_cash or 0)` for net debt, and the same
+subtraction again for ROIC's invested capital. `or 0` reads "the vendor did not report this"
+as "the company has none of it", and the direction is the dangerous one: net debt collapses
+to `-cash`, which `max(net_debt, 0)` clamps to **0.0 — the top anchor**.
+
+**Measured across every fixture, and the error scales with the thing being measured.** With
+`totalDebt` unreported, the leverage metric scored **100 for all six** fixtures that carry it,
+regardless of how levered the company actually is:
+
+| fixture | true reading | true score | scored as | error |
+|---|---|---|---|---|
+| 0700.HK | 0.0000 | 100 | 100 | +0 |
+| AAPL | 0.1307 | 98.7 | 100 | +1.3 |
+| MSFT | 0.2685 | 97.3 | 100 | +2.7 |
+| XOM | 0.4678 | 95.3 | 100 | +4.7 |
+| 0002.HK | 2.6341 | 69.9 | 100 | +30.1 |
+| **O** | **5.7151** | **5.7** | **100** | **+94.3** |
+
+The most levered fixture read as the least. And nothing in the output distinguished it from
+0700.HK's *genuine* net cash position, which reads 0.0 with both legs reported — which is why
+it survived every review until a sweep went looking for this specific coercion.
+
+**This is not the 2026-08-27 audit's entry reopening.** That audit enumerated six `or 0` sites
+"on model inputs" and closed them in `financial_models.py` and `comps.py`; `scoring.py` was
+never in its scope. `comps.py:635-637` has carried the correct guard — and a comment
+explaining it — since 2026-08-30. The fix is that guard arriving in the scoring engine.
+
+**No new flag, which was a correction the verification produced.** The first design appended
+one. The nearest precedent is `cash_runway_q`, guarded on *these same two fields*, and
+measurement showed it introduces **zero** flags: an absent input is reported through
+`missing_metrics`, and the engine's coverage/confidence/reweighting machinery does the rest.
+Flags mark something notable that *happened*; absence is not an event.
+
+**Five tests, four mutations, and one of the mutations found a placebo.** Swapping the guard
+for a truthiness test left all 807 tests green — `if net_debt` and `if net_debt is not None`
+diverge only at exactly zero, and no fixture has debt matched to the dollar by cash. That case
+is now constructed and pinned. The golden file is byte-unchanged, which is the point: for
+complete data nothing moved.
+
 ### ⚪ ~~A CNY reporter inherits China's sovereign yield as its perpetual growth ceiling~~ — closed 2026-08-31
 
 **`financial_models.py:573` has said "See TODOLIST" about this since 2026-08-19 and no entry was

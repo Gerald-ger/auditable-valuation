@@ -209,9 +209,17 @@ def extract_metrics(f: dict,
         flags.append("roe_skipped_negative_equity")
     m["roe"] = _clamp(roe, -2, 2)
     m["roa"] = _clamp(info.get("returnOnAssets"), -1, 1)
+    # Invested capital is the same subtraction as net debt below and inherits the
+    # same flaw, but the two legs move it in *opposite* directions, which is why
+    # both are guarded rather than the one that flatters. Measured on MSFT
+    # against a true 0.2699: `or 0` on a missing `totalDebt` drops the
+    # denominator to `equity - cash` and reads ROIC **0.3650**; on a missing
+    # `totalCash` it raises the denominator to `equity + debt` and reads
+    # **0.2337**. One overstates the company and one understates it; neither is
+    # the company. Refusing is the only answer that is true in both directions.
     invested = None
-    if equity is not None:
-        invested = equity + (total_debt or 0) - (total_cash or 0)
+    if equity is not None and total_debt is not None and total_cash is not None:
+        invested = equity + total_debt - total_cash
     # statutory rate for the listing's jurisdiction, not a flat US 21%
     nopat = ebit * (1 - fm.tax_rate_for(info)) if ebit is not None else None
     m["roic"] = _clamp(div(nopat, invested) if invested and invested > 0 else None, -1, 1)
@@ -229,9 +237,20 @@ def extract_metrics(f: dict,
     m["fcf_conversion"] = _clamp(
         div(fcf, conversion_ni) if conversion_ni and conversion_ni > 0 else None, -5, 5)
 
-    net_debt = (total_debt or 0) - (total_cash or 0)
+    # A missing leg is an unknown, not a zero — the guard `comps.py:635-637`
+    # already applies to these same two fields for the EV bridge, arriving here.
+    # This direction is the dangerous one: an absent debt balance collapses net
+    # debt to `-cash`, which `max(net_debt, 0)` then clamps to the top anchor.
+    # Measured on O, net_debt_ebitda went 5.7151 -> 0.0000 — a metric score of
+    # 5.7 -> 100, the most levered fixture reading as the least. And nothing in
+    # the output distinguishes that from 0700.HK's genuine net cash position,
+    # which reads 0.0 with both legs reported, which is why it was invisible.
+    net_debt = (total_debt - total_cash
+                if total_debt is not None and total_cash is not None else None)
     # `ebitda` resolved above alongside the ev_ebitda guard
-    m["net_debt_ebitda"] = _clamp(max(net_debt, 0) / ebitda if ebitda and ebitda > 0 else None, 0, 50)
+    m["net_debt_ebitda"] = _clamp(
+        max(net_debt, 0) / ebitda
+        if net_debt is not None and ebitda and ebitda > 0 else None, 0, 50)
     # Both legs from one period. Pairing the newest EBIT with the newest
     # interest independently made AAPL's coverage FY2025 operating income over
     # FY2023 interest — 33.8x, a ratio of two different years. `ebit` above
