@@ -1247,6 +1247,26 @@ day it was found.
 *Trigger: the next substantial change to `PriceChart`'s crosshair or drawing layer — `snapToBar`
 would then be serving both paths, which is the point at which owning it costs least.*
 
+**Mitigated 2026-08-31: the wrong line is gone, the right line is not drawn.** With the magnet on,
+`crosshair.horzLine.visible` and `labelVisible` are both false. Nothing now points at a moving
+average while the readout reports the bar — which was the actual harm — and the hover readout,
+which reads the candlestick series directly and always has, is what carries the price.
+
+`labelVisible` is half of that fix rather than a detail. The price-axis label is drawn at the same
+snapped price as the line, so hiding only the line would have moved the defect from the pane onto
+the axis instead of removing it.
+
+The mode stays `MagnetOHLC` rather than `Normal`, for a line that is currently invisible. That is
+deliberate: it keeps the option correct for the day the line comes back, so restoring it is a
+change to one boolean rather than a re-derivation of which mode was right.
+
+**What is still not done is drawing the correct line**, and the cost of that is the paragraph
+above this one. The trade taken here was 3 lines to remove a line that lies, against roughly 150
+to 250 across three files to draw one that does not — for a chart whose numbers were never wrong.
+
+*Trigger: unchanged. Also worth revisiting if the missing price line turns out to be missed in
+use, which is the one thing the argument above cannot settle from here.*
+
 ### 🟡 `FootballField`'s scale is safe by coincidence, not by construction *(found 2026-08-30)*
 
 Raised by the independent review of the axis fix above, and narrower than that bug. `x()` is

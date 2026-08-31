@@ -384,8 +384,27 @@ export default function PriceChart({
       // mode the reader wanted and the chart was given the other one; a magic
       // number is how the two drifted apart without either looking wrong, so
       // the name is used now.
+      // **The price line is hidden while the magnet is on, deliberately.**
+      // Neither magnet mode can be told which series to snap to — checked in
+      // lightweight-charts 5.2.0's own typings, where the only related option
+      // picks a *price scale* — and both are documented as snapping to "the
+      // price value of a single-value series", which is what an MA overlay is.
+      // With three moving averages and a dispersion band drawn, the line
+      // therefore settles on whichever is nearer the pointer, while the readout
+      // beside it reports the bar. A line pointing at one price under a number
+      // saying another is worse than no line, so it is not drawn.
+      //
+      // `labelVisible` goes with it. The price-axis label is drawn at the same
+      // snapped price, so hiding only the line would move the defect onto the
+      // axis rather than remove it.
+      //
+      // The mode is still `MagnetOHLC` rather than `Normal`: it governs the
+      // line that is currently hidden, and keeping it correct is what makes
+      // restoring that line a change to one boolean. See TODOLIST for what
+      // drawing the right line instead would cost.
       crosshair: {
         mode: magnetRef.current ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal,
+        horzLine: { visible: !magnetRef.current, labelVisible: !magnetRef.current },
       },
       // Both wheel behaviours off: the library maps a *vertical* wheel to zoom
       // only (`deltaY` -> zoomTime, gated on handleScale.mouseWheel) and pans
@@ -934,7 +953,10 @@ export default function PriceChart({
   // would throw away the pan and zoom the reader had set up.
   useEffect(() => {
     chartRef.current?.applyOptions({
-      crosshair: { mode: magnet ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal },
+      crosshair: {
+        mode: magnet ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal,
+        horzLine: { visible: !magnet, labelVisible: !magnet },
+      },
     });
   }, [magnet, chartEpoch]);
 
@@ -1081,8 +1103,8 @@ export default function PriceChart({
           <button
             className={`seg ${magnet ? 'active' : ''}`}
             title={magnet
-              ? 'Magnet on: the crosshair sticks to open/high/low/close, and a line you draw lands on one. Click to read prices at any point instead.'
-              : 'Magnet off: the crosshair and new lines follow the pointer exactly.'}
+              ? 'Magnet on: a line you draw lands on a bar’s open, high, low or close. The price line is hidden — with moving averages drawn it would stick to whichever is nearest the pointer rather than to the bar, and the readout already follows the pointer with that bar’s figures. Click to read prices at any point instead.'
+              : 'Magnet off: the price line and new lines follow the pointer exactly.'}
             onClick={() => setMagnet((m) => !m)}
           >
             Magnet

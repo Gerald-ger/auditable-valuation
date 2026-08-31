@@ -408,15 +408,24 @@ describe('the magnet toggle', () => {
     chart.applyOptions.mockClear();
 
     click(button(container, 'Magnet'));
-    expect(chart.applyOptions).toHaveBeenCalledWith({ crosshair: { mode: 0 } });
+    expect(chart.applyOptions).toHaveBeenCalledWith({
+      crosshair: { mode: 0, horzLine: { visible: true, labelVisible: true } },
+    });
 
     // 3 is `CrosshairMode.MagnetOHLC`, not 1 (`Magnet`). The difference is the
     // one the toolbar's own tooltip has always described: `Magnet` sticks the
     // crosshair to an OHLC series' **close** only, while the button says it
     // "sticks to open/high/low/close". Measured against the installed
     // lightweight-charts 5.2.0 typings, which document exactly that split.
+    //
+    // The price line is hidden with the magnet on, and `labelVisible` with it.
+    // Hiding only the line would move the defect to the price axis rather than
+    // remove it: the label is drawn at the same snapped price, so it would go
+    // on reporting a moving average while the line stopped saying so.
     click(button(container, 'Magnet'));
-    expect(chart.applyOptions).toHaveBeenCalledWith({ crosshair: { mode: 3 } });
+    expect(chart.applyOptions).toHaveBeenCalledWith({
+      crosshair: { mode: 3, horzLine: { visible: false, labelVisible: false } },
+    });
     expect(createChart.mock.calls.length).toBe(before);
     unmount();
   });

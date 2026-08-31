@@ -17,6 +17,42 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (g) - A line that pointed at one price under a number saying another
+
+Reported from a browser: with moving averages drawn, the crosshair's price line sticks to whichever
+series is nearest the pointer, so it settles on an MA rather than on the bar.
+
+There is no option for it. lightweight-charts 5.2.0 exposes no per-series magnet exclusion — its
+only related setting picks a *price scale*, not a series — and **both** magnet modes are documented
+as snapping to "the price value of a single-value series", which is exactly what an MA overlay is.
+So the choice was not between two configurations. It was between removing the line and owning it.
+
+**Removing it, for now.** With the magnet on, `crosshair.horzLine.visible` and `labelVisible` are
+both false. `labelVisible` is half the fix rather than a detail: the price-axis label is drawn at
+the same snapped price, so hiding only the line would have moved the defect from the pane onto the
+axis. The hover readout is unaffected and always was — it reads `param.seriesData.get(series)` off
+the candlestick series, so the figures were never wrong. What was wrong was a line pointing at one
+price underneath a number saying another, and that is gone.
+
+The mode stays `MagnetOHLC` for a line nobody can currently see. Deliberately: it keeps the option
+right for the day the line returns, so restoring it is one boolean rather than a re-derivation.
+
+**The alternative was measured before it was declined.** Drawing the correct line means
+`mode: Normal`, hiding the native line, and rendering a snapped one through `DrawingsPrimitive` —
+which already exists, already draws on the pane at top z-order, and already has `snapToBar()`, the
+function that finds the nearest bar and snaps to its open/high/low/close. The library even supports
+`priceAxisViews()` for putting the label back. Roughly 150 to 250 lines across three files at this
+project's comment density, and jsdom cannot verify the result: the chart is mocked wholesale, so
+tests could assert the plumbing and never the picture. Recorded in TODOLIST with that costing.
+
+Also in this change, the toolbar's tooltip. It said the crosshair "sticks to open/high/low/close",
+which stopped being true the moment the line was hidden — and had already been half untrue before
+that, since the mode in force snapped to the close alone. It now says what happens and why: drawn
+lines land on a bar's OHLC, the price line is hidden because it would stick to a moving average,
+and the readout carries the figures.
+
+No test count change: an existing assertion was extended rather than a new one added.
+
 ## 2026-08-31 (f) - A whole tab replaced by an error box, and the cause was in the browser
 
 Reported from a running browser: switching tabs with Google Translate on threw
