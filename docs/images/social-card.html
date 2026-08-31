@@ -1,0 +1,137 @@
+<!doctype html>
+<!--
+  The source of social-preview.png, beside it.
+
+  It is committed for one reason, and it is not convenience. On 2026-08-28
+  `5d97578` renamed the project and swept every text surface in the repo; it
+  could not touch a PNG, so the card went on saying "Finance Analysis Platform"
+  for four days and nothing could see it -- not grep, not the link checker, not
+  the count guard (whose own docstring names this same blindness for the GitHub
+  About description), not any of CI's eight legs. With this file present, the
+  card's own words sit back on the surface those tools already patrol, and
+  `backend/tests/test_social_card.py` pins its title to the README's.
+
+  What that does NOT buy: nothing checks that the PNG beside this file was
+  rendered from this file. Edit the words here and the image is stale until you
+  re-render, and no test will say so. A test that re-rendered and compared could
+  not run -- CI is Ubuntu and has no 'Segoe UI Variable Text', so every leg
+  would disagree with the committed bytes for reasons that are not defects.
+
+  Re-render (Windows, Chrome), from the repository root:
+
+    chrome.exe --headless=new --disable-gpu --hide-scrollbars       --force-device-scale-factor=1 --window-size=1280,640       --screenshot=docs/images/social-preview.png       --virtual-time-budget=2000 file:///%CD%/docs/images/social-card.html
+
+  Then upload it by hand at Settings -> General -> Social preview. GitHub has no
+  API for that setting, which is why the rendered PNG is committed too.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* Every colour below is lifted from frontend/src/index.css :root, and the
+     type scale is measured off the 2026-08-27 card it replaces:
+     title 74 / lede 31 / claim 28 / source 25 / footer 23.
+     --bg #0d1117 · --panel #161b22 · --border #2a3441 · --text #c9d1d9
+     --muted #8b98a5 · --accent #3b82f6 · --r-surface 10px                  */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { width: 1280px; height: 640px; }
+
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+  }
+
+  .card {
+    position: relative;
+    width: 1280px;
+    height: 640px;
+    padding: 106px 92px 0;
+    /* The same accent at the opacity the app uses for ::selection, thrown from
+       off the top-left corner. The only thing here that is not a flat token. */
+    background:
+      radial-gradient(120% 80% at 18% -12%, rgba(59, 130, 246, 0.10), transparent 60%),
+      #0d1117;
+  }
+
+  h1 {
+    font-size: 74px;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    line-height: 1;
+    color: #f0f6fc;
+  }
+
+  .lede {
+    margin-top: 24px;
+    font-size: 31px;
+    font-weight: 400;
+    letter-spacing: -0.004em;
+    line-height: 1;
+    color: #8b98a5;
+  }
+
+  /* The .verdict panel out of the Financial Models tab: 1px on three sides, a
+     3px accent stripe on the left, 10px corners. The panel is one line wider
+     than the card it replaces because the model list is: the platform stopped
+     being DCF-only at e985946. */
+  .verdict {
+    margin-top: 52px;
+    padding: 30px 34px 24px;
+    background: #161b22;
+    border: 1px solid #2a3441;
+    border-left: 3px solid #3b82f6;
+    border-radius: 10px;
+  }
+
+  .claim {
+    font-size: 28px;
+    letter-spacing: -0.008em;
+    line-height: 1.2;
+    color: #dbe3ea;
+    white-space: nowrap;
+  }
+
+  .source {
+    margin-top: 15px;
+    font-size: 25px;
+    line-height: 1.44;
+    color: #8b98a5;
+    /* Breaks after 'equity', so the second line is 'risk premium.' rather than a
+       one-word widow. */
+    max-width: 950px;
+  }
+
+  .foot {
+    margin-top: 44px;
+    font-size: 23px;
+    line-height: 1;
+    color: #8b98a5;
+  }
+
+  .foot i {
+    font-style: normal;
+    color: #4a5568;
+    padding: 0 13px;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Auditable Valuation</h1>
+    <p class="lede">Investment-banking valuation models as auditable code.</p>
+
+    <div class="verdict">
+      <div class="claim">FCFF DCF &middot; excess return &middot; dividend discount &middot; trading comps &middot; a 0&ndash;100 scorecard</div>
+      <div class="source">Every assumption carries the source it came from, down to the vintage of the equity
+        risk premium.</div>
+    </div>
+
+    <div class="foot">FastAPI + React<i>&middot;</i>offline LLM analyst<i>&middot;</i>US and Hong Kong listings<i>&middot;</i>AGPL-3.0</div>
+  </div>
+</body>
+</html>
