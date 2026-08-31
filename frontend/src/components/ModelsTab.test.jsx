@@ -746,4 +746,30 @@ describe('the intrinsic panel\'s audit rows', () => {
     expect(row).toBeTruthy();
     expect(row.lastElementChild.textContent).toContain('mean of 4 reported periods');
   });
+
+  /**
+   * The 92px column is the DCF's, and it fits the DCF's two-word labels. These
+   * panels' labels run to 31 characters, so they still wrapped to three lines
+   * after the prose moved out. Widening the shared rule would have made the DCF
+   * pay for it — its value column, which holds a paragraph, would lose 138px.
+   *
+   * The width lives in `index.css` and jsdom has no layout engine, so what is
+   * checkable here is the wiring: the two blocks that need it carry the class
+   * and the DCF's block does not. Measured separately in Chrome: the widest
+   * label is "Payout the terminal phase needs" at 211px under Segoe UI, 233px
+   * under Arial and Liberation Sans, 239px under Verdana — which is where the
+   * 240px in the stylesheet comes from.
+   */
+  it('widens its own label column and leaves the DCF panel alone', async () => {
+    const { container } = await mount({
+      analysisBody: analysis({ excess_return: EXCESS_RETURN }),
+    });
+    const blocks = [...container.querySelectorAll('.dcf-audit')];
+    const wide = blocks.filter((n) => n.classList.contains('dcf-audit-intrinsic'));
+    expect(wide).toHaveLength(2);
+
+    const dcfBlock = blocks.find((n) => n.textContent.includes('Inputs used'));
+    expect(dcfBlock).toBeTruthy();
+    expect(dcfBlock.classList.contains('dcf-audit-intrinsic')).toBe(false);
+  });
 });

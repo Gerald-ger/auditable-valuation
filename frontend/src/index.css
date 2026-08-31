@@ -1022,6 +1022,24 @@ nav button.active {
   flex-shrink: 0;
 }
 
+/* The excess-return and dividend-discount panels label their rows by what the
+   row *is* — "Payout the terminal phase needs", "Cost of equity the price
+   implies" — where the DCF above labels its rows in two words and spends the
+   room on the prose beside them. Both are right for their own panel, and 92px
+   only suits the second: at that width these wrap to three lines.
+
+   Scoped rather than widened for everyone, because the column this takes from
+   is the one the DCF fills with a paragraph. Measured: widening the shared rule
+   instead would cost that paragraph 138px.
+
+   240px is measured, not chosen. The widest label in either panel is "Payout
+   the terminal phase needs", which needs 211px in Segoe UI, 233px in Arial and
+   Liberation Sans, and 239px in Verdana — so this is the narrowest column that
+   holds every label on one line on a machine without the Windows fonts. */
+.dcf-audit-intrinsic .dcf-audit-row > .dcf-label {
+  width: 240px;
+}
+
 .dcf-audit-row > span:last-child {
   flex: 1;
   min-width: 260px;

@@ -1031,7 +1031,7 @@ function IntrinsicPanel({ analysis, ticker }) {
         Where the value comes from &mdash; {ccy}
         {bank ? ', aggregate' : ' per share'}
       </div>
-      <div className="dcf-audit">
+      <div className="dcf-audit dcf-audit-intrinsic">
         {(bank
           ? [
               ['Book value of common equity', big(v.book_value_of_equity)],
@@ -1054,7 +1054,7 @@ function IntrinsicPanel({ analysis, ticker }) {
       </div>
 
       <div className="sens-title">What the model assumes</div>
-      <div className="dcf-audit">
+      <div className="dcf-audit dcf-audit-intrinsic">
         {(bank
           ? [
               [
@@ -1116,15 +1116,22 @@ function IntrinsicPanel({ analysis, ticker }) {
             ]
         ).map(([label, value, note]) => (
           /* The note goes beside the value, not inside the label, because
-             `.dcf-audit-row > .dcf-label` is a fixed 92px column and the span
-             next to it is `flex: 1`. That split was sized for the DCF, whose
-             labels are two words and whose prose already sits on the right —
-             "Inputs used" against a paragraph. These rows are the same shape in
-             reverse, so putting the sentence on the left wrapped it into 92px
-             of uppercase letter-spaced text: measured in Chrome against this
-             stylesheet, "Spread over cost of equity — claimed to persist
-             forever …" ran to 15 lines and a 278px row, beside 1104px of empty
-             column holding "7.03%".
+             `.dcf-label` is a fixed column and the span next to it is `flex: 1`.
+             That split was sized for the DCF, whose labels are two words and
+             whose prose already sits on the right — "Inputs used" against a
+             paragraph. These rows are the same shape in reverse, so putting the
+             sentence on the left wrapped it into a column of uppercase
+             letter-spaced text. Measured in Chrome against this stylesheet on
+             "Spread over cost of equity — claimed to persist forever …":
+
+               in the DCF's 92px column          15 lines, a 278px row
+               in this panel's own 240px column   5 lines, a  92px row
+               where it sits now, beside the value  1 line, a  20px row
+
+             The middle row is the point. `.dcf-audit-intrinsic` widened this
+             panel's labels afterwards, and it is *not* what fixes this: a
+             sentence does not fit a label column at any width a label column
+             should be.
 
              `muted-note` because the colour was `.dcf-label`'s and does not
              come with it; without the class the notes would arrive brighter
