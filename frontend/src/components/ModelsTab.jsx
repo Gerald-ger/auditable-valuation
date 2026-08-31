@@ -1115,33 +1115,59 @@ function IntrinsicPanel({ analysis, ticker }) {
               ],
             ]
         ).map(([label, value, note]) => (
+          /* The note goes beside the value, not inside the label, because
+             `.dcf-audit-row > .dcf-label` is a fixed 92px column and the span
+             next to it is `flex: 1`. That split was sized for the DCF, whose
+             labels are two words and whose prose already sits on the right —
+             "Inputs used" against a paragraph. These rows are the same shape in
+             reverse, so putting the sentence on the left wrapped it into 92px
+             of uppercase letter-spaced text: measured in Chrome against this
+             stylesheet, "Spread over cost of equity — claimed to persist
+             forever …" ran to 15 lines and a 278px row, beside 1104px of empty
+             column holding "7.03%".
+
+             `muted-note` because the colour was `.dcf-label`'s and does not
+             come with it; without the class the notes would arrive brighter
+             than they were, which is a change nobody asked for. */
           <div className="dcf-audit-row" key={label}>
-            <span className="dcf-label">
-              {label}
-              {note && <em> — {note}</em>}
+            <span className="dcf-label">{label}</span>
+            <span>
+              {value}
+              {note && <em className="muted-note"> — {note}</em>}
             </span>
-            <span>{value}</span>
           </div>
         ))}
+        {/* The same split as the mapped rows above, for the same reason. */}
         <div className="dcf-audit-row">
-          <span className="dcf-label">
-            Cost of equity <em>— {a.cost_of_equity_source === 'capm' ? 'CAPM' : 'supplied'}</em>
+          <span className="dcf-label">Cost of equity</span>
+          <span>
+            {pct(a.cost_of_equity_used, 2)}
+            <em className="muted-note">
+              {' '}— {a.cost_of_equity_source === 'capm' ? 'CAPM' : 'supplied'}
+            </em>
           </span>
-          <span>{pct(a.cost_of_equity_used, 2)}</span>
         </div>
         <div className="dcf-audit-row">
-          <span className="dcf-label">
-            Terminal growth <em>— {a.terminal_growth_source.replaceAll('_', ' ')}</em>
+          <span className="dcf-label">Terminal growth</span>
+          <span>
+            {pct(a.terminal_growth, 2)}
+            <em className="muted-note">
+              {' '}— {a.terminal_growth_source.replaceAll('_', ' ')}
+            </em>
           </span>
-          <span>{pct(a.terminal_growth, 2)}</span>
         </div>
         <div className="dcf-audit-row">
-          <span className="dcf-label">
-            Terminal share of the answer
-            {d.terminal_value_high && <em> — above the conventional 75% warning line</em>}
-          </span>
-          <span className={d.terminal_value_high ? 'down' : ''}>
-            {pct(d.terminal_value_share, 1)}
+          <span className="dcf-label">Terminal share of the answer</span>
+          {/* The flag colours the figure, and only the figure: the sentence
+              after it is the explanation, which reads as muted prose here the
+              way it does in Trust checks. */}
+          <span>
+            <span className={d.terminal_value_high ? 'down' : ''}>
+              {pct(d.terminal_value_share, 1)}
+            </span>
+            {d.terminal_value_high && (
+              <em className="muted-note"> — above the conventional 75% warning line</em>
+            )}
           </span>
         </div>
       </div>

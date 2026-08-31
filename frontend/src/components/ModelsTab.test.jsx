@@ -703,3 +703,47 @@ describe('ModelsTab', () => {
     expect(none.container.textContent).toContain('No revenue history available.');
   });
 });
+
+describe('the intrinsic panel\'s audit rows', () => {
+  /**
+   * `.dcf-audit-row > .dcf-label` is pinned to **92px** in `index.css`, sized
+   * for the DCF's labels — "Inputs used", "Trust checks" — which are two words
+   * and whose prose lives in the sibling span beside them. The excess-return
+   * and dividend-discount panels reuse the same row but put their explanatory
+   * note *inside* the label, so a sentence is force-wrapped into 92px of
+   * uppercase letter-spaced text.
+   *
+   * Measured in Chrome against the real stylesheet, 2026-08-31: "Spread over
+   * cost of equity — claimed to persist forever …" is 142 characters and wrapped
+   * to **15 lines**, a 278px-tall row, while the value column beside it was
+   * 1104px wide holding the five characters "7.03%".
+   *
+   * Every note in this panel is an `<em>` and the only other `<em>` in the file
+   * is in a `.chart-note`, so "no `<em>` inside a `.dcf-label`" is exactly the
+   * property, not a proxy for it.
+   */
+  it('keeps the prose out of the 92px label column', async () => {
+    const { container } = await mount({
+      analysisBody: analysis({
+        excess_return: {
+          ...EXCESS_RETURN,
+          // Lights up the fourth note, which is conditional on the flag and so
+          // is unreachable from the fixture as committed.
+          diagnostics: { ...EXCESS_RETURN.diagnostics, terminal_value_high: true },
+        },
+      }),
+    });
+    expect(container.querySelectorAll('.dcf-audit-row')).not.toHaveLength(0);
+    expect(container.querySelectorAll('.dcf-label em')).toHaveLength(0);
+  });
+
+  it('keeps each note, beside its value where the DCF puts its prose', async () => {
+    const { container } = await mount({
+      analysisBody: analysis({ excess_return: EXCESS_RETURN }),
+    });
+    const row = [...container.querySelectorAll('.dcf-audit-row')].find(
+      (r) => r.querySelector('.dcf-label')?.textContent.trim() === 'Return on equity');
+    expect(row).toBeTruthy();
+    expect(row.lastElementChild.textContent).toContain('mean of 4 reported periods');
+  });
+});
