@@ -41,6 +41,40 @@ function verdict(card) {
   return parts.join(' ');
 }
 
+/**
+ * Why these five shares and not five equal ones, answered with this company's
+ * own numbers.
+ *
+ * The percentages are read off the payload rather than written down here, so
+ * this cannot disagree with the bars beside it after a profile changes — the
+ * failure mode a hand-kept copy of `sector_weights.py` would have. The four
+ * clauses explaining *why* the split moves by type are `docs/scoring-system-
+ * design.md` §3's own sentence, and the bank-against-software-firm line is the
+ * README's; neither is a rationale invented for a tooltip.
+ *
+ * What it deliberately does not do is recite a reason per profile. There are
+ * thirteen of them, they would not fit, and a second copy of them here is one
+ * more place for them to go stale. The pillar detail underneath already shows
+ * which metrics the profile actually scored, which is the same argument made
+ * with evidence instead of prose.
+ */
+function weightsTooltip(card) {
+  const split = Object.entries(card.pillars)
+    .map(([n, d]) => `${n[0].toUpperCase()}${n.slice(1)} ${(d.weight * 100).toFixed(0)}%`)
+    .join(' · ');
+  return 'The five pillars do not count equally, and the split comes from the company\'s '
+    + `type rather than being picked per company. ${card.ticker} is scored as `
+    + `"${card.classification.replaceAll('_', ' ')}": ${split}.\n\n`
+    + 'Why it differs by type: sectors valued on intrinsic cash flow get more Valuation '
+    + 'and Quality, capital-regulated financials move to P/B and ROE, income payers to '
+    + 'yield and balance-sheet durability, pre-profit companies to growth and survival. '
+    + 'A bank has no EV/EBITDA or free-cash-flow yield to score, so its profile drops '
+    + 'them rather than grading it on the ratios that suit a software firm.\n\n'
+    + 'The profile sets which metrics each pillar contains too — click a pillar to see '
+    + 'the ones it scored. These percentages are the profile\'s: a pillar excluded for '
+    + 'thin data has its share redistributed across the rest.';
+}
+
 function PillarBar({ name, data }) {
   const [open, setOpen] = useState(false);
   // A pillar can carry a real score and still be dropped from the composite when
@@ -747,7 +781,14 @@ export default function ScorecardTab({ ticker, aiOnline }) {
 
       <div className="score-grid">
         <div className="panel">
-          <div className="panel-title">Pillar breakdown (click a pillar for metric detail)</div>
+          <div className="panel-title">
+            Pillar breakdown (click a pillar for metric detail)
+            {/* A tag rather than a title on the heading itself, because a
+                tooltip nobody can see is not one. Same shape and the same
+                `cursor: help` as the football field's tags, which are how this
+                page already says "there is an explanation behind this". */}
+            <span className="pillar-why" title={weightsTooltip(card)}>why these weights?</span>
+          </div>
           {Object.entries(card.pillars).map(([name, data]) => (
             <PillarBar key={name} name={name} data={data} />
           ))}

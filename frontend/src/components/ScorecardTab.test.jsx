@@ -322,3 +322,48 @@ describe('ScorecardTab', () => {
     expect(text).toContain('does not transfer across that gap');
   });
 });
+
+describe('why the pillars are weighted the way they are', () => {
+  /**
+   * The panel already shows each pillar's share as "x20%" and the profile name
+   * in the score meta, and says nothing about where either came from. The
+   * tooltip answers that with this company's own numbers rather than a
+   * paragraph the reader has to take on trust — which is also what stops it
+   * going stale when a profile changes, since the percentages are read off the
+   * payload rather than written down here.
+   */
+  it('explains the split with the profile and the weights this company got', async () => {
+    const { container } = await mount({});
+    const why = container.querySelector('.pillar-why');
+    expect(why).not.toBeNull();
+
+    const tip = why.getAttribute('title');
+    // The profile it was scored under, named rather than implied.
+    expect(tip).toContain('general');
+    // ...and the actual split, so a generic blurb cannot pass this.
+    expect(tip).toContain('Valuation 20%');
+    expect(tip).toContain('Growth 30%');
+    expect(tip).toContain('Momentum 15%');
+  });
+
+  it('reads the weights off the payload rather than hard-coding one profile', async () => {
+    // A bank: different profile, different split. Nothing in the tooltip may
+    // survive unchanged from the case above except the reasoning.
+    const { container } = await mount({
+      scoreBody: card({
+        classification: 'financials_bank',
+        pillars: {
+          valuation: pillar({ score: 60, weight: 0.3 }),
+          quality: pillar({ score: 60, weight: 0.3 }),
+          health: pillar({ score: 60, weight: 0.2 }),
+          growth: pillar({ score: 60, weight: 0.1 }),
+          momentum: pillar({ score: 60, weight: 0.1 }),
+        },
+      }),
+    });
+    const tip = container.querySelector('.pillar-why').getAttribute('title');
+    expect(tip).toContain('financials bank');
+    expect(tip).toContain('Valuation 30%');
+    expect(tip).toContain('Growth 10%');
+  });
+});

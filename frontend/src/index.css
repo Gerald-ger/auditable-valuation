@@ -1768,6 +1768,28 @@ nav button.active {
   text-transform: uppercase;
 }
 
+/* `.ff-tag`'s shape, for the same job one panel up: a small bordered label that
+   says an explanation is behind it. Its own class rather than a reuse, because
+   `ff-` is the football field's prefix and this is not in the football field —
+   a shared rule would tie two panels' styling together for no reason beyond
+   their looking alike today. Not uppercase, unlike `.ff-tag`: this one is a
+   question in words rather than a one-word marker, and uppercase reads as
+   shouting at that length. */
+/* No float and no margin: `.panel-title` is a flex row with
+   `justify-content: space-between`, so being its second child is what puts this
+   on the right — the same way `.peer-edit` sits in the panel below. */
+.pillar-why {
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-tag);
+  color: var(--muted);
+  cursor: help;
+}
+
 .ff-conviction.high { color: var(--up); }
 .ff-conviction.medium { color: var(--gold); }
 .ff-conviction.low { color: var(--down); }
