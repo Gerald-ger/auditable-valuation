@@ -395,6 +395,83 @@ describe('dragging a drawing', () => {
   });
 });
 
+describe('the crosshair price line', () => {
+  /**
+   * The chart's own crosshair cannot be told which series to snap to, so with
+   * moving averages drawn it settles on whichever is nearest the pointer. From
+   * 2026-08-31 the native price line was hidden while the magnet was on, which
+   * removed a line that lied; this draws the right one in its place, through
+   * the primitive that already renders drawings.
+   *
+   * `snapToBar` is the same function the drawing tools use, so the line and a
+   * line you draw now land on the same price rather than on two rules that
+   * happen to agree.
+   */
+  const drive = async () => {
+    const mounted = await mount();
+    const primitive = series.attachPrimitive.mock.calls[0][0];
+    const onMove = chart.subscribeCrosshairMove.mock.calls[0][0];
+    return { ...mounted, primitive, onMove };
+  };
+
+  it('places the line at the bar price the pointer is nearest', async () => {
+    const { primitive, onMove, container, unmount } = await drive();
+    series.priceToCoordinate.mockClear();
+
+    // The pointer's own price must differ from every one of the bar's four, or
+    // this cannot tell snapping from not snapping. The stub returns 100 by
+    // default and bars[0] opens at exactly 100, so a first draft of this test
+    // passed with `snapToBar` deleted. 104 is nearer the high (105) than the
+    // close (102) and equal to neither, so the snap has a visible effect and
+    // one right answer.
+    series.coordinateToPrice.mockReturnValue(104);
+    act(() => onMove({
+      time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map(),
+    }));
+
+    // `crosshairShape()` is what converts the price to a coordinate, and the
+    // renderer is what normally calls it — `requestUpdate` is a no-op in this
+    // mock, so nothing has asked for a repaint. Reading the shape first is
+    // therefore what exercises the conversion, and the argument it passed is
+    // the assertion that matters: the snapped price, not the pointer's.
+    expect(primitive.crosshairShape()).toEqual({ x1: 0, y1: 50, x2: 600, y2: 50 });
+    expect(series.priceToCoordinate).toHaveBeenCalledWith(105);
+    expect(container).toBeTruthy();
+    unmount();
+  });
+
+  it('drops the line when the pointer leaves the chart', async () => {
+    const { primitive, onMove, unmount } = await drive();
+    act(() => onMove({ time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map() }));
+    expect(primitive.crosshairShape()).not.toBeNull();
+
+    // What the library sends on leave: no time, no point.
+    act(() => onMove({}));
+    expect(primitive.crosshairShape()).toBeNull();
+    unmount();
+  });
+
+  it('draws nothing with the magnet off, where the chart draws its own', async () => {
+    const { primitive, onMove, container, unmount } = await drive();
+    click(button(container, 'Magnet'));
+    act(() => onMove({ time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map() }));
+    expect(primitive.crosshairShape()).toBeNull();
+    unmount();
+  });
+
+  it('clears the line the moment the magnet is switched off', async () => {
+    // Without this the stale line would sit on screen beside the chart's own
+    // until the next pointer move, which is two price lines saying two things.
+    const { primitive, onMove, container, unmount } = await drive();
+    act(() => onMove({ time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map() }));
+    expect(primitive.crosshairShape()).not.toBeNull();
+
+    click(button(container, 'Magnet'));
+    expect(primitive.crosshairShape()).toBeNull();
+    unmount();
+  });
+});
+
 describe('the magnet toggle', () => {
   it('applies the crosshair mode to the live chart instead of rebuilding it', async () => {
     /**
@@ -412,19 +489,18 @@ describe('the magnet toggle', () => {
       crosshair: { mode: 0, horzLine: { visible: true, labelVisible: true } },
     });
 
-    // 3 is `CrosshairMode.MagnetOHLC`, not 1 (`Magnet`). The difference is the
-    // one the toolbar's own tooltip has always described: `Magnet` sticks the
-    // crosshair to an OHLC series' **close** only, while the button says it
-    // "sticks to open/high/low/close". Measured against the installed
-    // lightweight-charts 5.2.0 typings, which document exactly that split.
+    // The mode never changes, and that is the point: `CrosshairMode` decides
+    // only the *price* snap, and the price line it would snap is hidden while
+    // the magnet is on — the snapped line is drawn by the primitive instead.
+    // The bar-snapping of the vertical line is not a mode at all; the library
+    // rounds the pointer to a bar index unconditionally.
     //
-    // The price line is hidden with the magnet on, and `labelVisible` with it.
-    // Hiding only the line would move the defect to the price axis rather than
-    // remove it: the label is drawn at the same snapped price, so it would go
-    // on reporting a moving average while the line stopped saying so.
+    // `labelVisible` moves with `visible`. The price-axis label is drawn at the
+    // same snapped price, so hiding only the line would have moved the defect
+    // onto the axis rather than removed it.
     click(button(container, 'Magnet'));
     expect(chart.applyOptions).toHaveBeenCalledWith({
-      crosshair: { mode: 3, horzLine: { visible: false, labelVisible: false } },
+      crosshair: { mode: 0, horzLine: { visible: false, labelVisible: false } },
     });
     expect(createChart.mock.calls.length).toBe(before);
     unmount();

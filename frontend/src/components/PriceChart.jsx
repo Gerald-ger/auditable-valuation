@@ -215,6 +215,11 @@ export default function PriceChart({
   // The moving end of a half-placed trendline, in chart space.
   const [preview, setPreview] = useState(null);
   const previewRef = useRef(null);
+  // `{price}` while the pointer is over the chart with the magnet on. A ref
+  // rather than state for the same reason the preview is one: it changes on
+  // every pointer move, and re-rendering the component for each would repaint
+  // the toolbar and the readout to move one line.
+  const crosshairRef = useRef(null);
   previewRef.current = preview;
   // Whether a drawing is under the pointer, which is the only thing the cursor
   // shape needs that CSS cannot work out for itself.
@@ -398,12 +403,15 @@ export default function PriceChart({
       // snapped price, so hiding only the line would move the defect onto the
       // axis rather than remove it.
       //
-      // The mode is still `MagnetOHLC` rather than `Normal`: it governs the
-      // line that is currently hidden, and keeping it correct is what makes
-      // restoring that line a change to one boolean. See TODOLIST for what
-      // drawing the right line instead would cost.
+      // `Normal` in both states, and the reason is a fact worth writing down:
+      // **`CrosshairMode` only decides the price snap, never the time snap.**
+      // Traced through the library's own `Magnet.align`, which early-returns for
+      // `Normal` and never touches the bar index in any mode — so the vertical
+      // line lands on the bar whatever this says, and a magnet mode here would
+      // only govern a horizontal line that is hidden. The snapped line is drawn
+      // by `DrawingsPrimitive` instead; see `crosshairShape`.
       crosshair: {
-        mode: magnetRef.current ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal,
+        mode: CrosshairMode.Normal,
         horzLine: { visible: !magnetRef.current, labelVisible: !magnetRef.current },
       },
       // Both wheel behaviours off: the library maps a *vertical* wheel to zoom
@@ -452,6 +460,7 @@ export default function PriceChart({
       getDrawings: () => drawingsRef.current,
       getSelectedId: () => selectedRef.current,
       getPreview: () => previewRef.current,
+      getCrosshair: () => crosshairRef.current,
     });
     series.attachPrimitive(primitive);
     primitiveRef.current = primitive;
@@ -567,6 +576,8 @@ export default function PriceChart({
     const volByTime = new Map(bars.map((b) => [String(b.time), b.volume]));
     const onMove = (param) => {
       if (!param.time || !param.point) {
+        crosshairRef.current = null;
+        primitive.update();
         setHoverBar(null);
         setHoverAt(null);
         setHoverEvents(null);
@@ -574,6 +585,18 @@ export default function PriceChart({
       }
       const date = toDateStr(param.time);
       const barData = param.seriesData.get(series);
+
+      // The price line the chart cannot draw itself. `snapToBar` is the same
+      // function the drawing tools use, so this line and a line drawn by hand
+      // land on the same price rather than on two rules that agree by accident.
+      // Only with the magnet on: with it off the chart draws its own, free line
+      // and a second one here would be two answers to one question.
+      const raw = magnetRef.current ? series.coordinateToPrice(param.point.y) : null;
+      crosshairRef.current = raw == null
+        ? null
+        : { price: snapToBar(bars, param.time, raw).price };
+      primitive.update();
+
       setHoverAt(param.point);
       setHoverBar(barData ? { date, volume: volByTime.get(String(param.time)), ...barData } : null);
       // Exact bar lookup — every event is snapped onto a bar, so the dot and the
@@ -954,10 +977,17 @@ export default function PriceChart({
   useEffect(() => {
     chartRef.current?.applyOptions({
       crosshair: {
-        mode: magnet ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal,
+        mode: CrosshairMode.Normal,
         horzLine: { visible: !magnet, labelVisible: !magnet },
       },
     });
+    // Without this the line drawn here would stay on screen beside the chart's
+    // own until the next pointer move — two price lines saying two things, for
+    // however long the reader leaves the pointer still after clicking.
+    if (!magnet) {
+      crosshairRef.current = null;
+      primitiveRef.current?.update();
+    }
   }, [magnet, chartEpoch]);
 
   // ── fullscreen ────────────────────────────────────────────────────

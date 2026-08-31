@@ -13,10 +13,11 @@ import { DrawingsPrimitive, snapToBar } from './drawingPrimitive';
  * A primitive whose pixel space is the identity, so a drawing's coordinates and
  * the pixels asserted against are the same numbers.
  */
-function primitiveWith(drawings, { width = 800 } = {}) {
+function primitiveWith(drawings, { width = 800, crosshair = null } = {}) {
   const p = new DrawingsPrimitive({
     getDrawings: () => drawings,
     getSelectedId: () => null,
+    getCrosshair: () => crosshair,
   });
   p.attached({
     chart: { timeScale: () => ({ width: () => width, timeToCoordinate: (t) => t }) },
@@ -149,5 +150,63 @@ describe('snapToBar', () => {
     expect(snapToBar(DAILY, '2026-01-06', null)).toEqual({ time: '2026-01-06', price: null });
     expect(snapToBar(DAILY, 'not-a-date', 100)).toEqual({ time: 'not-a-date', price: 100 });
     expect(snapToBar(null, 1, 2)).toEqual({ time: 1, price: 2 });
+  });
+});
+
+// ── the crosshair's own price line ───────────────────────────────────
+//
+// Drawn here rather than configured on the chart because neither magnet mode
+// can be told which series to snap to: both are documented as snapping to "the
+// price value of a single-value series", and a moving average is one, so the
+// library's line lands on whichever series is nearest the pointer. Between
+// 2026-08-31 and this change the line was simply hidden while the magnet was
+// on, which removed a line that lied and left nothing in its place.
+
+describe('the crosshair price line', () => {
+  it('spans the pane at the snapped price', () => {
+    const shape = primitiveWith([], { width: 640, crosshair: { price: 137 } })
+      .crosshairShape();
+    expect(shape).toEqual({ x1: 0, y1: 137, x2: 640, y2: 137 });
+  });
+
+  it('is absent when the pointer is off the chart', () => {
+    expect(primitiveWith([], { crosshair: null }).crosshairShape()).toBeNull();
+  });
+
+  it('is absent when the price cannot be placed on the scale', () => {
+    // `priceToCoordinate` returns null outside the plotted range, and a line at
+    // `null` would be drawn at the top of the pane rather than not at all.
+    const p = new DrawingsPrimitive({
+      getDrawings: () => [],
+      getSelectedId: () => null,
+      getCrosshair: () => ({ price: 1e9 }),
+    });
+    p.attached({
+      chart: { timeScale: () => ({ width: () => 800, timeToCoordinate: (t) => t }) },
+      series: { priceToCoordinate: () => null },
+      requestUpdate: () => {},
+    });
+    expect(p.crosshairShape()).toBeNull();
+  });
+
+  it('is absent before the primitive is attached', () => {
+    const p = new DrawingsPrimitive({
+      getDrawings: () => [],
+      getSelectedId: () => null,
+      getCrosshair: () => ({ price: 100 }),
+    });
+    expect(p.crosshairShape()).toBeNull();
+  });
+
+  it('costs nothing when no crosshair callback was given', () => {
+    // The three existing callers construct this without one; a missing
+    // callback must read as "no crosshair" rather than throw.
+    const p = new DrawingsPrimitive({ getDrawings: () => [], getSelectedId: () => null });
+    p.attached({
+      chart: { timeScale: () => ({ width: () => 800, timeToCoordinate: (t) => t }) },
+      series: { priceToCoordinate: (v) => v },
+      requestUpdate: () => {},
+    });
+    expect(p.crosshairShape()).toBeNull();
   });
 });

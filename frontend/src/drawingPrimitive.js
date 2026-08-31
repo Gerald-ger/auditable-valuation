@@ -24,6 +24,14 @@ const COLORS = { hline: '#fbbf24', trendline: '#60a5fa' };
 // it reads as "not yet a drawing" rather than as one that failed to save.
 const PREVIEW_COLOR = 'rgba(96, 165, 250, 0.8)';
 const PREVIEW_DASH = [5, 4];
+// The crosshair's own price line, standing in for the chart's — see
+// `crosshairShape`. Deliberately neutral and thin: it marks where the pointer
+// is, not a level anyone drew, so it must not compete with an `hline` the
+// reader placed on purpose. Dashed on the same rhythm as the preview, which is
+// the vocabulary this chart already uses for "transient".
+const CROSSHAIR_COLOR = 'rgba(190, 205, 220, 0.9)';
+const CROSSHAIR_DASH = [4, 3];
+const CROSSHAIR_WIDTH_PX = 1;
 
 /**
  * A chart time as a number that can be compared, whatever shape it arrived in.
@@ -193,6 +201,18 @@ class DrawingsRenderer {
                LINE_WIDTH_PX, PREVIEW_COLOR, PREVIEW_DASH);
         ctx.restore();
       }
+
+      // The crosshair's price line, last so it is never hidden behind a
+      // drawing — it tracks the pointer, and a pointer indicator that
+      // disappears under the thing being pointed at is the one case it must
+      // not fail. Not hit-testable, for the same reason the preview is not.
+      const crosshair = this._source.crosshairShape();
+      if (crosshair) {
+        ctx.save();
+        stroke(crosshair.x1, crosshair.y1, crosshair.x2, crosshair.y2,
+               CROSSHAIR_WIDTH_PX, CROSSHAIR_COLOR, CROSSHAIR_DASH);
+        ctx.restore();
+      }
     });
   }
 }
@@ -204,12 +224,16 @@ class DrawingsRenderer {
  * single source of truth and a re-render does not have to rebuild the chart.
  */
 export class DrawingsPrimitive {
-  constructor({ getDrawings, getSelectedId, getPreview }) {
+  constructor({ getDrawings, getSelectedId, getPreview, getCrosshair }) {
     this._getDrawings = getDrawings;
     this._getSelectedId = getSelectedId;
     // `{t1, p1, t2, p2}` while a trendline is half-placed, else null. A callback
     // like the other two so the chart never has to be rebuilt to show it.
     this._getPreview = getPreview ?? (() => null);
+    // `{price}` while the pointer is over the chart with the magnet on, else
+    // null. Optional for the same reason as the preview: a caller that does not
+    // want a crosshair should not have to pass one.
+    this._getCrosshair = getCrosshair ?? (() => null);
     this._series = null;
     this._chart = null;
     this._renderer = new DrawingsRenderer(this);
@@ -253,6 +277,30 @@ export class DrawingsPrimitive {
     const y2 = this._series.priceToCoordinate(p.p2);
     if (x1 == null || x2 == null || y1 == null || y2 == null) return null;
     return { x1, y1, x2, y2 };
+  }
+
+  /**
+   * Pixel geometry for the crosshair's own price line, or null.
+   *
+   * The chart's crosshair cannot do this. Neither magnet mode can be told which
+   * series to snap to — both are documented as snapping to "the price value of
+   * a single-value series", and a moving average overlay is one — so with MAs
+   * drawn the library's line settles on whichever series is nearest the pointer
+   * while the readout beside it reports the bar. The caller passes a price
+   * already snapped by `snapToBar`, and this places it.
+   *
+   * Full width, like an `hline`, and returned in the same `{x1,y1,x2,y2}` shape
+   * so the renderer strokes it with the code that already exists.
+   */
+  crosshairShape() {
+    if (!this._series || !this._chart) return null;
+    const c = this._getCrosshair();
+    if (!c || c.price == null) return null;
+    const y = this._series.priceToCoordinate(c.price);
+    // null outside the plotted range. Drawing at `null` would put the line at
+    // the top of the pane rather than nowhere, which is the one wrong answer.
+    if (y == null) return null;
+    return { x1: 0, y1: y, x2: this._chart.timeScale().width(), y2: y };
   }
 
   /** Pixel geometry for every drawing, given the current pan/zoom. */
