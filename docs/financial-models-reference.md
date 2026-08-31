@@ -17,8 +17,9 @@
 > third option.
 >
 > **Also: the first 16,000 characters of this file are pasted verbatim into the local AI's
-> system prompt** (`backend/ai_client.py`, `REFERENCE_CHAR_BUDGET`) — 21.2% of it as of
-> 2026-08-26, and the share falls every time the file grows. Anything inserted near the top
+> system prompt** (`backend/ai_client.py`, `REFERENCE_CHAR_BUDGET`) — 19.7% of it as of
+> 2026-08-31, down from 21.2% on 2026-08-26, and the share falls every time the file grows,
+> this sentence and the `resolve_beta` note below it included. Anything inserted near the top
 > pushes the tail out of the model's view entirely. A correction beside its own rule earns
 > that space; a preamble does not.
 
@@ -143,14 +144,20 @@ Re = Rf + Beta_levered * ERP  [+ size premium + country risk premium if applicab
 - `Rf`: 10-year government bond yield (match currency of cash flows).
 - `Beta`: regress 2–5 years of weekly/monthly stock returns vs broad index; or use provider beta. For thinly traded or distorted betas, use bottom-up beta: unlever peer betas, average, re-lever to target capital structure:
 
-  > **As implemented** (`financial_models.resolve_beta`, 2026-08-06): a simplification of
-  > the bottom-up method below — the provider beta is used only within `[0.3, 2.5]`,
-  > otherwise the **levered** peer median is substituted (min. 2 credible peers), otherwise
-  > 1.0. Peer betas are not unlevered and re-levered, so the substitute carries the peers'
-  > capital structures rather than the target's. Adequate as a guard against distorted
-  > readings (yfinance reported 0.173 for XOM), not a substitute for the full procedure.
-  > Note it cannot help where a whole sector's provider betas are distorted — measured
-  > 2026-08-06, energy majors return CVX 0.488, COP 0.123, SHEL −0.218, BP −0.212.
+  > **As implemented** (`financial_models.resolve_beta`, 2026-08-31 — replaces the
+  > 2026-08-06 note, which the engine has since outgrown in two ways): five tiers.
+  > **`computed`**, an OLS regression against the home index whenever the weekly series
+  > carries `market_series.MIN_BETA_OBSERVATIONS` = 104 overlapping points, capped at
+  > `BETA_MAX` and raised to `BETA_MIN` *only* when the regression's own confidence
+  > interval reaches `BETA_MIN` — otherwise the floor is **0.0**, so a beta measured
+  > credibly below 0.3 is published between 0 and 0.3 rather than lifted to it. It
+  > outranks the vendor figure because a sector-wide vendor break defeats a credibility
+  > band and peer substitution alike — measured 2026-08-06, energy majors returned XOM
+  > 0.173, CVX 0.488, COP 0.123, SHEL −0.218, BP −0.212. Then **`reported`** within
+  > `[0.3, 2.5]`; then **`peer_median_relevered`**, each credible peer unlevered on its
+  > own currency pair and the median re-levered to the target's D/E — §1.1.2's procedure,
+  > followed since 2026-08-07, where the superseded note said it was *not*; then the raw
+  > levered **`peer_median`** where leverage is unknown; then 1.0.
   - `Beta_unlevered = Beta_levered / (1 + (1 - Tc) * D/E)`
   - `Beta_relevered = Beta_unlevered * (1 + (1 - Tc) * D/E_target)`
 - `ERP` (equity risk premium): 4.5–5.5% mature markets (use a consistent published source, e.g., Damodaran monthly estimate).

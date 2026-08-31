@@ -230,7 +230,7 @@ is evidence that the demo is showing the right numbers.
 | 🧮 **Financial Models** | Full. The whole two-stage DCF, every assumption with its source, the sensitivity grid and all three reverse checks. |
 | 💼 Portfolio | Works — it was never a vendor feature; holdings live in the local SQLite store. |
 | 📈 Tracker | **Withheld.** The captured bars are weekly *closes* — no OHLCV, so no candles and no volume — and there are no news items or SEC filings. |
-| 📊 Screener | **Withheld.** The eight fixtures are eight *sectors*, chosen to exercise edge cases, so no peer group exists to screen against. |
+| 📊 Screener | **Withheld.** The eight fixtures span seven *sectors* (MSFT doubles Technology deliberately), chosen to exercise edge cases rather than as a comparable set, so no peer group exists to screen against. |
 | 🔑 API Key | **Withheld.** Demo mode reaches no vendor, so a key would change nothing — and on a hosted demo the machine storing it would not be yours. The endpoint refuses the write independently; hiding the tab is not the control. |
 
 Withheld rather than drawn with holes in it, on the same reasoning the rest of this project

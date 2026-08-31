@@ -15,9 +15,15 @@ What each of the six tabs does and why it does it that way. Split out of the REA
   and other non-US listings. Watchlist, holdings and recently viewed tickers sit below as
   one-click chips.
 - **Tab 1 — Tracker**: price chart for US + HK tickers (`AAPL`, `0700.HK`, …) with:
-  - bars sized to the period — **1-min** for 1d, **5-min** for 5d, 30-min for 1mo,
-    **hourly** for 3mo–2y, daily for 5y, weekly for max. 5y and max cannot go finer:
-    Yahoo caps sub-hourly data at 60 days and hourly at 730;
+  - bars sized to the period — **1-min** for 1d, **5-min** for 5d, **hourly** for 1mo,
+    **4-hour** for 3mo, **daily** for 6mo/1y/2y, **weekly** for 5y and max. Daily rather
+    than hourly from 6mo up because the indicators are daily-line conventions and the
+    chart counts *bars*: a one-year chart at 1h drew a fourteen-**hour** RSI under the
+    label RSI(14), and an MA50 spanning 7.7 sessions instead of fifty days. Three
+    measured Yahoo limits bound the rest — sub-hourly data is last-60-days only, hourly
+    is last-730-days, and a monthly response is capped at 500 bars, which is why `max`
+    is weekly rather than monthly (at monthly it would start XOM in 1985 instead of
+    1962, silently);
   - intraday bars are drawn on a **GMT+8 clock**, one timeline for both markets: HK reads
     naturally and a US session reads 21:30–03:58, which is when a Hong Kong reader is
     actually watching it. The cost is inherent — a US trading day straddles midnight and

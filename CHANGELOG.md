@@ -17,6 +17,45 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (k) - Four documented claims a reader would be misled by
+
+Corrected in place where the file describes the app, recorded as `As implemented` notes where
+the file is a specification. `docs/financial-models-reference.md` and
+`docs/scoring-system-design.md` are specs; editing a spec to match code is what the former's
+own header forbids, and the note is the sanctioned alternative.
+
+**`docs/features.md`'s chart interval table had six of nine rows wrong**, and it is the one a
+reader catches without opening any source: the chart legend prints `bars @ 4h` while the doc
+said 3mo was hourly. The stated reason was wrong in a more interesting way — the Yahoo limits
+it cited are real and measured, but they bound `3mo at 30m` and `5y at 1h`, not "5y and max",
+which are weekly because the indicators are daily-line conventions and because Yahoo caps a
+monthly response at 500 bars. Rewritten from `main.py:329-363`'s own comments.
+
+**The `As implemented` note for `resolve_beta` said the opposite of the code**: "Peer betas
+are *not* unlevered and re-levered", against a `peer_median_relevered` tier that does exactly
+that, and with no mention of the OLS tier that now outranks the vendor figure. A spec body
+going stale is allowed here; an `As implemented` note going stale is the mechanism failing.
+
+**README and `data_provider.py` contradicted `PROVENANCE.md`** — "eight fixtures are eight
+sectors" against "Seven branches, not eight: MSFT doubles up deliberately". AAPL and MSFT are
+both `Technology`. Eight fixtures, seven sectors, and the wrong sentence had been copied into
+the code as well.
+
+**`scoring-system-design.md` documented `tier` as an integer** (`"tier": 2`) where the engine
+returns the letter `S/A/B/C/D`; `test_plausibility.py` already built a letter-to-number map to
+bridge that, so the repo was working around its own doc. Its anchor tables are printed
+descending while the engine stores them ascending, which its own `piecewise_score` pseudocode
+assumes — both recorded rather than rewritten.
+
+**Three errors of mine were caught in review, and two are the same class as the defect.** The
+`resolve_beta` note first dated the re-levering to 2026-08-18, which is when TODOLIST closed an
+*audit* of it — the code landed 2026-08-07 in `7cdb32a`. Reading an audit date as an
+implementation date is precisely the drift this commit is about. The same note omitted the
+`BETA_MAX` cap and the 0.0 floor that applies when the regression's confidence interval falls
+short of `BETA_MIN` — a policy this session had changed hours earlier.
+
+No code behaviour changes; one code comment does. 808 backend / 240 frontend unchanged.
+
 ## 2026-08-31 (j) - A company that did not report its debt scored as one that has none
 
 `scoring.py` computed net debt as `(total_debt or 0) - (total_cash or 0)`, and ROIC's invested

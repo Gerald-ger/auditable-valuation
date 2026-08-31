@@ -189,6 +189,12 @@ METRIC_ANCHORS = {
 Rules:
 - **Winsorize before scoring:** clamp raw inputs to sane bounds (e.g., PE ∈ [-1000, 1000], margins ∈ [-2, 2]) to survive yfinance junk values.
 - **Descending anchor lists** (ev_ebitda, p_b, ...) are just sorted descending by x — same interpolation code, reversed.
+
+  > **As implemented** (`scoring.METRIC_ANCHORS`, 2026-08-31): the engine stores every curve
+  > **ascending** by x, including these five — `ev_ebitda` is `[(4,100), (7,90), (10,70),
+  > (14,50), (20,25), (30,0)]`, not the reverse printed in §2.1. The pairs and the curve are
+  > identical either way, but `piecewise_score` walks the list assuming ascending x, so the
+  > pseudocode above and the tables above do not agree with each other as printed.
 - **Non-monotonic anchors** encode "too much of a good thing" (dividend yield >9% = cut risk; current ratio >3 = lazy capital; price 60% above 200dma = froth). This is deliberate and comes straight from the reference doc's context notes.
 
 **Secondary method (when a peer list exists — OpenBB `compare.peers` ⬆, or user-supplied):** peer-relative percentile. `score = 100 * rank(value among peers) / (n−1)` (inverted for lower-is-better), require n ≥ 5 peers (ref §2.1.1: fewer than 4 → low confidence). When both methods are available, blend 50/50 and report both. The absolute method remains the default and the fallback — it never depends on data you might not have.
@@ -304,6 +310,13 @@ Round the composite to the nearest integer. **Never display decimals** — a 71.
 | 50–64 | 3 | Mixed | Strengths offset by real weaknesses — pillar breakdown is the story |
 | 35–49 | 4 | Weak | Multiple deteriorating pillars |
 | 0–34 | 5 | Fragile | Broad weakness or distress signals |
+
+> **As implemented** (`scoring.score_company` / `scoring.TIERS`, 2026-08-31): `tier` in the
+> response is the **letter**, not the number in the table above — `S`, `A`, `B`, `C`, `D` for
+> the five bands in order, at the same 80/65/50/35 cut points. §4.3's example showing
+> `"tier": 2` is therefore not a response this engine produces; a client coded against it
+> breaks. The numbering is kept here because §5.2's plausibility ordering is written in it,
+> and `backend/tests/test_plausibility.py` builds the letter-to-number map to bridge them.
 
 Confidence badge from coverage: **HIGH ≥ 85%**, **MEDIUM 60–84%**, **LOW < 60%** (LOW: show score greyed, exclude from default ranking). PRE_PROFIT type: confidence capped at MEDIUM regardless of coverage (ref §7.1).
 

@@ -1198,8 +1198,9 @@ class FixtureProvider:
 
     What it deliberately does **not** serve matters as much as what it does. The
     bars carry `{time, close}` and no OHLCV; there are no news items and no
-    filings; and the eight fixtures are eight *sectors*, chosen to exercise edge
-    cases, not a comparable set — so no peer group resolves. Tracker and
+    filings; and the eight fixtures span seven *sectors* — MSFT doubles Technology
+    deliberately, see PROVENANCE.md — chosen to exercise edge cases rather than
+    as a comparable set, so no peer group resolves. Tracker and
     Screener are therefore withheld in demo mode rather than drawn with holes in
     them, because a visitor reads a stripped chart as a broken chart.
 

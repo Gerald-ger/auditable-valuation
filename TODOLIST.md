@@ -38,6 +38,48 @@ against itself.
 
 ## Now
 
+### ⚪ ~~Four documented claims that a reader would be misled by~~ — closed 2026-08-31
+
+Found by the desktop verification sweep, ranked by how little work it takes a reader to
+catch them out. All four were **corrected in place where the file describes the app**, and
+**recorded as `As implemented` notes where the file is a specification** — the two scoring
+and reference docs are specs, and editing a spec to match code is what
+`docs/financial-models-reference.md`'s own header forbids in as many words.
+
+- **`docs/features.md` — the chart interval table, six of nine rows wrong.** The one a
+  reader catches without opening any source: the chart legend prints `bars @ 4h` while the
+  doc said 3mo was hourly. 1mo is `1h` not 30-min, 3mo is `4h`, 6mo/1y/2y are `1d` not
+  hourly, 5y is `1wk` not daily. The *reason* was wrong too, and more interestingly: the
+  Yahoo caps it cited are real and measured, but they bound `3mo at 30m` and `5y at 1h` —
+  not "5y and max", which are weekly for a different reason entirely (indicator semantics,
+  and a 500-bar cap on monthly responses). Rewritten from `main.py:329-363`'s own comments.
+- **`financial-models-reference.md` §1.1.2's `As implemented` note said the opposite of the
+  code.** It read "Peer betas are **not** unlevered and re-levered" against a
+  `peer_median_relevered` tier that does exactly that, and it predated the regression tier
+  that now outranks the vendor figure entirely. This is the worst of the four: a spec body
+  going stale is allowed, an `As implemented` note going stale is the mechanism failing.
+- **README and `data_provider.py` contradicted `PROVENANCE.md`.** "The eight fixtures are
+  eight *sectors*" against PROVENANCE's "Seven branches, not eight: MSFT doubles up
+  deliberately". AAPL and MSFT are both `Technology`; it is **8 fixtures, 7 sectors**. The
+  wrong sentence had been copied into the code as well.
+- **`scoring-system-design.md` documented `tier` as an integer.** §4.3's example response
+  shows `"tier": 2`; the engine returns the **letter** `S/A/B/C/D`. A client coded against
+  that example breaks — and `test_plausibility.py` already builds a letter-to-number map to
+  bridge the same gap, so the repo was working around its own doc. Its anchor tables are
+  also printed descending while the engine stores them ascending, which the file's own
+  `piecewise_score` pseudocode assumes.
+
+**Three of my own errors were caught by verification and are worth recording**, because two
+of them are the same class as the defects being fixed. The `resolve_beta` note first dated
+the re-levering to 2026-08-18 — that is when TODOLIST closed an **audit** of it; the code
+landed in `7cdb32a` on **2026-08-07**, and reading an audit date as an implementation date is
+exactly the drift this entry is about. The same note also omitted the `BETA_MAX` cap and the
+**0.0** floor that applies when the regression's confidence interval falls short of
+`BETA_MIN` — the second being a policy this session had itself changed hours earlier.
+
+*The reference doc's header percentage moved as a side effect and is corrected with it:
+16,000 characters is **19.7%** of the file, not the 21.2% it claimed on 2026-08-26.*
+
 ### ⚪ ~~An unreported debt balance scored as a debt-free company~~ — closed 2026-08-31
 
 `scoring.py` read `(total_debt or 0) - (total_cash or 0)` for net debt, and the same
