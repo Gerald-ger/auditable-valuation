@@ -210,3 +210,45 @@ describe('the crosshair price line', () => {
     expect(p.crosshairShape()).toBeNull();
   });
 });
+
+describe('the crosshair price label on the axis', () => {
+  const viewsFor = (crosshair) =>
+    primitiveWith([], { width: 640, crosshair }).priceAxisViews();
+
+  it('carries the snapped price at the line’s own coordinate', () => {
+    const [view] = viewsFor({ price: 137.25 });
+    expect(view.coordinate()).toBe(137.25);   // identity pixel space in this harness
+    expect(view.text()).toBe('137.25');
+    expect(view.visible()).toBe(true);
+  });
+
+  it('shows nothing when there is no crosshair', () => {
+    expect(viewsFor(null)).toEqual([]);
+  });
+
+  it('returns the same array while the state is unchanged', () => {
+    /**
+     * The library's own contract, quoted in its typings: "this method must
+     * return new array if set of views has changed and should try to return the
+     * same array if nothing changed". It is called on essentially every
+     * repaint, and it caches on reference identity — a fresh array each time
+     * would rebuild the wrapper objects on every pointer move.
+     */
+    const p = primitiveWith([], { crosshair: { price: 100 } });
+    expect(p.priceAxisViews()).toBe(p.priceAxisViews());
+
+    const empty = primitiveWith([], { crosshair: null });
+    expect(empty.priceAxisViews()).toBe(empty.priceAxisViews());
+  });
+
+  it('does not pin its coordinate, so the axis keeps it clear of other labels', () => {
+    /**
+     * `fixedCoordinate` is optional, and implementing it would opt this label
+     * out of the pass that pushes overlapping axis labels apart — the one that
+     * keeps it from sitting on top of the series' own last-value label. Absent
+     * on purpose, asserted so it stays absent.
+     */
+    const [view] = viewsFor({ price: 100 });
+    expect(view.fixedCoordinate).toBeUndefined();
+  });
+});

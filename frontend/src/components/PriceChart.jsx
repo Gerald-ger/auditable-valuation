@@ -1133,7 +1133,7 @@ export default function PriceChart({
           <button
             className={`seg ${magnet ? 'active' : ''}`}
             title={magnet
-              ? 'Magnet on: a line you draw lands on a bar’s open, high, low or close. The price line is hidden — with moving averages drawn it would stick to whichever is nearest the pointer rather than to the bar, and the readout already follows the pointer with that bar’s figures. Click to read prices at any point instead.'
+              ? 'Magnet on: the price line and any line you draw snap to a bar’s open, high, low or close — never to a moving average. Click to read prices at any point instead.'
               : 'Magnet off: the price line and new lines follow the pointer exactly.'}
             onClick={() => setMagnet((m) => !m)}
           >

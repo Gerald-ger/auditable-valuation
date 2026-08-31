@@ -32,6 +32,16 @@ const PREVIEW_DASH = [5, 4];
 const CROSSHAIR_COLOR = 'rgba(190, 205, 220, 0.9)';
 const CROSSHAIR_DASH = [4, 3];
 const CROSSHAIR_WIDTH_PX = 1;
+// The axis pill for that line. Opaque rather than the line's own translucent
+// grey: it sits on the axis gutter over tick labels, and the price has to be
+// readable through nothing.
+const CROSSHAIR_LABEL_BACK = '#4b5563';
+const CROSSHAIR_LABEL_TEXT = '#f3f4f6';
+// Returned whenever there is no crosshair, as a module constant rather than a
+// fresh `[]`. `priceAxisViews` is called on essentially every repaint and the
+// library caches on reference identity, so a new empty array each time would
+// rebuild its wrappers on every pointer move for no change at all.
+const NO_AXIS_VIEWS = [];
 
 /**
  * A chart time as a number that can be compared, whatever shape it arrived in.
@@ -218,6 +228,44 @@ class DrawingsRenderer {
 }
 
 /**
+ * The price label for the crosshair line, on the series' own price axis.
+ *
+ * `fixedCoordinate` is deliberately not implemented. It is optional, and a view
+ * that pins its coordinate is excluded from the pass that pushes overlapping
+ * axis labels apart — which is exactly what stops this label sitting on top of
+ * the series' own last-value label. Leaving it off is what buys that for free.
+ */
+class CrosshairAxisView {
+  constructor(source) {
+    this._source = source;
+  }
+
+  coordinate() {
+    // Only read while `visible()` is true, but the library asks for it either
+    // way on some paths, and a `null` here would be drawn at the top of the
+    // axis rather than nowhere.
+    return this._source.crosshairShape()?.y1 ?? 0;
+  }
+
+  text() {
+    const price = this._source.crosshairPrice();
+    return price == null ? '' : price.toFixed(2);
+  }
+
+  textColor() {
+    return CROSSHAIR_LABEL_TEXT;
+  }
+
+  backColor() {
+    return CROSSHAIR_LABEL_BACK;
+  }
+
+  visible() {
+    return this._source.crosshairShape() !== null;
+  }
+}
+
+/**
  * Series primitive holding every drawing for the current ticker.
  *
  * It reads its data through callbacks rather than owning it, so React stays the
@@ -238,6 +286,8 @@ export class DrawingsPrimitive {
     this._chart = null;
     this._renderer = new DrawingsRenderer(this);
     this._requestUpdate = null;
+    // Built once and handed back by reference; see `NO_AXIS_VIEWS`.
+    this._axisViews = [new CrosshairAxisView(this)];
   }
 
   attached({ chart, series, requestUpdate }) {
@@ -263,6 +313,16 @@ export class DrawingsPrimitive {
 
   paneViews() {
     return [{ renderer: () => this._renderer, zOrder: () => 'top' }];
+  }
+
+  /** The price the crosshair line is drawn at, or null. */
+  crosshairPrice() {
+    return this._getCrosshair()?.price ?? null;
+  }
+
+  /** The axis label for that line — one view, or none. */
+  priceAxisViews() {
+    return this.crosshairShape() ? this._axisViews : NO_AXIS_VIEWS;
   }
 
   /** Pixel geometry for the trendline being placed, or null. */
