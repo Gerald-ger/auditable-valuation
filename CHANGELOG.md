@@ -17,6 +17,28 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (l) - The error boundary did not cover the way out
+
+`ErrorBoundary` wrapped only the tab body, so the title, the search box and the tab nav
+rendered unprotected. A render throw in React unmounts the entire tree — the exact failure
+that boundary exists to stop, in the part of the page it did not cover. The nav is what made
+it expensive: lose the header and the reader cannot even switch to a tab that still works.
+
+**Scoped to the search box rather than the header, and a mutation proves the scoping and not
+merely the code.** `<h1>` is a string literal and `<nav>` maps a module constant, so neither
+can throw on data; `SearchBar` is the only part of the header that renders a fetched payload
+and touches `localStorage`. Wrapping the whole header would be worse — a search failure would
+take the nav with it, which is the outcome being prevented — so the third mutation does
+exactly that, and the test goes red.
+
+`ErrorBoundary` gained an optional `fallback`: its default is a panel with a heading, a
+paragraph, a stack disclosure and a Try-again button, which is right for a tab body and wrong
+wedged between the title and the nav. `resetKey={tab}` gives the search box another attempt on
+the next tab change, since the compact fallback carries no button.
+
+Two tests, three mutations each landing on exactly the intended test. **180 bytes**: bundle
+491.42 -> 491.60 kB. 240 -> 242 frontend, 1048 -> 1050 offline.
+
 ## 2026-08-31 (k) - Four documented claims a reader would be misled by
 
 Corrected in place where the file describes the app, recorded as `As implemented` notes where

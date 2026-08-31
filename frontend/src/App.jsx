@@ -107,8 +107,22 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Auditable Valuation</h1>
+        {/* The header sits outside the tab body's boundary, so an unguarded
+            throw here unmounts the whole tree — the failure that boundary
+            exists to stop, in the part of the page it does not cover. Only the
+            search box needs guarding: `h1` is a literal and `nav` maps a module
+            constant, so neither can throw on data. Scoped to the search box
+            rather than the whole header on purpose — wrapping the header would
+            let a search failure take the nav with it, and the nav is the way
+            out. `resetKey={tab}` gives it another attempt on the next tab
+            change, since the compact fallback has no Try-again button. */}
         {TICKER_TABS.has(tab) && (
-          <SearchBar value={ticker} saved={saved} onSelect={setTicker} />
+          <ErrorBoundary
+            resetKey={tab}
+            fallback={<span className="chart-note">Search unavailable — reload the page.</span>}
+          >
+            <SearchBar value={ticker} saved={saved} onSelect={setTicker} />
+          </ErrorBoundary>
         )}
         <nav>
           {TABS.map(([key, label]) => (

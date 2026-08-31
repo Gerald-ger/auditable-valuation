@@ -64,6 +64,10 @@ export default class ErrorBoundary extends Component {
   render() {
     const { error, stack } = this.state;
     if (!error) return this.props.children;
+    // The panel below is sized for a tab body. A boundary guarding something
+    // inline — the header's search box — needs to fail in the space it occupies
+    // rather than push the nav down the page, so callers there pass their own.
+    if (this.props.fallback) return this.props.fallback;
     return (
       <div className="error-boundary">
         <div className="error-boundary-title">This panel failed to render.</div>

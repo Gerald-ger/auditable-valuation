@@ -38,6 +38,29 @@ against itself.
 
 ## Now
 
+### ⚪ ~~A throw in the header blanked the whole app~~ — closed 2026-08-31
+
+`ErrorBoundary` wrapped only the tab body ([App.jsx](frontend/src/App.jsx)), so the title,
+the search box and the **tab nav** rendered unprotected. A render throw in React unmounts the
+entire tree — which is the exact failure that boundary was written to stop, occurring in the
+part of the page it did not cover. The nav is what made it expensive: lose the header and the
+reader cannot switch to a tab that still works.
+
+**Scoped to the search box, not the header**, and a mutation proves the scoping rather than
+just the code. `<h1>` is a string literal and `<nav>` maps a module constant, so neither can
+throw on data; `SearchBar` is the only part of the header that renders a fetched payload and
+reads `localStorage`. Wrapping the whole header is *worse* — a search failure would take the
+nav down with it, which is the outcome being prevented. Mutation C does exactly that and the
+test goes red.
+
+`ErrorBoundary` gained an optional `fallback`, because its default is a panel with a heading,
+a paragraph, a stack disclosure and a Try-again button — correct for a tab body, wrong wedged
+between the title and the nav. `resetKey={tab}` gives the search box another attempt on the
+next tab change, since the compact fallback carries no button.
+
+**Cost: 180 bytes.** Bundle 491.42 → 491.60 kB. Two tests, three mutations, each landing on
+exactly the intended test.
+
 ### ⚪ ~~Four documented claims that a reader would be misled by~~ — closed 2026-08-31
 
 Found by the desktop verification sweep, ranked by how little work it takes a reader to
