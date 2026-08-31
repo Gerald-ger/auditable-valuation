@@ -25,7 +25,11 @@ import PriceChart from './PriceChart';
 import { render, click, flush } from '../test-utils';
 import { toChartTime } from '../charttime';
 
-const { api, chart, series, createChart, timeScaleApi } = vi.hoisted(() => {
+const { api, chart, series, createChart, timeScaleApi, requestUpdate } = vi.hoisted(() => {
+  // The repaint a primitive asks for. A spy rather than a no-op because
+  // *not* calling it on every pointer move is a property worth pinning — see
+  // the test that says so.
+  const requestUpdate = vi.fn();
   const series = {
     setData: vi.fn(), createPriceLine: vi.fn(),
     priceScale: () => ({ applyOptions: vi.fn() }),
@@ -39,9 +43,7 @@ const { api, chart, series, createChart, timeScaleApi } = vi.hoisted(() => {
      * anything. Nothing failed, because nothing exercised the gesture; the
      * moment a test did, it failed for this reason instead of the real one.
      */
-    attachPrimitive: vi.fn((p) => p.attached({
-      chart, series, requestUpdate: () => {},
-    })),
+    attachPrimitive: vi.fn((p) => p.attached({ chart, series, requestUpdate })),
   };
   /**
    * The `ITimeScaleApi` surface this component reaches for, defined once.
@@ -67,6 +69,7 @@ const { api, chart, series, createChart, timeScaleApi } = vi.hoisted(() => {
     subscribeCrosshairMove: vi.fn(), subscribeClick: vi.fn(),
   };
   return {
+    requestUpdate,
     /**
      * Every one of these returns a promise in `../api`, and so must the double.
      * `vi.fn()` returns undefined, so `persistMove`'s `.catch(() => {})` threw
@@ -468,6 +471,83 @@ describe('the crosshair price line', () => {
 
     click(button(container, 'Magnet'));
     expect(primitive.crosshairShape()).toBeNull();
+    unmount();
+  });
+});
+
+describe('what the crosshair line must not do', () => {
+  const drive = async (props) => {
+    const mounted = await mount([], props);
+    return {
+      ...mounted,
+      primitive: () => series.attachPrimitive.mock.calls.at(-1)[0],
+      onMove: () => chart.subscribeCrosshairMove.mock.calls.at(-1)[0],
+    };
+  };
+
+  it('does not ask for a repaint on every pointer move', async () => {
+    /**
+     * The library already schedules one. `_internal_setAndSaveCurrentPosition`
+     * calls `cursorUpdate()` *before* it fires the crosshair event this handler
+     * is subscribed to, and a Cursor-level paint redraws the top canvas —
+     * which is the layer this primitive registers on — unconditionally.
+     *
+     * Asking again would not make the line appear any sooner. It would raise
+     * that already-scheduled repaint from Cursor to Full, because
+     * `requestUpdate` is wired to `fullUpdate`: every pane's background and
+     * grid, every series, and a price-scale recalculation, on every mousemove,
+     * to redraw a layer that was going to be redrawn anyway.
+     */
+    const { onMove, unmount } = await drive();
+    requestUpdate.mockClear();
+
+    act(() => onMove()({ time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map() }));
+    act(() => onMove()({ time: bars[1].time, point: { x: 20, y: 30 }, seriesData: new Map() }));
+    act(() => onMove()({}));
+
+    expect(requestUpdate).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('snaps to the close on a line chart, which plots nothing else', async () => {
+    /**
+     * A line chart is `setData(bars.map(b => ({time, value: b.close})))` — the
+     * high and the low are never drawn. Snapping to one would put the price
+     * line at a level nowhere on screen, and disagree with the readout, which
+     * shows the plotted value.
+     */
+    const { container, primitive, onMove, unmount } = await drive();
+    click(button(container, 'Line'));
+    series.coordinateToPrice.mockReturnValue(104);
+    series.priceToCoordinate.mockClear();
+
+    act(() => onMove()({ time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map() }));
+
+    // Reading the shape is what performs the conversion — nothing asks for a
+    // repaint on a pointer move any more, which is the test above this one.
+    expect(primitive().crosshairShape()).not.toBeNull();
+    // bars[0] is open 100 / high 105 / low 95 / close 102. 104 is nearer the
+    // high, and the high is not on a line chart.
+    expect(series.priceToCoordinate).toHaveBeenCalledWith(102);
+    expect(series.priceToCoordinate).not.toHaveBeenCalledWith(105);
+    unmount();
+  });
+
+  it('does not outlive the ticker it was measured on', async () => {
+    /**
+     * The same hazard the drawings and the half-placed preview are cleared for,
+     * in the effect above them: the primitive reads this unconditionally, so a
+     * price from the previous company would be drawn against the new one's
+     * scale until the pointer next moved.
+     */
+    const { primitive, onMove, rerender, unmount } = await drive();
+    act(() => onMove()({ time: bars[0].time, point: { x: 10, y: 20 }, seriesData: new Map() }));
+    expect(primitive().crosshairShape()).not.toBeNull();
+
+    await act(async () => {
+      rerender(<PriceChart bars={bars} events={[]} interval="1d" ticker="MSFT" />);
+    });
+    expect(primitive().crosshairShape()).toBeNull();
     unmount();
   });
 });

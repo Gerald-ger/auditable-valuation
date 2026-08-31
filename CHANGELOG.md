@@ -17,6 +17,79 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (h) - The line the chart could not be configured to draw
+
+Earlier today the crosshair's price line was hidden while the magnet was on, because it stuck to
+whichever series was nearest the pointer — with three moving averages and a dispersion band drawn,
+usually one of those rather than the bar, while the readout beside it reported the bar. Hiding it
+removed a line that lied and left nothing in its place. The reader missed it, which is precisely
+what the argument for hiding it said it could not settle from a desk. So the option that entry
+costed and declined got built.
+
+**One snapping rule instead of two that agreed by accident.** `DrawingsPrimitive` gained a fourth
+callback and `crosshairShape()`, and `PriceChart` snaps the pointer's price with `snapToBar` — the
+same function the drawing tools have always used. The crosshair and a line drawn by hand now land
+on the same price because they share one rule. `CrosshairAxisView` puts the price back on the axis.
+
+**Three library contracts were traced through the shipped bundle rather than assumed, and one
+changed the design.** `CrosshairMode` decides only the *price* snap and never the *time* snap — the
+library rounds the pointer to a bar index unconditionally, in every mode — so the vertical line
+lands on the bar whatever the mode says. The mode is therefore `Normal` in both states now, where a
+first pass had kept `MagnetOHLC` governing a line nobody could see. `requestUpdate` schedules
+through `requestAnimationFrame` and collapses repeated calls within a frame, so driving it from a
+pointer-move handler is safe. And `fixedCoordinate` is deliberately **not** implemented: a view
+that pins its coordinate is excluded from the pass that pushes overlapping axis labels apart, which
+is what keeps this label off the series' own last-value label. A test asserts its absence, because
+nothing about a missing optional method looks deliberate.
+
+**The estimate was wrong in a useful direction.** The entry that costed this work said jsdom could
+not verify it, because the chart is mocked wholesale. Half true: nothing can assert what the canvas
+paints, but `drawingPrimitive.test.js` builds a primitive whose pixel space is the identity, so the
+*geometry* is asserted exactly — `{x1: 0, y1: 137, x2: 640, y2: 137}` for a price of 137. Thirteen
+tests across the two files, and the four `PriceChart` ones drive the real crosshair handler through
+the mocked chart and read the primitive back out of `attachPrimitive`.
+
+**Four mutations landed and one placebo was caught before it shipped.** Removing `snapToBar`,
+failing to clear on pointer-leave, never showing the axis label, and pinning the label's
+coordinate all turn the intended tests red. The placebo is the one worth recording: the first draft
+stubbed the pointer's price at 100 while `bars[0]` opens at exactly 100, so snapping was a fixed
+point and deleting `snapToBar` left the test green. It now stubs 104 against a high of 105, where
+the snap has a visible effect and one right answer.
+
+Also fixed here, in the commit after the one that caused it: the toolbar tooltip still said "the
+price line is hidden", written when it was and false from the moment the line came back. It now
+says the price line and any line you draw snap to a bar's open, high, low or close, never to a
+moving average — which is, finally, what the button does.
+
+**An independent review then found three defects in the two commits above, and all three were
+real.** They are recorded here rather than folded away, because two of them were invisible from
+the diff and the third was invisible from the tests.
+
+- **A repaint escalated from Cursor to Full, on every pointer move.** `primitive.update()` was
+  called from the crosshair handler on the reasonable-sounding theory that a changed line needs a
+  repaint. It does not: `setAndSaveCurrentPosition` calls its own `cursorUpdate()` **before** it
+  fires the event that handler is subscribed to, and a Cursor-level paint redraws the top canvas —
+  the layer this primitive registers on — unconditionally, outside the `type !== Cursor` guard.
+  So the repaint was already scheduled. What the extra call did was raise it to Full, because
+  `requestUpdate` is wired to `fullUpdate`: every pane's background and grid, every series, and a
+  price-scale recalculation, on every mousemove, for a layer that was going to be redrawn anyway.
+  Verified in the installed bundle at four points before removing it. **The fix deletes two lines.**
+- **The snapped price outlived its ticker.** `crosshairRef` was not cleared on a ticker change,
+  while the effect immediately around it clears the drawings, the selection and the half-placed
+  preview — with a comment explaining that the primitive reads them unconditionally, so a
+  half-drawn line would outlive the stock it was drawn on. The crosshair has exactly that property
+  and was missed.
+- **A line chart plots the close and nothing else**, and the crosshair was snapping to
+  open/high/low as well — putting the price line at a level nowhere on screen, and disagreeing
+  with the readout, which shows the plotted value. The snap now runs against the prices the drawn
+  series actually has, built once per chart construction rather than per pointer move.
+
+Three more tests, three more mutations, each landing on its own. The performance one is worth the
+line it costs: nothing in a diff, a screenshot or a test suite shows a repaint that was already
+going to happen being made four times more expensive.
+
+224 -> **240 frontend**, 800 backend, 1,040 offline.
+
 ## 2026-08-31 (g) - A line that pointed at one price under a number saying another
 
 Reported from a browser: with moving averages drawn, the crosshair's price line sticks to whichever

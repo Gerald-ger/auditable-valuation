@@ -288,6 +288,11 @@ export default function PriceChart({
     setSelectedId(null);
     setPending(null);
     setPreview(null);
+    // Same hazard, same reason: the primitive reads this unconditionally, so a
+    // price measured on the previous company would be drawn against this one's
+    // scale until the pointer next moved. It is a ref rather than state, so it
+    // is cleared here rather than through a setter.
+    crosshairRef.current = null;
     return () => { live = false; };
   }, [ticker]);
 
@@ -431,6 +436,15 @@ export default function PriceChart({
     });
     chartRef.current = chart;
     markersRef.current = null;
+
+    // What the crosshair may snap to: the prices this chart type actually
+    // draws. Built once per construction rather than per pointer move, and
+    // only where it differs — `snapToBar` reads open/high/low/close off each
+    // bar and skips the ones that are absent, so a close-only bar snaps to the
+    // close by the same code path.
+    const snapBars = chartType === 'line'
+      ? bars.map((b) => ({ time: b.time, close: b.close }))
+      : bars;
 
     let series;
     if (chartType === 'line') {
@@ -577,7 +591,6 @@ export default function PriceChart({
     const onMove = (param) => {
       if (!param.time || !param.point) {
         crosshairRef.current = null;
-        primitive.update();
         setHoverBar(null);
         setHoverAt(null);
         setHoverEvents(null);
@@ -591,11 +604,23 @@ export default function PriceChart({
       // land on the same price rather than on two rules that agree by accident.
       // Only with the magnet on: with it off the chart draws its own, free line
       // and a second one here would be two answers to one question.
+      // **No `primitive.update()` here, deliberately.** The library has already
+      // scheduled the repaint: `setAndSaveCurrentPosition` calls its own
+      // `cursorUpdate()` *before* firing the event this handler is subscribed
+      // to, and a Cursor-level paint redraws the top canvas — the layer this
+      // primitive draws on — unconditionally. Asking again would not make the
+      // line appear sooner; `requestUpdate` is wired to `fullUpdate`, so it
+      // would raise that repaint from Cursor to Full and redraw every pane's
+      // background and grid, every series, and the price scales, on every
+      // mousemove, for a layer that was going to be redrawn anyway.
+      //
+      // `snapBars` rather than `bars`: a line chart plots the close and nothing
+      // else, so snapping to a high would put this line at a level that is
+      // nowhere on screen and disagree with the readout beside it.
       const raw = magnetRef.current ? series.coordinateToPrice(param.point.y) : null;
       crosshairRef.current = raw == null
         ? null
-        : { price: snapToBar(bars, param.time, raw).price };
-      primitive.update();
+        : { price: snapToBar(snapBars, param.time, raw).price };
 
       setHoverAt(param.point);
       setHoverBar(barData ? { date, volume: volByTime.get(String(param.time)), ...barData } : null);

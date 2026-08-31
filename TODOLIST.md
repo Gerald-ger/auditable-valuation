@@ -1216,7 +1216,7 @@ attach a false reason to a multiple that was never going to compute. *Trigger: a
 median below 0.005×, which no fixture approaches — or a decision to make every zero-valued
 median state itself, which is a different and larger change than one word.*
 
-### 🟡 The crosshair magnet snaps to whichever series is nearer, not to the bar *(found 2026-08-31)*
+### ⚪ ~~The crosshair magnet snaps to whichever series is nearer, not to the bar~~ — closed 2026-08-31
 
 Reported from a browser: with a moving average drawn, the crosshair's horizontal line sticks to
 the MA rather than to the candle, depending on which is closer to the pointer.
@@ -1266,6 +1266,36 @@ to 250 across three files to draw one that does not — for a chart whose number
 
 *Trigger: unchanged. Also worth revisiting if the missing price line turns out to be missed in
 use, which is the one thing the argument above cannot settle from here.*
+
+**Closed 2026-08-31: the correct line is drawn, by this repository rather than by the library.**
+
+The mitigation above lasted one afternoon. Hiding the line removed one that lied, and the reader
+reported missing it — which is exactly the thing the argument for hiding it said it could not
+settle from a desk. So the option that was costed and declined got built.
+
+`DrawingsPrimitive` gained a fourth callback and `crosshairShape()`; `PriceChart` snaps the
+pointer's price with `snapToBar` — **the same function the drawing tools use** — and hands it
+over. That is the part worth keeping: the crosshair and a line drawn by hand now land on one
+price because they share one rule, where before they had two rules that agreed only by accident.
+`CrosshairAxisView` puts the price back on the axis.
+
+**Three library contracts were traced rather than assumed, and one of them decided the design.**
+`CrosshairMode` governs only the *price* snap and never the *time* snap — the vertical line lands
+on the bar in every mode — so the mode is now `Normal` in both states instead of a magnet mode
+governing a hidden line. `requestUpdate` schedules through `requestAnimationFrame` and dedupes
+within a frame, so calling it on every pointer move is safe. And `fixedCoordinate` is left
+unimplemented on purpose: implementing it would opt the label out of the pass that keeps it clear
+of the series' own last-value label.
+
+**What the estimate got wrong, recorded because it was wrong in a useful direction.** This entry
+costed the work at 150–250 lines and said jsdom could not verify it. The second half was too
+pessimistic: `drawingPrimitive.test.js` builds a primitive whose pixel space is the identity, so
+the geometry is asserted exactly. Thirteen tests, four mutations landed, and one placebo caught
+before it shipped — the pointer was stubbed at 100 against a bar opening at exactly 100, making
+the snap a fixed point that deleting `snapToBar` would have passed.
+
+*What is still not verifiable here is the picture: the chart is mocked wholesale, so nothing
+asserts that the line appears where the eye expects. That is a browser check, not a test.*
 
 ### 🟡 `FootballField`'s scale is safe by coincidence, not by construction *(found 2026-08-30)*
 
