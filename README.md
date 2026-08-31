@@ -36,14 +36,20 @@ still open — ranked, each with the trigger that would make it worth doing — 
 [TODOLIST.md](TODOLIST.md), and what is done against what is deliberately *not*, for running
 this yourself, is in [docs/release-readiness.md](docs/release-readiness.md).
 
-> ### Want to see it work before setting any of this up?
+> ### Want to see it work first? [Open the live demo →](https://auditable-valuation.onrender.com)
 >
-> **`start-demo.bat`** (Windows) or **`./start-demo.sh`** runs the Scorecard and Financial
-> Models engine against eight companies' real, committed financial statements — **no API key, no
-> network, no Ollama, and nothing to configure**. The numbers are reproducible because the
-> data is frozen: they are the same bytes the test suite pins its golden scores to.
+> Nothing to install. The Scorecard and Financial Models engine, running against eight
+> companies' real, committed financial statements — **no API key, and no call to any data
+> vendor**. The numbers are reproducible because the data is frozen: they are the same bytes
+> the suite pins its golden scores to.
 >
-> It does still need the install below — it removes the *configuration*, not the
+> Two things it will not do, both by construction rather than by accident. It sleeps after
+> fifteen idle minutes, so the first click may wait up to a minute while it wakes. And the AI
+> tabs answer *unavailable* — they need a local Ollama, and a free single-container host has
+> none, so that half of the platform runs only on your own machine.
+>
+> **Prefer to run it yourself?** `start-demo.bat` (Windows) or `./start-demo.sh` does the same
+> thing locally. It still needs the install below — it removes the *configuration*, not the
 > toolchain. Three of the six tabs are withheld, and it says so on screen. Details:
 > [Demo mode](#demo-mode--no-api-key-no-network-no-ollama).
 
