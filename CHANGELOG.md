@@ -17,6 +17,67 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (f) - A whole tab replaced by an error box, and the cause was in the browser
+
+Reported from a running browser: switching tabs with Google Translate on threw
+
+    NotFoundError: Failed to execute 'insertBefore' on 'Node': The node before
+    which the new node is to be inserted is not a child of this node.
+
+and the ErrorBoundary replaced the Tracker with "This panel failed to render",
+whose suggested cause — a stale backend — is the wrong one for this crash.
+
+Translate replaces every text node with a `<font>` element. React goes on holding
+the text node it created, and the next time it *places* a sibling it calls
+`insertBefore` against a node that has left the document.
+
+**The useful part of this entry is the two wrong answers it went through.** The
+hover readout was the obvious suspect — bare text, a fragment swap, four divs
+deep in exactly the way the component stack ends. A test said it did not crash,
+so the search moved to the chart caption, which did. Both readings were wrong,
+and for the same reason: React 19's `act` sometimes reports a failed commit as an
+`AggregateError` carrying the real DOMException in `.errors`, so
+`e.name === 'NotFoundError'` was false for a crash that had happened. Unwrapping
+it showed **every shape tested crashes** — the tab switcher, the readout and the
+caption alike. The common factor is not a component. It is a run of bare text
+sharing a parent with anything React later places, which is ordinary JSX and is
+everywhere in this app.
+
+That is what decided the fix. `src/google-translate.test.jsx` reproduces the
+crash on three shapes taken from this codebase and measures both candidates:
+a `translate="no"` subtree survives, and so does one where every bare text run
+owns an element. The second keeps translation working and was rejected on cost —
+dozens of sites, silently reintroduced by the next bare text run written, and
+invisible to CI.
+
+So `<html translate="no">`, one attribute, guarded by a test that reads
+`index.html` because no component test renders it. Mutation-checked: removing the
+attribute turns that test red. The built `dist/index.html` was checked too, since
+a bundler stripping it would have been a silent regression.
+
+**What it costs, stated rather than buried:** the browser's translation no longer
+works on the interface. Measured before choosing — 2,245 to 4,254 words across
+~300 strings and 109 test assertions coupled to English text — proper i18n is the
+real answer to that, and it is a project rather than a bug fix. It is not blocked
+by this attribute; it is made safe by it.
+
+Also, in the same file and found on the way: the crosshair was built with
+`CrosshairMode.Magnet` while the toolbar button beside it has always claimed the
+crosshair "sticks to open/high/low/close". `Magnet` sticks to the **close**
+alone; `MagnetOHLC` is the one the tooltip describes. Both call sites now pass
+the named enum rather than a bare `1`, which is how the two drifted apart without
+either looking wrong.
+
+**Still open, and not fixed by that change:** with an MA drawn, the crosshair
+snaps to whichever series is nearer, so it can sit on the moving average rather
+than the bar. lightweight-charts 5.2.0 has no per-series magnet exclusion and
+documents both magnet modes as snapping to single-value series, so there is no
+option that fixes it. The readout is unaffected — it reads the candle series
+directly and always has — so this is a line in the wrong place, not a wrong
+number. Recorded in TODOLIST.
+
+1,023 -> **1,024 offline** (800 backend, 224 frontend).
+
 ## 2026-08-31 (e) - A container that would have booted cleanly and never gone live
 
 The hosted demo's host is decided — Render free tier, kept awake by a GitHub Actions ping — and

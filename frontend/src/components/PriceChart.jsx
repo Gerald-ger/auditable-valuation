@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
+  CrosshairMode,
   CandlestickSeries,
   BarSeries,
   LineSeries,
@@ -371,10 +372,21 @@ export default function PriceChart({
         vertLines: { color: 'rgba(120,140,160,0.08)' },
         horzLines: { color: 'rgba(120,140,160,0.08)' },
       },
-      // magnet snaps the crosshair to OHLC values instead of floating between
-      // them; toggleable since 2026-08-20, because it is the wrong mode for
-      // reading the price at an arbitrary point rather than at a bar
-      crosshair: { mode: magnetRef.current ? 1 : 0 },
+      // Magnet snaps the crosshair to the bar instead of floating between
+      // values; toggleable since 2026-08-20, because it is the wrong mode for
+      // reading the price at an arbitrary point rather than at a bar.
+      //
+      // **`MagnetOHLC`, not `Magnet`.** Until 2026-08-31 this passed the bare
+      // `1`, which is `CrosshairMode.Magnet` — documented by the library as
+      // sticking to "the close price of OHLC-based series". The toolbar button
+      // beside it has always claimed the crosshair "sticks to open/high/low/
+      // close", which is `MagnetOHLC` and is `3`. The tooltip described the
+      // mode the reader wanted and the chart was given the other one; a magic
+      // number is how the two drifted apart without either looking wrong, so
+      // the name is used now.
+      crosshair: {
+        mode: magnetRef.current ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal,
+      },
       // Both wheel behaviours off: the library maps a *vertical* wheel to zoom
       // only (`deltaY` -> zoomTime, gated on handleScale.mouseWheel) and pans
       // on `deltaX` alone, so "wheel pans" cannot be expressed in its options.
@@ -921,7 +933,9 @@ export default function PriceChart({
   // Applied rather than rebuilt: recreating the chart to change one option
   // would throw away the pan and zoom the reader had set up.
   useEffect(() => {
-    chartRef.current?.applyOptions({ crosshair: { mode: magnet ? 1 : 0 } });
+    chartRef.current?.applyOptions({
+      crosshair: { mode: magnet ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal },
+    });
   }, [magnet, chartEpoch]);
 
   // ── fullscreen ────────────────────────────────────────────────────

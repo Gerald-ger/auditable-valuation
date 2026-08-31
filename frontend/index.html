@@ -1,5 +1,27 @@
 ﻿<!doctype html>
-<html lang="en">
+<!--
+  `translate="no"` is load-bearing, not a preference.
+
+  Google Translate replaces every text node with a <font> element. React goes on
+  holding the text node it put there, and the next time it places a sibling it
+  calls insertBefore against a node that is no longer in the document —
+  NotFoundError, and the ErrorBoundary swallows a whole tab. Reported 2026-08-31
+  from a browser: switching tabs with the page translated.
+
+  Measured, not assumed: `src/google-translate.test.jsx` reproduces the crash on
+  three shapes taken from this codebase, and shows both that a translate="no"
+  subtree survives and that wrapping every bare text run in an element survives
+  too. The second fix keeps translation working and was rejected on cost — it is
+  dozens of sites, it silently returns the moment anyone writes a bare text run,
+  and nothing in CI can see it.
+
+  What this costs: a reader cannot use the browser's translation on the
+  interface. That is the trade, taken deliberately for a tool whose screen is
+  mostly tickers and figures — AAPL, 0700.HK, 696.26 — which translation
+  damages rather than helps. If the interface is ever translated properly, it
+  is this attribute that makes that safe rather than doubled.
+-->
+<html lang="en" translate="no">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

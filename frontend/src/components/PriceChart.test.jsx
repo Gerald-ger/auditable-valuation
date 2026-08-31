@@ -90,6 +90,11 @@ vi.mock('lightweight-charts', () => ({
   createChart,
   CandlestickSeries: 'candle', BarSeries: 'bar', LineSeries: 'line',
   HistogramSeries: 'hist', createSeriesMarkers: vi.fn(() => ({ setMarkers: vi.fn() })),
+  // Mirrors the library's own enum. Spelled out because the component imports
+  // it by name rather than passing 0/1/3 — which is what let the toolbar
+  // promise open/high/low/close while the chart was given `Magnet`, the mode
+  // that snaps to the close alone.
+  CrosshairMode: { Normal: 0, Magnet: 1, Hidden: 2, MagnetOHLC: 3 },
 }));
 
 const bars = Array.from({ length: 40 }, (_, i) => ({
@@ -405,8 +410,13 @@ describe('the magnet toggle', () => {
     click(button(container, 'Magnet'));
     expect(chart.applyOptions).toHaveBeenCalledWith({ crosshair: { mode: 0 } });
 
+    // 3 is `CrosshairMode.MagnetOHLC`, not 1 (`Magnet`). The difference is the
+    // one the toolbar's own tooltip has always described: `Magnet` sticks the
+    // crosshair to an OHLC series' **close** only, while the button says it
+    // "sticks to open/high/low/close". Measured against the installed
+    // lightweight-charts 5.2.0 typings, which document exactly that split.
     click(button(container, 'Magnet'));
-    expect(chart.applyOptions).toHaveBeenCalledWith({ crosshair: { mode: 1 } });
+    expect(chart.applyOptions).toHaveBeenCalledWith({ crosshair: { mode: 3 } });
     expect(createChart.mock.calls.length).toBe(before);
     unmount();
   });

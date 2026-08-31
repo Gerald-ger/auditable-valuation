@@ -1,7 +1,7 @@
 # Auditable Valuation
 
 [![CI](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gerald-ger/auditable-valuation/actions/workflows/ci.yml)
-[![1016 offline tests](https://img.shields.io/badge/tests-1016%20offline-brightgreen.svg)](#tests)
+[![1024 offline tests](https://img.shields.io/badge/tests-1024%20offline-brightgreen.svg)](#tests)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](#prerequisites)
 
@@ -61,7 +61,7 @@ this yourself, is in [docs/release-readiness.md](docs/release-readiness.md).
 | [Prerequisites](#prerequisites) · [Install](#install) · [Run it](#run-it) | getting it going |
 | [Demo mode](#demo-mode--no-api-key-no-network-no-ollama) | eight companies, no key, no network |
 | [Architecture](#architecture) | how the pieces fit |
-| [Tests](#tests) | 1016 offline, and what they are for |
+| [Tests](#tests) | 1024 offline, and what they are for |
 | [Project structure](#project-structure) | where everything lives |
 | [Licence and data provenance](#licence-and-data-provenance) | AGPL-3.0, and what it does not cover |
 
@@ -316,11 +316,11 @@ backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
 backend\.venv\Scripts\python.exe -m pytest          # 800 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
-cd frontend; npm test                                   # 216 tests
+cd frontend; npm test                                   # 224 tests
 ```
 
-**1016 of those run offline**, against eight companies' real financial statements committed to
-this repo — 800 backend, 216 frontend, seconds. 27 more are `network`-marked and deselected by
+**1024 of those run offline**, against eight companies' real financial statements committed to
+this repo — 800 backend, 224 frontend, seconds. 27 more are `network`-marked and deselected by
 default. CI runs both jobs on **ubuntu, Windows and macOS** with `fail-fast: false`, the backend
 one additionally on **Python 3.12 and 3.13** — eight legs — and gates lint and the frontend build
 as well as the tests.

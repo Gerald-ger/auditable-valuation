@@ -1216,6 +1216,37 @@ attach a false reason to a multiple that was never going to compute. *Trigger: a
 median below 0.005×, which no fixture approaches — or a decision to make every zero-valued
 median state itself, which is a different and larger change than one word.*
 
+### 🟡 The crosshair magnet snaps to whichever series is nearer, not to the bar *(found 2026-08-31)*
+
+Reported from a browser: with a moving average drawn, the crosshair's horizontal line sticks to
+the MA rather than to the candle, depending on which is closer to the pointer.
+
+**Half of this was a different defect and is closed.** The chart was built with
+`CrosshairMode.Magnet`, which the library documents as sticking to "the close price of OHLC-based
+series", while the toolbar button beside it has always said the crosshair "sticks to
+open/high/low/close" — which is `MagnetOHLC`. Both call sites now pass the named enum instead of a
+bare `1`; the magic number is how a tooltip and a mode drifted apart with neither looking wrong.
+
+**The reported half is not fixed and has no option behind it.** lightweight-charts 5.2.0 exposes no
+per-series magnet exclusion — checked in its own typings, where the only related knob is
+`defaultVisiblePriceScaleId`, which picks a price scale rather than a series — and *both* magnet
+modes are documented as snapping to "the price value of a single-value series", which is what an
+MA overlay is. So there is no configuration that says "magnet to the candles only".
+
+**It is a line in the wrong place, not a wrong number.** `onMove` reads
+`param.seriesData.get(series)` where `series` is the candlestick series, so the OHLC readout has
+always shown the bar regardless of where the crosshair line settled. What the reader sees is the
+horizontal line sitting on the MA while the numbers below it describe the candle.
+
+**What the fix would be, and why it was not taken now:** set `crosshair.mode` to `Normal` and draw
+the snapped line and readout from `snapToBar()` — which this file already has, at
+`PriceChart.jsx:776`, and already uses to land drawn lines on bars. That means owning the crosshair
+rendering rather than configuring it, and it was out of proportion to a cosmetic mismatch on the
+day it was found.
+
+*Trigger: the next substantial change to `PriceChart`'s crosshair or drawing layer — `snapToBar`
+would then be serving both paths, which is the point at which owning it costs least.*
+
 ### 🟡 `FootballField`'s scale is safe by coincidence, not by construction *(found 2026-08-30)*
 
 Raised by the independent review of the axis fix above, and narrower than that bug. `x()` is
