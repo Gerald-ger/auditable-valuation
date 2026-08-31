@@ -13,7 +13,7 @@ the README on 2026-08-28; the three commands to run it are still
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-test.txt
 
-backend\.venv\Scripts\python.exe -m pytest          # 800 tests, offline, seconds
+backend\.venv\Scripts\python.exe -m pytest          # 803 tests, offline, seconds
 backend\.venv\Scripts\python.exe -m pytest -m network   # live yfinance contract checks
 cd frontend; npm test                                   # 240 tests
 ```

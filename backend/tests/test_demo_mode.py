@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from conftest import BARS_DIR, FIXTURE_DIR, FIXTURES, load_bars
 
@@ -389,6 +390,80 @@ def test_the_store_writes_to_the_live_database_unless_demo_mode():
 
     assert store.DB_PATH.name == "app.db"
     assert store.DB_PATH.parent.name == "data"
+
+
+def _stub_store(monkeypatch):
+    """Records what `upsert_position` was called with instead of writing it.
+
+    An oracle the defect can be read off directly: what is wrong with the
+    unguarded endpoint is the *write*, not the response, and stubbing the writer
+    is what makes "never reached the store" checkable without a demo.db on disk.
+    """
+    from backend import store
+    wrote = []
+    monkeypatch.setattr(store, "upsert_position",
+                        lambda *args, **kwargs: wrote.append(args))
+    return wrote
+
+
+def test_a_ticker_the_demo_cannot_price_never_becomes_a_position(monkeypatch):
+    """Left open by the 2026-08-27 demo review, and hosting is what closed it.
+
+    `POST /api/portfolio/position` took any string, so a visitor could add
+    `TSLA` and get a permanent row whose quote read "TSLA is not one of the demo
+    tickers". That was left because the message is accurate and actionable — an
+    argument that assumed the row was the visitor's own to delete, which is
+    exactly what a hosted demo removes.
+    """
+    from backend import main
+
+    monkeypatch.setattr(main, "DEMO_MODE", True)
+    monkeypatch.setattr(main, "provider", dp.FixtureProvider())
+    wrote = _stub_store(monkeypatch)
+
+    with pytest.raises(HTTPException) as excinfo:
+        main.upsert_position(main.PositionRequest(ticker="TSLA", shares=10))
+
+    assert excinfo.value.status_code == 400
+    assert "not one of the demo tickers" in excinfo.value.detail
+    assert wrote == [], "the refused position still reached the store"
+
+
+def test_a_demo_ticker_is_still_recorded(monkeypatch):
+    """The other half, without which the guard could be refusing everything."""
+    from backend import main
+
+    monkeypatch.setattr(main, "DEMO_MODE", True)
+    monkeypatch.setattr(main, "provider", dp.FixtureProvider())
+    wrote = _stub_store(monkeypatch)
+
+    main.upsert_position(main.PositionRequest(ticker="0700.HK", shares=10))
+
+    assert [args[0] for args in wrote] == ["0700.HK"]
+
+
+def test_live_mode_records_a_position_without_asking_the_provider(monkeypatch):
+    """The guard is demo-only on purpose, and this is the reason.
+
+    A provider check on the live write path is a network call between you and
+    your own record of what you hold: a Yahoo outage, or a ticker yfinance
+    happens not to know, would refuse a position that exists. Being unable to
+    write down a holding is a worse failure than the junk row demo mode refuses,
+    so live mode keeps taking the ticker at its word.
+    """
+    from backend import main
+
+    class Refuses:
+        def __getattr__(self, name):
+            raise AssertionError(f"live mode reached the provider: {name}")
+
+    monkeypatch.setattr(main, "DEMO_MODE", False)
+    monkeypatch.setattr(main, "provider", Refuses())
+    wrote = _stub_store(monkeypatch)
+
+    main.upsert_position(main.PositionRequest(ticker="TSLA", shares=10))
+
+    assert [args[0] for args in wrote] == ["TSLA"]
 
 
 def test_a_live_answer_reports_no_data_vintage():

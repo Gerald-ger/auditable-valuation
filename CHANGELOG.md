@@ -17,6 +17,50 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (i) - Three findings whose triggers the deployment discharged
+
+Hosting the demo yesterday did not just close its own item. It silently satisfied triggers that
+had been sitting under three other findings, none of which mentions hosting in its title — which
+is the case a trigger-per-entry list exists to catch, and the reason this sweep was a re-read of
+TODOLIST rather than a look at the code.
+
+**A stranger can no longer leave a row nobody can delete.** `POST /api/portfolio/position` took
+any string. In demo mode `TSLA` became a permanent row whose quote read `"TSLA is not one of the
+demo tickers"` - accurate, which is why it was left open on 2026-08-27: the message explains
+itself and the row is the visitor's own to clear. Hosting removed the second half of that
+sentence and left the first intact. Demo mode now calls `provider.get_quote` before the write and
+refuses with a 400 carrying the same message.
+
+`get_quote` rather than a list of the eight, because it is the call the portfolio already makes
+to draw the row: what is accepted is exactly what can be priced. **Live mode is deliberately not
+checked, and a test pins that instead of a comment.** A provider call on the write path is a
+network round trip standing between you and your own record of what you hold, so a Yahoo outage
+would refuse a position that exists - a worse failure than the row this prevents. Three
+mutations, each landing on exactly one test and nothing else: deleting the guard, running it in
+live mode too, and moving the status code.
+
+**The FX derivation had no route into it from the front page.**
+`docs/currency-consistent-discounting.md` and `docs/valuation-triangulation-review.md` were
+mentioned **zero** times in the README - not linked, not named. The first is the working behind
+the whole currency-consistent discount, the argument this repository leans on hardest after the
+DCF itself. Both are now on the *"Deeper than this file goes"* line. Separately the
+project-structure tree enumerated **ten of twelve** `docs/*.md`, omitting the same two, so the
+file listing did not assert they existed either; both added there too. The tree is a fenced code
+block and cannot carry links, which is why that is two fixes rather than one. 92 relative links
+across the README and all twelve docs re-checked, 0 broken.
+
+**The GitHub About description was wrong for the fifth time, and this run proved why it will be
+a sixth.** It read **1016 offline tests** against a suite of 1040. The three tests added above
+then moved the suite to **1043** - so the commit that closed one finding invalidated the number
+another finding is about, inside the same working tree, with nothing to warn about it.
+`test_documented_counts.py` caught the in-repo half of that in the same pytest run and named all
+eight stale lines across three files: README badge, contents table, two `pytest` command
+comments, the offline-count sentence, the fixtures paragraph, `docs/testing.md` and
+`PROVENANCE.md`. It cannot reach the About, which lives outside git and is edited in a web form.
+That asymmetry is the whole finding, and it is now demonstrated rather than predicted.
+
+**800 -> 803 backend, 1040 -> 1043 offline.** Frontend unchanged at 240.
+
 ## 2026-08-31 (h) - The line the chart could not be configured to draw
 
 Earlier today the crosshair's price line was hidden while the magnet was on, because it stuck to

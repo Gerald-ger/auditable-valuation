@@ -62,7 +62,7 @@ rate in a currency other than USD. The obvious HKD names cannot — `classify` r
 `sector == "real estate"` and `"bank" in industry` away from the model before the rate is
 reached.
 
-Committing them is what lets the 800-test backend suite run **entirely offline**, in CI on a
+Committing them is what lets the 803-test backend suite run **entirely offline**, in CI on a
 clean runner, with no network access and no API key. Enforced since 2026-08-31 rather than
 intended: `conftest.no_live_yfinance` fails any unmarked test that reaches the vendor, which is
 how seventeen tests that had been doing so were found. `pytest.ini` deselects the 27

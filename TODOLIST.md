@@ -179,12 +179,21 @@ commit. These are the remainder, none of them load-bearing.
   parsing `DEMO_MODE` a second time inside `store.py`, which trades one import for two
   places that must agree about the same flag — the trade this project usually refuses.
   *Trigger: a script or tool imports `backend.store` without `data_provider`.*
-- **`POST /api/portfolio/position` accepts any ticker with no provider check.** In demo mode
-  a visitor can add `TSLA` and get a permanent row whose quote reads
-  `"TSLA is not one of the demo tickers"`. That message is accurate and actionable, and the
-  row now lands in `demo.db` rather than the real store, which is why this was left: adding
-  a code path for a case that already explains itself. *Trigger: the same input reaches a
-  hosted demo, where a stranger cannot delete the row.*
+- ~~**`POST /api/portfolio/position` accepts any ticker with no provider check.**~~
+  **Closed 2026-08-31 — the trigger discharged itself.** The reason for leaving it was that
+  the message `"TSLA is not one of the demo tickers"` is accurate and actionable and the row
+  is the visitor's own to delete. Hosting removed the second half of that sentence without
+  touching the first, which is what the trigger — *"the same input reaches a hosted demo,
+  where a stranger cannot delete the row"* — was written to notice. Demo mode now calls
+  `provider.get_quote` before the write and refuses with a 400 carrying the same message.
+
+  `get_quote` rather than a ticker list, because it is the call the portfolio already makes
+  to render the row: what is accepted is exactly what can be priced. **Live mode is
+  deliberately not checked**, and a test pins that rather than a comment — a provider call on
+  the write path is a network round trip between you and your own record of what you hold, so
+  a Yahoo outage would refuse a position that exists. That is a worse failure than the row
+  this refuses. Three mutations, each landing on exactly one test: deleting the guard,
+  running it in live mode too, and changing the status code.
 - **`test_the_demo_rates_are_the_published_readings_not_the_round_test_constants`** pins
   `_demo_cgb_10y()` against the literal it returns. The assertion that earns its place in
   that test is the one comparing the demo constants against `conftest`'s; the rest is a
@@ -198,6 +207,16 @@ commit. These are the remainder, none of them load-bearing.
   edited outside git, so no commit ever forces a second look at it, and nothing in CI checks
   it. **It goes stale again on the next commit that adds a test.** *Trigger: any change to
   the suite size.*
+
+  **Fifth recurrence, 2026-08-31 — and this one was caught by the sweep that came looking.**
+  `gh repo view` read **1016** against a suite of 1040. Corrected to **1043**, which is the
+  number after the three tests the entry above adds: the commit that closed one finding moved
+  the count that another finding is about, in the same working tree. That is the cleanest
+  demonstration available of why this line cannot be maintained by intention — nothing warned,
+  because nothing can. `test_documented_counts.py` caught the *in-repo* half in the same run
+  and named all eight stale lines across three files, which is exactly the split it
+  predicts: the
+  guard reaches everything in git and nothing outside it.
 
 ### 🔵 The review's 32 standing findings, none of them written down until now *(2026-08-27)*
 
@@ -435,11 +454,18 @@ deliberately rather than letting the old scope carry by default.
 
 **Structural — how the repo reads as a set of files (9; four actionable).**
 
-- **Four of seven `docs/*.md` are unreachable from the README.**
-  `currency-consistent-discounting.md` and `valuation-triangulation-review.md` are mentioned
-  **zero** times; `release-readiness.md` and `quant-review-2026-08-06.md` appear only as plain
-  text inside the project-structure tree, not as links. *Trigger: the next doc added, or a
-  reader asking why the FX argument is not linked from anywhere.*
+- ~~**Four of seven `docs/*.md` are unreachable from the README.**~~ **Closed 2026-08-31.**
+  `currency-consistent-discounting.md` and `valuation-triangulation-review.md` — the two at
+  **zero** mentions — are now on the *"Deeper than this file goes"* line, which is the
+  README's own docs index and therefore the place a reader looks. The FX working being
+  unreachable was the sharpest form of this: it is the derivation behind the whole
+  currency-consistent discount, and the front page had no route to it.
+
+  The project-structure tree was **separately incomplete** — it enumerated ten of twelve
+  `docs/*.md`, omitting the same two, so the file listing did not even assert they existed.
+  Both added. The tree is a fenced code block, so its entries cannot be links; that is why
+  completeness there and a link on the index line are two fixes rather than one.
+  92 relative links across README and all twelve docs re-checked, 0 broken.
 - **`docs/quant-review-2026-08-06.md` is entirely Traditional Chinese with no language notice.**
   *Trigger: an English-only reader opening it from the tree.*
 - **No `docs/README.md` index** — seven `.md` files and `images/`, nothing to enter by.

@@ -1139,9 +1139,25 @@ def _safe_quote(ticker: str) -> dict:
 
 @app.post("/api/portfolio/position")
 def upsert_position(req: PositionRequest):
-    if not req.ticker.strip():
+    ticker = req.ticker.strip()
+    if not ticker:
         raise HTTPException(status_code=400, detail="Ticker is required.")
-    store.upsert_position(req.ticker.strip(), req.shares, req.cost_basis, req.note)
+    if DEMO_MODE:
+        # A hosted demo takes writes from strangers and gives none of them a way
+        # to undo one. Unguarded, this accepted any string: `TSLA` became a
+        # permanent row whose quote read "TSLA is not one of the demo tickers" —
+        # accurate, and nobody's to clear.
+        #
+        # `get_quote` rather than a ticker list, because it is the same call the
+        # portfolio makes to render the row: what is accepted here is exactly
+        # what can be priced there. Live mode is deliberately *not* checked — a
+        # provider call on this path is a network round trip standing between
+        # you and your own record of what you hold.
+        try:
+            provider.get_quote(ticker)
+        except KeyError as e:
+            raise HTTPException(status_code=400, detail=e.args[0]) from e
+    store.upsert_position(ticker, req.shares, req.cost_basis, req.note)
     return {"ok": True}
 
 
