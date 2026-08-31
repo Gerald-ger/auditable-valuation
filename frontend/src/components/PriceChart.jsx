@@ -151,6 +151,13 @@ const dominantType = (items) =>
 export default function PriceChart({
   bars: rawBars = [], events, filingsSupported = true, interval = '1d', ticker = '',
   warmupBars = 0,
+  // Which period `bars` was fetched for, which is *not* `period` below. The
+  // button changes the moment it is clicked and the bars land ~1.3s later, so
+  // for the length of that fetch the two disagree — and only this one describes
+  // what is actually on screen. `period` drives the full-screen picker, where
+  // the pressed button has to light up immediately; this drives anything that
+  // reasons about the window the bars represent.
+  barsPeriod,
   // Only used full screen, where the page's own copies of these are unreachable:
   // the fullscreen element is this panel, and nothing outside it is rendered.
   loading = false, periods = [], period, onPeriod, saved = [], onTicker,
@@ -193,7 +200,16 @@ export default function PriceChart({
    * reload, and a stored layout would silently outlive any later change to the
    * defaults above.
    */
-  const layoutRef = useRef({ stretch: {}, barSpacing: null, rightOffset: null });
+  // `barsPeriod` is the window the zoom above was measured in, so the restore
+  // can tell a rebuild that kept the window from one that changed it. The prop
+  // and not `period`, because a rebuild during the fetch measures the zoom
+  // against the bars still on screen, and stamping those with the button's new
+  // period would make a stale figure look current. `undefined` rather than
+  // `null`, so a caller that passes neither compares equal to itself and keeps
+  // the restore it has always had.
+  const layoutRef = useRef({
+    stretch: {}, barSpacing: null, rightOffset: null, barsPeriod: undefined,
+  });
 
   const [chartEpoch, setChartEpoch] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -578,14 +594,43 @@ export default function PriceChart({
      * newest bars at the zoom and margin they chose, which is what not having
      * to set it up again actually means. `fitDisplay` above still owns the
      * first view of the session, when there is nothing yet to restore.
+     *
+     * Not across a change of *period*, though, and that exception is the whole
+     * point of the comparison below. `barSpacing` is pixels per bar, and the
+     * period buttons are a statement about how many bars to show: 1y holds
+     * roughly half the bars of 2y, so re-applying 2y's spacing draws the
+     * shorter window at the wider one's scale and leaves the right-hand side
+     * of the chart empty. Every other rebuild — a ticker, an indicator, the
+     * chart type, the price-scale mode — asks for the same window and keeps
+     * the zoom. A period change *is* the reader saying how wide the window
+     * should be, so restoring over it overrules the control they just pressed.
+     *
+     * Leaving `fitDisplay` to own that case makes the button do what people
+     * were already doing by hand afterwards: the double-click at `onDblClick`
+     * is the same call, so it now produces the same result rather than
+     * repairing this one.
+     *
+     * `barsPeriod` and not `period`, and the difference is not pedantry. The
+     * button changes on click; the bars arrive ~1.3s later. Anything that
+     * rebuilds inside that window — an indicator, the chart type, the scale
+     * mode — measures its zoom against the bars still on screen, which belong
+     * to the *old* window. Comparing the button's period would stamp that
+     * measurement as belonging to the new one, and the restore would then fire
+     * on the arriving bars with a figure taken from the window they replaced.
      */
     const { barSpacing, rightOffset } = layoutRef.current;
-    if (barSpacing != null || rightOffset != null) {
+    if (layoutRef.current.barsPeriod === barsPeriod
+        && (barSpacing != null || rightOffset != null)) {
       chart.timeScale().applyOptions({
         ...(barSpacing != null && { barSpacing }),
         ...(rightOffset != null && { rightOffset }),
       });
     }
+    // Recorded here rather than beside the capture in the teardown: this runs
+    // with the window the chart is being built *from*, where a cleanup carries
+    // whichever render it closed over. Same answer, one less thing to reason
+    // about.
+    layoutRef.current.barsPeriod = barsPeriod;
 
     const volByTime = new Map(bars.map((b) => [String(b.time), b.volume]));
     const onMove = (param) => {

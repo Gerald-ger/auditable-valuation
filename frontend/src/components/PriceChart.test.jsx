@@ -60,6 +60,12 @@ const { api, chart, series, createChart, timeScaleApi, requestUpdate } = vi.hois
     coordinateToTime: vi.fn(() => 1), timeToCoordinate: vi.fn(() => 10),
     logicalToCoordinate: vi.fn(() => 10), coordinateToLogical: vi.fn(() => 1),
     width: vi.fn(() => 600),
+    // The four the component reached for that this had never grown. `options()`
+    // threw on every teardown, so `layoutRef` never captured a zoom, so the
+    // restore that reads it never ran and the whole layout-carrying feature was
+    // untested — the caller swallowed it as "optional under the test double".
+    setVisibleLogicalRange: vi.fn(), getVisibleLogicalRange: vi.fn(() => ({ from: 0, to: 40 })),
+    applyOptions: vi.fn(), options: vi.fn(() => ({ barSpacing: 6, rightOffset: 6 })),
     ...extra,
   });
   const chart = {
@@ -822,5 +828,104 @@ describe('teardown', () => {
     const { unmount } = await mount();
     unmount();
     expect(chart.remove).toHaveBeenCalled();
+  });
+});
+
+describe('switching the period', () => {
+  /**
+   * The reader's own zoom, in pixels per bar, as the teardown reads it back.
+   *
+   * Carrying it across a rebuild is a deliberate feature — a change of ticker
+   * must not throw away a zoom somebody set by hand. Carrying it across a
+   * change of *period* is not: the period buttons are a statement about how
+   * many bars to show, so 2y's spacing applied to 1y's bars draws the newer,
+   * shorter window at the older, wider one's scale.
+   */
+  const SAVED_SPACING = 2.25;
+
+  /**
+   * One time-scale object for the life of a test, because the module double
+   * hands out a fresh one per `timeScale()` call and a spy on a throwaway
+   * records nothing. Returns the spies the assertions read.
+   */
+  const stableTimeScale = () => {
+    const applyOptions = vi.fn();
+    const ts = timeScaleApi({
+      applyOptions,
+      options: () => ({ barSpacing: SAVED_SPACING, rightOffset: 6 }),
+    });
+    chart.timeScale = () => ts;
+    return { applyOptions };
+  };
+
+  const restoreTimeScale = () => { chart.timeScale = () => timeScaleApi(); };
+
+  it('opens the new window at its own fit, not the previous period\'s zoom', async () => {
+    const { applyOptions } = stableTimeScale();
+    const { rerender, unmount } = await mount([], { bars, period: '2y', barsPeriod: '2y' });
+
+    // The button refetches, so the shorter series and the new period arrive
+    // together — which is the only way this component ever sees a period change.
+    rerender(<PriceChart
+      bars={bars.slice(0, 20)} events={[]} interval="1d" ticker="AAPL"
+      period="1y" barsPeriod="1y" />);
+    await flush();
+
+    // `timeScale().applyOptions` has exactly one caller in the component: the
+    // block that re-applies a saved `barSpacing`/`rightOffset` over the fit.
+    expect(applyOptions).not.toHaveBeenCalled();
+    unmount();
+    restoreTimeScale();
+  });
+
+  it('still restores the zoom when the ticker changes and the period does not', async () => {
+    const { applyOptions } = stableTimeScale();
+    const { rerender, unmount } = await mount([], { bars, period: '1y', barsPeriod: '1y' });
+
+    api.get.mockReturnValue(new Promise(() => {})); // drawings in flight
+    rerender(<PriceChart
+      bars={bars.slice(0, 20)} events={[]} interval="1d" ticker="MSFT"
+      period="1y" barsPeriod="1y" />);
+    await flush();
+
+    expect(applyOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ barSpacing: SAVED_SPACING }));
+    unmount();
+    restoreTimeScale();
+  });
+
+  it('does not carry a zoom measured while the button was ahead of the data', async () => {
+    /**
+     * The period button moves immediately; `TrackerTab` only calls `setBars`
+     * in its `.then()`, so for the ~1.3s of the fetch the chart holds the old
+     * period's bars under the new period's label. Anything that rebuilds in
+     * that window — an indicator toggle, the chart type, the scale mode —
+     * measures a zoom against the *old* window. Stamping that zoom with the
+     * button's period would make it look valid when the new bars arrive, which
+     * is the same defect the test above pins, reached the long way round.
+     */
+    const { applyOptions } = stableTimeScale();
+    const { container, rerender, unmount } = await mount(
+      [], { bars, period: '1y', barsPeriod: '1y' });
+
+    // The button is pressed. The fetch has not returned: same bars, new label.
+    rerender(<PriceChart
+      bars={bars} events={[]} interval="1d" ticker="AAPL" period="2y" barsPeriod="1y" />);
+    // The reader toggles an indicator inside that window, rebuilding the chart
+    // on bars that still belong to 1y. Restoring here is correct — the window
+    // has not actually changed yet — so what matters is what gets stamped.
+    click(button(container, 'MACD'));
+    await flush();
+    applyOptions.mockClear();
+
+    // Now the 2y bars land.
+    rerender(<PriceChart
+      bars={bars.slice(0, 20)} events={[]} interval="1d" ticker="AAPL"
+      period="2y" barsPeriod="2y" />);
+    await flush();
+
+    expect(applyOptions).not.toHaveBeenCalled();
+    unmount();
+    restoreTimeScale();
   });
 });

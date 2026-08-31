@@ -23,6 +23,7 @@ export default function TrackerTab({ ticker, aiOnline, saved = [], onTicker }) {
   const [events, setEvents] = useState([]);
   const [filingsSupported, setFilingsSupported] = useState(true);
   const [period, setPeriod] = useState('1y');
+  const [barsPeriod, setBarsPeriod] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [outlook, setOutlook] = useState(null);
@@ -43,6 +44,12 @@ export default function TrackerTab({ ticker, aiOnline, saved = [], onTicker }) {
         // guarded: a backend older than the page returns a bare array here,
         // and an undefined `bars` throws inside the chart's render
         setBars(h.bars ?? []);
+        // The period these bars are *of*, which trails `period` by the length
+        // of this fetch. `period` above changed the instant the button was
+        // pressed; until this line runs the chart is holding the previous
+        // window's bars, and anything that reasons about how wide the window is
+        // has to read this one or it will be a period ahead of the data.
+        setBarsPeriod(period);
         setInterval_(h.interval ?? '1d');
         // absent on a backend older than the page, which is the same guard the
         // line above needs and means the same thing: no lead-in, fit everything
@@ -137,6 +144,7 @@ export default function TrackerTab({ ticker, aiOnline, saved = [], onTicker }) {
               loading={loading}
               periods={PERIODS}
               period={period}
+              barsPeriod={barsPeriod}
               onPeriod={setPeriod}
               saved={saved}
               onTicker={onTicker}
