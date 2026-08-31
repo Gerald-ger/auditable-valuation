@@ -382,12 +382,23 @@ function DcfAudit({ dcf }) {
         <span>
           {/* A bridge leg the provider did not report is assumed zero so the
               model still runs, which makes a company look debt-free rather than
-              unreported. Saying so is the whole point of the assumption. */}
+              unreported. Saying so is the whole point of the assumption.
+
+              The debt leg is named twice because it is *read* twice: once by the
+              bridge, and once by `_wacc` as the debt weight of the capital
+              structure. Measured on the fixtures, that second reading on its own
+              moves fair value -12.3% (0002.HK) to +22.8% (O) — O in the opposite
+              direction from the rest, because its cost of debt exceeds its cost
+              of equity, so dropping the debt weight lowers its WACC. `_wacc`
+              never reads `totalCash`, so the cash leg gets no such clause: a
+              missing cash balance moves the discount rate by 0.00pp. */}
           {d.net_debt_assumed_zero?.length > 0 && (
             <>
               <span className="warn-chip">
                 {d.net_debt_assumed_zero.map((leg) => leg.replace('_', ' ')).join(' and ')} not
                 reported, assumed zero in the equity bridge
+                {d.net_debt_assumed_zero.includes('total_debt')
+                  && ' — and total debt is the WACC debt weight, so the discount rate moved too'}
               </span>{' '}
             </>
           )}

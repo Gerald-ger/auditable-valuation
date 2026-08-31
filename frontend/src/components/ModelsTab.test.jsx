@@ -320,6 +320,45 @@ describe('ModelsTab', () => {
     );
   });
 
+  it('says an unreported debt balance moved the discount rate, not only the bridge', async () => {
+    // The chip named the equity bridge and stopped there, but the same absent
+    // field is read a second time by `_wacc` as the debt leg of the capital
+    // structure weights. Measured on the fixtures, that second reading alone
+    // moves fair value -12.3% (0002.HK) to +22.8% (O) — O in the opposite
+    // direction from the rest, because its cost of debt exceeds its cost of
+    // equity, so dropping the debt weight *lowers* its WACC.
+    const { container } = await mount({
+      analysisBody: analysis({
+        dcf: dcf({ diagnostics: { net_debt_assumed_zero: ['total_debt'] } }),
+      }),
+    });
+    const chip = [...container.querySelectorAll('.warn-chip')]
+      .find((n) => n.textContent.includes('not reported'));
+
+    expect(chip).toBeDefined();
+    expect(chip.textContent).toContain('equity bridge');
+    expect(chip.textContent).toMatch(/WACC|discount rate/);
+  });
+
+  it('does not claim a moved discount rate when only the cash leg is unreported', async () => {
+    // The half that keeps the sentence true rather than merely longer. `_wacc`
+    // never reads `totalCash` — measured, a missing cash balance moves WACC by
+    // exactly 0.00pp — so it belongs to the bridge alone. This passes before the
+    // change as well as after: it is here to stop the new clause being made
+    // unconditional, which a mutation confirms it does.
+    const { container } = await mount({
+      analysisBody: analysis({
+        dcf: dcf({ diagnostics: { net_debt_assumed_zero: ['total_cash'] } }),
+      }),
+    });
+    const chip = [...container.querySelectorAll('.warn-chip')]
+      .find((n) => n.textContent.includes('not reported'));
+
+    expect(chip).toBeDefined();
+    expect(chip.textContent).toContain('equity bridge');
+    expect(chip.textContent).not.toMatch(/WACC|discount rate/);
+  });
+
   it('claims no conversion when the statements are already in the traded currency', async () => {
     // `reporting_currency` is always sent, so gating the footnote on its mere
     // presence would print "converted from USD at —" on every US company.

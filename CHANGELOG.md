@@ -17,6 +17,39 @@ Notable changes to Auditable Valuation. Newest first.
 > This binds people and AI assistants equally. An assistant told to "update the docs" or
 > "fix the stale numbers" should skip this file and say that it did.
 
+## 2026-08-31 (m) - The same absent field is read twice; the warning named one of them
+
+`(info.get("totalDebt") or 0)` appears in `_wacc` as the debt weight of the capital structure
+as well as in `dcf_valuation`'s equity bridge. The chip a reader sees said the field was
+"assumed zero in the equity bridge" and stopped there.
+
+**Measured by holding the bridge complete and overriding only the rate** — the WACC `_wacc`
+returns with `totalDebt` removed, passed as `wacc_override` to `dcf_valuation` on the complete
+fixture. The discount-rate leg *alone* moves fair value **-12.3%** (0002.HK) to **+22.8%** (O).
+Two things that measurement settles. **The sign is not fixed**: dropping the debt weight lifts
+WACC wherever after-tax cost of debt sits below cost of equity, and lowers it on O, whose 7.30%
+pre-tax debt exceeds its 6.20% equity. And **the two legs cancel for five of six fixtures by
+accident** — 0002.HK is -12.3% on the rate alone and -0.9% once the bridge moves with it —
+while on O they compound to +142.9%.
+
+The chip now names the discount rate, **and only when the missing leg is `total_debt`**:
+`_wacc` never reads `totalCash`, measured at exactly 0.00pp across all eight fixtures, so a
+cash-only absence belongs to the bridge alone. The clause names the field rather than saying
+"and in the WACC weights", because with both legs missing the shorter wording reads as though
+cash were in the weights too.
+
+**Reporting only — no arithmetic changed.** The diff to `financial_models.py` is comments;
+`golden_scores.json` is untouched. Refusing the whole DCF the way a missing market cap does was
+rejected on that refusal's own precedent: it was justified by a measured +362% to +942%
+collapse, an order of magnitude above what is here, so the same remedy would turn a readable
+bias into no answer. Substituting a peer capital structure was rejected as an assumption with
+no measurement behind it.
+
+Two tests, two mutations. An independent reproduction of the table needed a `market_bars`
+argument the entry had not written down; that omission is now in the entry, since a figure a
+checkout cannot reproduce is the same defect this commit is about. 242 -> 244 frontend,
+1050 -> 1052 offline. Bundle 491.60 -> 491.72 kB.
+
 ## 2026-08-31 (l) - The error boundary did not cover the way out
 
 `ErrorBoundary` wrapped only the tab body, so the title, the search box and the tab nav

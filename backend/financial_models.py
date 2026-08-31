@@ -622,6 +622,16 @@ def _wacc(f: dict, tax_rate: float, peers: list[dict] | None = None,
     # the capital-structure weights compare a trading-currency market cap with a
     # reporting-currency debt balance, so the debt leg is converted first
     fx, _ = _to_trading(info)
+    # `or 0` here is the *second* reading of this field — `dcf_valuation`'s equity
+    # bridge is the first — and unlike the bridge it has no refusal available:
+    # there is no discount rate that means "unknown", so a missing balance weights
+    # the company as fully equity-financed. Measured 2026-08-31 by holding the
+    # bridge complete and overriding only this rate, it moves fair value -12.3%
+    # on 0002.HK to +22.8% on O. The sign is not fixed: it lifts WACC wherever
+    # after-tax cost of debt sits below cost of equity, and lowers it on O, whose
+    # 7.30% pre-tax debt exceeds its 6.20% equity. Reported to the reader through
+    # `diagnostics.net_debt_assumed_zero`, which names `total_debt` for both
+    # readings — see the chip in `ModelsTab.jsx`, which says so in as many words.
     total_debt = (info.get("totalDebt") or 0) * (fx if fx is not None else 1.0)
     spread, coverage, coverage_period = _credit_spread(f)
     cost_of_debt = rf + spread
@@ -918,6 +928,12 @@ def dcf_valuation(f: dict, growth_rate: float | None = None,
     # returns None for the same input. The DCF keeps computing, because refusing
     # to value a company over one absent field is worse, but it names the leg it
     # had to assume so the reader can discount the answer accordingly.
+    #
+    # `total_debt` in this list stands for two assumptions, not one: `_wacc` reads
+    # the same field as the debt weight of the capital structure, so naming it
+    # here also covers a discount rate that moved. `total_cash` stands for one —
+    # `_wacc` never reads it. The chip in `ModelsTab.jsx` splits them on exactly
+    # that line.
     total_debt, total_cash = info.get("totalDebt"), info.get("totalCash")
     net_debt = (total_debt or 0) - (total_cash or 0)
     net_debt_assumed = [name for name, value in

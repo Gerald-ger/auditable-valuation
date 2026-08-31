@@ -38,6 +38,55 @@ against itself.
 
 ## Now
 
+### 🟡 The WACC debt weight assumes zero, and the two legs cancel by accident *(measured 2026-08-31)*
+
+`financial_models.py`'s `_wacc` reads `(info.get("totalDebt") or 0)` as the debt weight of the
+capital structure. It is the **second** reading of that field — `dcf_valuation`'s equity bridge
+is the first — and unlike the bridge it has no refusal available: there is no discount rate
+that means *unknown*, so a missing balance weights the company as fully equity-financed.
+
+**Decomposed by holding the bridge complete and overriding only the rate** — take the WACC
+`_wacc` returns with `totalDebt` removed, then pass it as `wacc_override` to `dcf_valuation`
+on the *complete* fixture. **`market_bars=load_market_bars(stem)` on every call**, without
+which beta falls back off the regression and the whole table is different — 0002.HK reads
+83.83 rather than 234.83. An independent reproduction needed that line and the entry did not
+carry it, which for a file whose header promises figures reproducible from a checkout is the
+same defect in miniature.
+
+| fixture | fair value | WACC leg alone | | both legs | |
+|---|---|---|---|---|---|
+| 0002.HK | 234.83 | 205.85 | **−12.3%** | 232.78 | −0.9% |
+| 0700.HK | 652.41 | 585.94 | **−10.2%** | 635.49 | −2.6% |
+| AAPL | 122.26 | 120.49 | −1.4% | 126.27 | +3.3% |
+| MSFT | 219.31 | 212.68 | −3.0% | 230.02 | +4.9% |
+| **O** | **27.04** | **33.20** | **+22.8%** | **65.69** | **+142.9%** |
+| XOM | 157.30 | 151.55 | −3.7% | 161.78 | +2.8% |
+
+Three things this says. **The sign is not fixed** — it lifts WACC wherever after-tax cost of
+debt sits below cost of equity, and lowers it on O, whose 7.30% pre-tax debt exceeds its 6.20%
+equity. **The two legs cancel for five of six**, and that cancellation is an accident nobody
+chose: 0002.HK is −12.3% on the rate alone and −0.9% once the bridge moves with it. **On O they
+compound instead**, because it is both the most levered fixture and the only one with inverted
+capital costs.
+
+**Fixed 2026-08-31, but only the reporting half.** The chip in `ModelsTab.jsx` said the field
+was "assumed zero in the equity bridge" and stopped there; it now names the discount rate as
+well — and only for `total_debt`, because `_wacc` never reads `totalCash` and a missing cash
+balance moves the rate by exactly 0.00pp. Two tests, two mutations.
+
+**What was deliberately not done, and why.** Refusing the whole DCF the way a missing market
+cap does was rejected on its own precedent: that refusal was justified by a measured **+362% to
++942%** collapse, an order of magnitude above the −12.3% to +22.8% here, so applying the same
+remedy would turn a readable bias into no answer at all. Substituting a peer or sector capital
+structure was rejected as an assumption with no measurement behind it.
+
+*A correction to how this was first reported: it was described as unflagged. It is not — the
+existing `diagnostics.net_debt_assumed_zero` fires and names `total_debt`. What was missing was
+that the flag's wording pointed at only one of the two places the field is read.*
+
+**Trigger: evidence that a real issuer omits `totalDebt`.** No committed fixture does, so
+nothing here is currently wrong; what is recorded is what happens the first time one is.
+
 ### ⚪ ~~A throw in the header blanked the whole app~~ — closed 2026-08-31
 
 `ErrorBoundary` wrapped only the tab body ([App.jsx](frontend/src/App.jsx)), so the title,
